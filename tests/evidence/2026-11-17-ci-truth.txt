@@ -1,0 +1,78 @@
+# CI-truth evidence — session 6 (2026-11-17) — issue #14
+
+## 1. CI run #20 trên main (trước fix): xanh GIẢ
+
+Job báo `success`, log thực tế (api.github.com/repos/vietnerm/sandbox/actions/jobs/133831348649/logs):
+
+```
+UID1  uid=0 inside (mapped), no other uids                     FAIL
+      output: minict: warn: mount /proc (blocked in this environment): Operation not permitted
+SIG1  SIGKILL wrapper: PDEATHSIG+pidns teardown, no orphan     FAIL
+=== summary: PASS=15 FAIL=2 ===
+make: *** [Makefile:19: test] Error 1
+```
+
+→ seccomp + netns suite KHÔNG chạy (make dừng ở suite đỏ). Step list trong log:
+`shell: /usr/bin/bash -e {0}` — không có pipefail → exit code của `tee` (0).
+
+## 2. Tái hiện SIG1 với đúng busybox của runner
+
+busybox-static mà `apt-get download` tải trên ubuntu-24.04:
+`busybox-static_1.36.1-6ubuntu3.1_amd64.deb` (BusyBox v1.36.1, 2.1MB binary).
+Probe trong minict (`tests/test_isolation.sh` sig1 technique, tag trong cmdline):
+
+```
+RESULT(rootfs):       sleep = FORKED (child 2157 under sh 2156)  — Debian 1.37.0
+RESULT(rootfs-ubu):   sleep = NOFORK (no child under sh 2284)    — Ubuntu 1.36.1
+```
+
+→ `pgrep -P "$shpid"` rỗng trên runner → sig1_test cũ trả 1. Không phải lỗi
+sản phẩm (PDEATHSIG nhắm vào sh; pidns teardown giết phần còn lại).
+
+## 3. Sau fix — local (Debian 13, kernel 5.10.134, user thường uid 1001)
+
+```
+### suite: test_isolation.sh   === summary: PASS=17 FAIL=0 ===
+### suite: test_seccomp.sh     === summary: PASS=20 FAIL=0 ===
+### suite: test_netns.sh       === summary: PASS=7 FAIL=0 ===
+=== run-suites summary: 3 suites, failed: none ===   (make test rc=0)
+WEB1..WEB6: 6/6 PASS
+perf-check: cold 1.79 ms / rss 1108 kB / disk 2.02 MB — PASS
+```
+
+Runner-sim (rootfs thay binary busybox Ubuntu 24.04 của runner):
+`=== summary: PASS=17 FAIL=0 ===` (SIG1 + UID1 PASS).
+
+Aggregator fail-path test (mock suite đỏ): suite sau vẫn chạy, rc tổng = 1.
+
+## 4. Sau fix — CI run #22 trên PR #16 (ubuntu-24.04 runner, PIPEFAIL BẬT)
+
+```
+UID1  uid=0 inside, no foreign gid visible (0/overflow only)   PASS
+SIG1  SIGKILL wrapper: PDEATHSIG+pidns teardown, no orphan     PASS
+=== summary: PASS=17 FAIL=0 ===      (isolation — lần đầu SIG1/UID1 PASS trên runner)
+=== summary: PASS=20 FAIL=0 ===      (seccomp — LẦN ĐẦU chạy trên CI)
+=== summary: PASS=7  FAIL=0 ===      (netns  — LẦN ĐẦU chạy trên CI)
+=== summary: PASS=6  FAIL=0 ===      (web)
+cold_start_ms: 1.99 (≤100)  rss_kb: 3480 (≤10240)  disk_base_mb: 2.12 (≤20)  perf-check: PASS
+```
+
+Run #20 (44021359091) vs #22: cùng runner, cùng busybox — trước: PASS=15 FAIL=2
+nhưng job xanh; sau: 50/50 xanh và exit code là thật.
+
+## 5. Host integrity (SDDA §7)
+
+```
+/etc/passwd   21d5de2dc39f2ceb…  — khớp chính xác ghi-recall phiên 5 (unchanged)
+/bin/bash     223fe8564b60636b…
+/usr/bin/sudo a59f393bad503764…
+listeners: 6 — cùng bộ env-owned như phiên 5 (12600/19001/12700 loopback; 19005/19006/81)
+```
+
+## 6. CVE check (bắt buộc hằng ngày)
+
+`python3 tools/cve-check.py --kernel 5.10.134-… --watchlist docs/cve-watchlist.md --format md`
+→ rc=124 TIMEOUT sau 120s và 45s (NVD API không phản hồi từ sandbox phiên này).
+Watchlist 16 CVE không đổi từ phiên 5 (check NVD thành công cuối: phiên 5, 0 CVE mới
+ảnh hưởng). cve-daily cron (02:00 UTC) chạy độc lập trên runner — từ phiên này exit
+code của nó cũng là thật (pipefail).
