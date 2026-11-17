@@ -666,3 +666,66 @@ mới, PR #25): sửa trên chính nhánh, rồi SCR/SIA lại trên SHA mới.
 ## Còn lại
 - Root-cause mount /proc (D20-4) — đề xuất thử mount proc trước umount old
   root; theo dõi bằng case AL4 tự-đỏ khi sửa. Ghi ở decision D22-2.
+
+---
+
+# Phiên 9 — Orchestrator §11 (SBG RUN 2 + Pha B/C/E — session tiếp nối sau context break)
+
+## 1. Issue xử lý (phiên 9)
+
+- Không mở issue mới. Hoàn tất vòng đời 2 PR còn mở của ngày: #21 (issue #6) và
+  #24 (issue #23) — đúng luật "ưu tiên gộp hơn làm mới" (§11).
+
+## 2. Orchestrator progress (theo §11)
+
+- **Pha A** — Sync + SBG `MODE=plan` (RUN 2 @ 08:43Z, plan.md mục RUN 2): CI main xanh,
+  không p0 sec mở, host unchanged → không dừng. Quyết định: DELETE_MERGED
+  docs/zai-autonomous-loop (thực thi ngay — được phép Pha A), MERGE #21 (đủ G1–G8),
+  KEEP→§11 Pha B cho #24 (G3/G4 chưa có cho HEAD 66e02a0).
+- **Pha C-1** — MERGE #21: squash `42f32732` (--match-head-commit 4d3ee1d); CI main xanh.
+- **Pha B cho #24** — B1: sync main vào nhánh (aa1a452; 4 conflict docs/journal + roadmap
+  giải theo luật B1: giữ cả hai phía theo phiên, GĐ1 list lấy main + note nhánh); B2: SCR
+  self-run (RETEST_PROMPT §0b) trên aa1a452 — **PASS**: build 0 warning; make test ×3 +
+  test-web ×3 rc=0 (isolation 21 + seccomp 20 + netns 7 + alpine 8; web 6/6; 0 flaky);
+  mutants M0/M2/no-reap **3/3 bị bắt** (M2 note: FS4/FS5 env-blind trên kernel 5.10 vì
+  host seccomp chặn mount — ghi SCR comment); perf 1.8ms/1188kB/2.02MB; host unchanged;
+  B3: SIA self-run (AUDIT_PROMPT §0b) — **PASS 11/11**, 0 claim sai, 0 test rỗng,
+  0 critical/high/medium (medium supply-chain cũ ĐÃ SỬA: pin sha256 3-source), 2 note low;
+  B4: pass → hàng chờ gộp. Comment SCR+SIA đăng trên PR #24, label `audit:pass`.
+- **Pha C-2** — MERGE #24: squash `f344a4e7` (--match-head-commit aa1a452); CI main xanh.
+- **Pha D** — KHÔNG mở việc mới: ngày đã xử lý 2 issue (#6, #23) — vượt quota
+  "1 issue/ngày" (§1 Bước 3); dừng ở điểm sạch (§11 luật chung).
+- **Pha E** — DELETE_MERGED fix/6-sigterm-shim + feat/23-alpine-rootfs (sau xác minh
+  PR MERGED + CI main xanh); ledger 3 dòng qua PR `chore(branches): ledger 2026-11-17
+  (RUN 2)`; xác minh cuối §6: nhánh còn lại chỉ `main`.
+
+## 3. CVE Check (phiên 9)
+
+- Không làm mới CVE (Pha D skip). SCR R7 thu thập: `tools/cve-check.py` rc=0 trên
+  aa1a452 (watchlist cố định, 16 CVE — đúng giới hạn đã ghi ở AUDIT_PROMPT §F).
+
+## 4. Validation (phiên 9 — SCR self-run, log tại clean clone /tmp, tóm tắt trong comment PR #24)
+
+- `make test` ×3: **56/56 PASS rc=0** (isolation 21 + seccomp 20 + netns 7 + alpine 8;
+  3 expected-fail: PROC1, CG1, AL4 — đúng expect); `make test-web` ×3: 6/6.
+- Mutants: M0 no-start → 4/4 suite đỏ; M2 no-capdrop → SIG2–SIG5 đỏ; no-reap → SIG5 đỏ.
+- Host baseline: sha256 passwd/shadow/bash/sudo identical trước/sau — unchanged.
+
+## 5. PR (phiên 9)
+
+- **#21** — merged `42f32732` (SBG Pha C-1, G1–G8 PASS); nhánh xoá DELETE_MERGED.
+- **#24** — merged `f344a4e7` (SBG Pha C-2 sau Pha B pass); nhánh xoá DELETE_MERGED.
+- **#26 (mới)** — `chore(branches): ledger 2026-11-17 (RUN 2)` — ledger + plan.md RUN 2 +
+  branch-report.json + mục Phiên 9 này; miễn G3/G4/G6 (chỉ đụng ledger + journal/**);
+  gộp khi CI xanh đúng HEAD.
+- Merge: #21 ✓ #24 ✓ — repo về trạng thái mục tiêu §11: chỉ còn `main`.
+
+## Kế hoạch ngày mai
+
+1. GĐ1 roadmap mục 2 (phần còn mở): apk add online trong instance — chờ egress
+   pasta/slirp4netns (mục 3); hoặc mục 2b Debian rootfs.
+2. GĐ1 mục 3: chroot-escape test sâu hơn (issue #5) — chạy lại suite trên rootfs alpine
+   (nhiều mặt tấn công hơn busybox); đánh giá follow-up low từ audit: FS4/FS5 errno
+   discrimination + CI rm rootfs-alpine trước make test.
+3. CVE check lại với NVD từ máy dev nếu vẫn timeout — dựa cve-daily cron trên runner.
+4. Kiểm `/dev/kvm` trên runner (probe workflow) — precondition GĐ3.
