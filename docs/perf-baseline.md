@@ -17,6 +17,7 @@
 | 2026-11-17 (web, phiên 3) | 1.03 | 1148 | 2.01 | + busybox httpd in-sandbox (`minict.sh web`), perf-check PASS |
 | 2026-11-17 (seccomp, phiên 4) | 1.15 (perf-check N=20) | 1060 | 2.02 | + seccomp-bpf blocklist mặc định BẬT; A/B N=40: ON 1.38 vs OFF 1.18 → **+0.2ms** (chi tiết D11/D14, evidence `2026-11-17-seccomp-ab.txt`) |
 | 2026-11-17 (netns, phiên 5) | 1.90 (perf-check N=20) | 1032 | 2.03 | + CLONE_NEWNET mặc định + lo up (D17/D18) + unix-socket bridge web (D16); A/B N=40 interleaved: ON 1.80 vs OFF 1.52 → **+0.28ms** netns (bench `bench-netns-ab.sh`, evidence `2026-11-17-netns.txt`); perf-check PASS tất cả ngưỡng |
+| 2026-11-17 (sigterm shim, phiên 7) | 1.85 (perf-check N=40) | 1160 | 2.02 | + pidns-1 signal shim (D19); A/B N=40: trước (không shim) 1.66 vs sau 1.83 → **+0.17ms** (1 fork + waitpid; evidence `2026-11-17-sigterm-ab.txt`); perf-check PASS tất cả ngưỡng |
 
 ## Web instance (bổ sung cho area:web)
 

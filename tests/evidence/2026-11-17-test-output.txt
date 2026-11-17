@@ -1,29 +1,67 @@
-=== EVIDENCE: isolation tests — 2026-11-17 02:47:34 UTC
-kernel: 5.10.134-013.15.kangaroo.al8.x86_64
-user: uid=1001(z) gid=1001(z) groups=1001(z)
-
-=== minict isolation tests (2026-11-17 02:47:34) ===
+make -C sandbox
+make[1]: Entering directory '/home/z/my-project/repo/sandbox'
+make[1]: Nothing to be done for 'all'.
+make[1]: Leaving directory '/home/z/my-project/repo/sandbox'
+bash sandbox/mkrootfs.sh rootfs
+rootfs 'rootfs' already exists, skipping (rm -rf it to rebuild)
+bash tests/run-suites.sh
+### suite: test_isolation.sh
+=== minict isolation tests (2026-11-17 06:35:39) ===
 FS1   sandbox sees OUR /etc/passwd (marker)                    PASS
 FS2   host home dir /home/z unreachable                        PASS
 FS3   no /old-* escape path after pivot_root+umount            PASS
 FS4   mount --bind host / fails (no caps post-drop)            PASS
 FS5   post-capdrop tmpfs mount also fails                      PASS
 FS6   write to /home lands on-disk in rootfs (host view)       PASS
-PID1  shell is PID 1 in its own pid namespace                  PASS
+PID1  payload is PID 2 behind pidns-1 signal shim              PASS
 PID2  no host processes visible (ps lists none)                PASS
-UID1  uid=0 inside (mapped), no other uids                     PASS
+UID1  uid=0 inside, no foreign gid visible (0/overflow only)   PASS
 UID2  files created inside owned by real host uid              PASS
 NNP1  PR_SET_NO_NEW_PRIVS=1 verified via host /proc            PASS
 HOST1 hostname isolated ('minict')                             PASS
 SIG1  SIGKILL wrapper: PDEATHSIG+pidns teardown, no orphan     PASS
-NET1  netns NOT isolated (shared host net — known gap)       PASS(expected-fail)
+SIG2  SIGTERM wrapper: tree exits 143 (128+15), no orphan      PASS
+SIG3  SIGINT wrapper: tree exits 130 (128+2)                   PASS
+SIG4  control: TERM to payload (non-init) delivered (143)      PASS
+NET1  netns isolated: only lo inside, no host iface            PASS
+NET2  loopback is UP inside sandbox netns                      PASS
 PROC1 /proc mount blocked by host seccomp (known gap)          PASS(expected-fail)
 CG1   no cgroup limits (cgroups v1 only — known gap)         PASS(expected-fail)
-=== summary: PASS=16 FAIL=0 ===
-
-=== host integrity after test run:
-leaked sandbox processes (expect none):
-(none)
-host /etc/passwd sha256 (unchanged during run):
-21d5de2dc39f2ceb19e33f8cc124b311b57a48aea6d7703a9a98b93079d412bd  /etc/passwd
-instances dir (expect empty):
+=== summary: PASS=20 FAIL=0 ===
+### suite: test_isolation.sh — OK
+### suite: test_seccomp.sh
+=== minict seccomp tests (2026-11-17 06:35:42) ===
+SC0   shell workload works under filter                        PASS
+SC1   keyctl blocked (EPERM)                                   PASS
+SC2   open_by_handle_at blocked (EPERM)                        PASS
+SC3   bpf blocked (EPERM)                                      PASS
+SC4   setns blocked (EPERM)                                    PASS
+SC5   unshare blocked (EPERM)                                  PASS
+SC6   io_uring_setup blocked (EPERM)                           PASS
+SC7   clone(CLONE_NEWUSER) blocked (EPERM)                     PASS
+SC8   ptrace blocked (EPERM)                                   PASS
+SC9   socket(AF_ALG) blocked (EPERM)                           PASS
+SC10  clone3 returns ENOSYS (fallback-friendly)                PASS
+SC11  control: setns NOT EPERM without filter                  PASS
+SC12  control: io_uring NOT EPERM without filter               PASS
+SC13  process_vm_readv blocked (EPERM)                         PASS
+SC14  control: keyctl works without filter                     PASS
+SC15  mount inside sandbox fails under filter (EPERM)          PASS
+SC16  control: process_vm NOT EPERM without filter             PASS
+SC17  socket(AF_NETLINK) blocked (EPERM)                       PASS
+SC18  control: netlink socket works without filter             PASS
+SC19  control: socket(AF_INET) still allowed (httpd)           PASS
+=== summary: PASS=20 FAIL=0 ===
+### suite: test_seccomp.sh — OK
+### suite: test_netns.sh
+=== minict netns tests (2026-11-17 06:35:42) — ports 18483/18521, host srv 18682 ===
+NS1   sandbox netns CANNOT reach host loopback listener        PASS
+NS2   control: MINICT_NO_NETNS=1 reaches the same listener     PASS
+NS3   host curl -> unix bridge -> httpd in netns (200+marker)  PASS
+NS4   relay unix socket exists on instance rootfs              PASS
+NS5   host proxy binds loopback-only (no 0.0.0.0)              PASS
+NS6   two instances: each proxy serves its OWN sandbox         PASS
+NS7   down kills proxy, frees port, removes instance           PASS
+=== summary: PASS=7 FAIL=0 ===
+### suite: test_netns.sh — OK
+=== run-suites summary: 3 suites, failed: none ===

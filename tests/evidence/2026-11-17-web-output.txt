@@ -1,33 +1,11 @@
-=== SDDA validation 2026-11-17 03:35:32 — kernel 5.10.134-013.15.kangaroo.al8.x86_64, uid 1001 ===
-
---- 1. make test (isolation/escape suite) ---
-bash sandbox/mkrootfs.sh rootfs
-rootfs 'rootfs' already exists, skipping (rm -rf it to rebuild)
-bash tests/test_isolation.sh
-=== minict isolation tests (2026-11-17 03:35:32) ===
-FS1   sandbox sees OUR /etc/passwd (marker)                    PASS
-FS2   host home dir /home/z unreachable                        PASS
-FS3   no /old-* escape path after pivot_root+umount            PASS
-FS4   mount --bind host / fails (no caps post-drop)            PASS
-FS5   post-capdrop tmpfs mount also fails                      PASS
-FS6   write to /home lands on-disk in rootfs (host view)       PASS
-PID1  shell is PID 1 in its own pid namespace                  PASS
-PID2  no host processes visible (ps lists none)                PASS
-UID1  uid=0 inside (mapped), no other uids                     PASS
-UID2  files created inside owned by real host uid              PASS
-NNP1  PR_SET_NO_NEW_PRIVS=1 verified via host /proc            PASS
-HOST1 hostname isolated ('minict')                             PASS
-SIG1  SIGKILL wrapper: PDEATHSIG+pidns teardown, no orphan     PASS
-NET1  netns NOT isolated (shared host net — known gap)       PASS(expected-fail)
-PROC1 /proc mount blocked by host seccomp (known gap)          PASS(expected-fail)
-CG1   no cgroup limits (cgroups v1 only — known gap)         PASS(expected-fail)
-=== summary: PASS=16 FAIL=0 ===
-
---- 2. make test-web ---
+make -C sandbox
+make[1]: Entering directory '/home/z/my-project/repo/sandbox'
+make[1]: Nothing to be done for 'all'.
+make[1]: Leaving directory '/home/z/my-project/repo/sandbox'
 bash sandbox/mkrootfs.sh rootfs
 rootfs 'rootfs' already exists, skipping (rm -rf it to rebuild)
 bash tests/test_web.sh
-=== minict web tests (2026-11-17 03:35:33) — port 19433 ===
+=== minict web tests (2026-11-17 06:35:47) — port 19331 ===
 WEB1  httpd inside sandbox answers 200 with marker             PASS
 WEB2  listener is loopback-only (no 0.0.0.0 bind)              PASS
 WEB3  path traversal cannot read host /etc/passwd              PASS
@@ -35,26 +13,3 @@ WEB4  probe in instance rootfs served; host cwd is not         PASS
 WEB5  missing file -> 404, server stays alive                  PASS
 WEB6  down closes port and leaves no processes                 PASS
 === summary: PASS=6 FAIL=0 ===
-
---- 3. perf-check ---
-== perf-check 2026-11-17 03:35:34 — kernel 5.10.134-013.15.kangaroo.al8.x86_64, N=20 ==
-cold_start_ms  :     1.41  (threshold 100)
-rss_kb         :     1028  (threshold 10240)
-disk_base_mb   :     2.02  (threshold 20)
-perf-check: PASS
-
---- 4. host baseline (sha256) ---
-21d5de2dc39f2ceb19e33f8cc124b311b57a48aea6d7703a9a98b93079d412bd  /etc/passwd
-223fe8564b60636bc738b6178d3ba9a50ef7d791266b0efae6363bb716e4c47f  /bin/bash
-a59f393bad5037644b89de64fe558ae6d5d1473c25c63022241e7c7019ad2f0c  /usr/bin/sudo
-
---- 5. listeners (ss -tlnp) ---
-LISTEN 0      2048       127.0.0.1:12600      0.0.0.0:*          
-LISTEN 0      128        127.0.0.1:19001      0.0.0.0:*          
-LISTEN 0      511        127.0.0.1:12700      0.0.0.0:*          
-LISTEN 0      1024         0.0.0.0:19005      0.0.0.0:*          
-LISTEN 0      128          0.0.0.0:19006      0.0.0.0:*          
-LISTEN 0      4096               *:81               *:*          
-
---- 6. leaked sandbox processes ---
-(none)

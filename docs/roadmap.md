@@ -19,12 +19,23 @@
 2. B — Develop prototype (web service trong sandbox, đo startup/RAM)
 3. C — CVE check: `python3 tools/cve-check.py --json evidence/cve-$(date +%F).json`
    + cập nhật `docs/cve-watchlist.md`
-4. D — No-Compromise Validation: `make test` (isolation 17 + seccomp 20 + netns 7,
+4. D — No-Compromise Validation: `make test` (isolation 20 + seccomp 20 + netns 7,
    pipefail thật — issue #14) + `make test-web` + lưu evidence vào `tests/evidence/`
    + integrity check host
 5. Ghi `docs/daily-log-YYYY-MM-DD.md` (format 5 mục)
 
 ## Đã xong
+- [x] 2026-11-17 (phiên 7, SDDA): **SIGTERM/SIGINT delivered qua pidns-1 signal
+  shim** — root cause #6 là semantics chuẩn pidns-init (pid_namespaces(7): init
+  chỉ nhận signal có handler; SIGKILL/SIGSTOP bị ép qua), KHÔNG phải host
+  seccomp (giả thuyết D4 sửa — SIG4 control chứng minh); shim cài
+  {TERM,INT,HUP,QUIT,USR1,USR2,WINCH} + forward payload + mirror exit
+  128+sig; wrapper gửi signal vào shim pid (docker semantics), bỏ group-kill;
+  fix 2 bẫy SIG_IGN sống sót fork+exec (forwarders cài trước fork pidns +
+  payload reset DFL pre-exec); isolation 17 → 20 (SIG2/SIG3/SIG4), PID1 =
+  "payload is PID 2"; teardown D4 giữ nguyên fail-safe. A/B: TERM swallowed →
+  delivered rc=143; cold start +0.17ms (1.66→1.83, N=40); perf-check PASS
+  1.85/1160/2.02. (D19, evidence `2026-11-17-sigterm-ab.txt`)
 - [x] 2026-11-17 (phiên 6): **CI xanh thật** — pipefail (`defaults: run: shell: bash`
   cho ci.yml + cve-daily.yml), SIG1 NOFORK-aware (busybox Ubuntu 24.04 chạy sleep
   NOFORK — tái hiện bằng chính .deb của runner), UID1 overflow-aware (supplementary
@@ -65,19 +76,15 @@
 
 ## Giai đoạn 1 — minict runtime (HIỆN TẠI, theo thứ tự ưu tiên)
 
-1. **Sửa SIGTERM swallowed (issue #6) trước khi thêm lifecycle mới** — cleanup
-   SIGKILL+PDEATHSIG+pidns hiện đủ dùng nhưng control plane (GĐ2) cần stop có
-   graceful; môi trường nuốt SIGTERM cross-userns phải được xử lý ở tầng runtime
-   (chỉ báo bên trong, hoặc SIGINT forward bởi minict wrapper) chứ không phải ở
-   từng người dùng.
-2. **chroot-escape test sâu hơn** (issue #5) — fd-based escape, /proc/self/root
+1. **chroot-escape test sâu hơn** (issue #5) — fd-based escape, /proc/self/root
    tricks, setuid binary trong rootfs (NNP phải chặn), core dump leak; thêm case
    cho seccomp (SIGSYS mode) + case escape cho mặt netns mới (netlink đã chặn —
    PoC socket(AF_NETLINK) trong sandbox phải EPERM, đã có SC17).
-3. **Stack web thật trong 1 instance** (DoD tổng thể): nginx/caddy + API + SQLite
+2. **Stack web thật trong 1 instance** (DoD tổng thể): nginx/caddy + API + SQLite
    bên trong 1 instance; `./sandbox up|down|bench` một lệnh; cold start stack < 5s
-   — bridge web D16 là phương án loopback-only cho từng service/port.
-4. **Connectivity qua pasta/slirp4netns thay vì tự làm proxy** (chốt theo owner
+   — bridge web D16 là phương án loopback-only cho từng service/port; signal
+   lifecycle graceful đã có từ phiên 7 (D19).
+3. **Connectivity qua pasta/slirp4netns thay vì tự làm proxy** (chốt theo owner
    2026-11-17): `pasta`/`slirp4netns` cài được cả trên runner CI lẫn máy đích
    (`apt-get install pasta` / `slirp4netns`, không cần root) — đánh giá A/B với
    bridge D16 hiện có; D16 chỉ còn fallback loopback-only. Đây là điều kiện cho
@@ -120,7 +127,8 @@
 - [ ] nginx/caddy + API (Node/Python/Go) + SQLite/Postgres + Redis trong sandbox
 - [x] không Docker, không root (bất biến từ PoC — mọi test chạy uid 1001)
 - [ ] cold start toàn stack < 5s; RAM idle < 300MB
-- [x] escape test cơ bản pass (isolation 17/17 + seccomp 20/20 + netns 7/7, pipefail thật)
+- [x] escape test cơ bản pass (isolation 20/20 + seccomp 20/20 + netns 7/7, pipefail thật;
+  signal lifecycle graceful từ phiên 7)
 - [ ] `./sandbox up|down|bench` một lệnh
 - **Tiến độ: 2/5** (mục 2 và 4).
 - Lưu ý sửa sai đếm cũ ("5/5 mục phụ đã có nền"): web tĩnh busybox + seccomp +

@@ -4,7 +4,11 @@
  * Stack: user ns + mount ns + pid ns + uts ns + ipc ns + NET ns (issue #3),
  *        self-written uid_map, pivot_root + MNT_DETACH of old root,
  *        bind-mounted /dev bits, capability drop + PR_SET_NO_NEW_PRIVS,
- *        seccomp-bpf blocklist (incl. AF_NETLINK — D15). No Docker, no root.
+ *        seccomp-bpf blocklist (incl. AF_NETLINK — D15).
+ *        pidns-1 = signal shim: installs handlers + forwards to the payload
+ *        child (issue #6, D19 — pid_namespaces(7): init ignores
+ *        default-disposition signals from ancestor namespaces).
+ *        No Docker, no root.
  *
  * Usage: minict <rootfs-dir> <cmd> [args...]
  *
@@ -521,11 +525,74 @@ static void install_seccomp(void)
 
 static volatile sig_atomic_t g_child_pid = 0;
 
-/* child runs in its own process group => signal hits the whole tree */
+/* ---------- pidns-1 signal shim (issue #6, D19) ----------
+ *
+ * ROOT CAUSE of issue #6 (session 7, 2026-11-17): the payload used to be
+ * exec'd DIRECTLY as PID 1 of the new pidns. pid_namespaces(7):
+ *   "a process in an ancestor namespace can ... send signals to the 'init'
+ *   process of a child PID namespace only if the 'init' process has
+ *   established a handler for that signal ... SIGKILL or SIGSTOP are
+ *   treated exceptionally: these signals are forcibly delivered when sent
+ *   from an ancestor PID namespace."
+ * A default-disposition SIGTERM (kill() rc=0, no delivery — measured day 1,
+ * A/B/C matrix) is therefore KERNEL BEHAVIOR, not the host-seccomp
+ * hypothesis of D4. The D4 fail-safe layer stays (see below).
+ *
+ * FIX (tini/runc pattern): a tiny in-ns supervisor stays as pidns-1,
+ * INSTALLS handlers for the forwardable termination signals, and fork+execs
+ * the real payload as its child. With a handler != SIG_DFL the kernel
+ * DELIVERS the signal; the shim forwards it to the payload and mirrors the
+ * exit status (signal death -> exit(128+sig), the bash convention —
+ * observable parity without relying on self-re-raise through the pidns-init
+ * UNKILLABLE semantics).
+ *
+ * Forwarded: TERM INT HUP QUIT USR1 USR2 WINCH. SIGKILL/SIGSTOP cannot be
+ * caught (kernel-forced from the ancestor ns) — D4 teardown unchanged and
+ * still guaranteed: the shim keeps PR_SET_PDEATHSIG and is still pidns-1,
+ * so its death still SIGKILLs everything left in the namespace.
+ *
+ * The host-side wrapper now signals the SHIM PID only (docker semantics:
+ * signal PID 1, PID 1 manages its tree) — the old group-kill(-pgid) would
+ * hit the payload twice (once via the group, once via the shim forward).
+ * Payload-tree members are covered by the pidns teardown when the shim
+ * exits. The shim deliberately gets NO seccomp filter (same posture as the
+ * web relay, D16: forked before install, never execs, caps dropped).
+ */
+
+static volatile sig_atomic_t g_payload_pid = 0;
+
+/* async-signal-safe forwarder (kill(2) is AS-safe per signal-safety(7)) */
+static void fwd_to_payload(int sig)
+{
+        if (g_payload_pid > 0)
+                kill((pid_t)g_payload_pid, sig);
+}
+
+/* shim event loop: mirror the payload's exit status, never returns */
+static void shim_wait_loop(pid_t payload)
+{
+        int status;
+
+        while (waitpid(payload, &status, 0) < 0) {
+                if (errno != EINTR)
+                        _exit(127);
+        }
+        if (WIFEXITED(status))
+                _exit(WEXITSTATUS(status));
+        if (WIFSIGNALED(status))
+                _exit(128 + WTERMSIG(status));
+        _exit(127);
+}
+
+/* host-side forwarder: signal the pidns-1 SHIM pid (docker semantics —
+ * signal PID 1; the shim forwards to the payload, D19). A group-wide kill
+ * (-pgid) would double-signal the payload: once via the group, once via the
+ * shim forward. Installed before the pidns fork so the shim/payload chain
+ * inherits CAUGHT dispositions, not the launcher's SIG_IGN (SIG3). */
 static void fwd_sig(int sig)
 {
         if (g_child_pid > 0)
-                kill(-(pid_t)g_child_pid, sig);
+                kill((pid_t)g_child_pid, sig);
 }
 
 int main(int argc, char **argv)
@@ -613,12 +680,28 @@ int main(int argc, char **argv)
         if (rmdir(rel) < 0)
                 warn("rmdir(old)");
 
+        /* forwarders BEFORE the pidns fork: the shim and the payload
+         * inherit these dispositions. Installing them only after the fork
+         * (the old order) leaked the launcher's SIG_IGN into the shim:
+         * a background job started by a non-interactive shell has
+         * SIGINT/SIGQUIT set to SIG_IGN (POSIX "asynchronous list" rule),
+         * and SIG_IGN SURVIVES fork+exec — the payload could then never
+         * receive SIGINT (SIG3 failure, session 7). The shim still installs
+         * its own handlers on top; here we only fix the inherited state.
+         * fwd_sig is a no-op until g_child_pid is set below. */
+        signal(SIGINT, fwd_sig);
+        signal(SIGTERM, fwd_sig);
+
         pid = fork();
         if (pid < 0)
                 die("fork (enter pidns)");
 
         if (pid == 0) {
-                /* ---- container side: we are PID 1 of the new pidns ---- */
+                /* ---- container side: pidns-1 = signal shim (D19) ---- */
+                sigset_t fwd, old;
+                pid_t payload;
+                struct sigaction sa;
+
                 setpgid(0, 0); /* own process group for tree-wide signals */
                 if (prctl(PR_SET_PDEATHSIG, SIGKILL) < 0)
                         warn("PR_SET_PDEATHSIG");
@@ -637,26 +720,92 @@ int main(int argc, char **argv)
                 if (g_web_port > 0)
                         spawn_web_relay();
 
-                drop_all_caps(); /* after ALL privileged-in-ns work is done */
+                /* block the forwardable signals around the payload fork so
+                 * one racing fork->g_payload_pid is QUEUED, not lost; they
+                 * are delivered right after the handlers are installed */
+                sigemptyset(&fwd);
+                sigaddset(&fwd, SIGTERM);
+                sigaddset(&fwd, SIGINT);
+                sigaddset(&fwd, SIGHUP);
+                sigaddset(&fwd, SIGQUIT);
+                sigaddset(&fwd, SIGUSR1);
+                sigaddset(&fwd, SIGUSR2);
+                sigaddset(&fwd, SIGWINCH);
+                if (sigprocmask(SIG_BLOCK, &fwd, &old) < 0)
+                        die("sigprocmask(SIG_BLOCK)");
 
-                install_seccomp(); /* last lock: syscall blocklist, before exec */
+                payload = fork();
+                if (payload < 0)
+                        die("fork (payload)");
 
-                setenv("PATH", "/bin:/sbin:/usr/bin", 1);
-                setenv("HOME", "/", 1);
-                setenv("PS1", "minict> ", 1);
-                setenv("MINICT", "1", 1);
+                if (payload == 0) {
+                        /* ---- payload: plain child, normal signal rules;
+                         * NOT pidns-1 anymore, so default-disposition
+                         * signals from the ancestor namespace ARE delivered
+                         * (pid_namespaces(7) rule only targets init) ---- */
+                        if (prctl(PR_SET_PDEATHSIG, SIGKILL) < 0)
+                                warn("payload PDEATHSIG");
+                        /* a blocked mask SURVIVES exec(2) — restore ours */
+                        if (sigprocmask(SIG_SETMASK, &old, NULL) < 0)
+                                _exit(126);
+                        /* so do signal DISPOSITIONS: reset everything the
+                         * launcher/shim chain may have left ignored or
+                         * caught (SIG_IGN survives exec — SIG3 lesson) to
+                         * the defaults a bare command would see */
+                        {
+                                static const int rst[] = { SIGHUP, SIGINT,
+                                        SIGQUIT, SIGTERM, SIGUSR1,
+                                        SIGUSR2, SIGWINCH };
+                                size_t k;
 
-                execvp(cmd[0], cmd);
-                fprintf(stderr, "minict: exec %s: %s\n", cmd[0],
-                        strerror(errno));
-                _exit(127);
+                                for (k = 0;
+                                     k < sizeof(rst) / sizeof(rst[0]);
+                                     k++)
+                                        signal(rst[k], SIG_DFL);
+                        }
+
+                        drop_all_caps(); /* after ALL privileged work is done */
+
+                        install_seccomp(); /* last lock: blocklist, before exec */
+
+                        setenv("PATH", "/bin:/sbin:/usr/bin", 1);
+                        setenv("HOME", "/", 1);
+                        setenv("PS1", "minict> ", 1);
+                        setenv("MINICT", "1", 1);
+
+                        execvp(cmd[0], cmd);
+                        fprintf(stderr, "minict: exec %s: %s\n", cmd[0],
+                                strerror(errno));
+                        _exit(127);
+                }
+
+                /* ---- shim continues as pidns-1 (never execs) ---- */
+                g_payload_pid = payload;
+                drop_all_caps(); /* relay posture (D16/D19), nothing to run */
+
+                memset(&sa, 0, sizeof(sa));
+                sa.sa_handler = fwd_to_payload;
+                if (sigaction(SIGTERM, &sa, NULL) < 0 ||
+                    sigaction(SIGINT, &sa, NULL) < 0 ||
+                    sigaction(SIGHUP, &sa, NULL) < 0 ||
+                    sigaction(SIGQUIT, &sa, NULL) < 0 ||
+                    sigaction(SIGUSR1, &sa, NULL) < 0 ||
+                    sigaction(SIGUSR2, &sa, NULL) < 0 ||
+                    sigaction(SIGWINCH, &sa, NULL) < 0)
+                        die("sigaction(shim)");
+
+                /* pending signals queued during the fork window fire NOW,
+                 * with g_payload_pid already set (race closed) */
+                if (sigprocmask(SIG_SETMASK, &old, NULL) < 0)
+                        die("sigprocmask(SIG_SETMASK)");
+
+                shim_wait_loop(payload); /* never returns */
         }
 
         /* ---- host side: supervisor, no extra privileges ---- */
         g_child_pid = pid;
         setpgid(pid, pid); /* also from parent to avoid the pgid race */
-        signal(SIGINT, fwd_sig);
-        signal(SIGTERM, fwd_sig);
+        /* (INT/TERM forwarders installed BEFORE the fork — see above) */
 
         int status;
         while (waitpid(pid, &status, 0) < 0) {
