@@ -562,7 +562,7 @@ mới, PR #25): sửa trên chính nhánh, rồi SCR/SIA lại trên SHA mới.
 1. **[medium] Reap zombie**: `shim_wait_loop` cũ chỉ wait payload → grandchild
    re-parent về pidns-1 thành zombie vĩnh viễn. Sửa theo pattern tini: SIGCHLD
    handler `shim_reap` (`waitpid(-1, WNOHANG)`), flag riêng cho payload, SIGCHLD
-   vào tập block quanh fork (lost-wakeup), `SA_NOCLDSTOP`. Decision **D20**.
+   vào tập block quanh fork (lost-wakeup), `SA_NOCLDSTOP`. Decision **D21**.
    Test mới **SIG5** (isolation 20 → 21): đếm `Z` theo PPID=shim từ host view.
    Negative control: mutant không-reap → 5 zombie (FAIL) / bản thật → 0 (PASS).
 2. **[B10] Khôi phục evidence cũ**: `evidence/isolation.txt` (phiên 1) và

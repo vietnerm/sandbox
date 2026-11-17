@@ -95,7 +95,7 @@ phải dùng `trap INT` + bg `sleep & wait` (wait builtin là wait có thể ng�
   pump signal-forwarder; cùng posture với relay D16 (không filter). unshare/
   setns đã EPERM sau capdrop.
 
-## D20: shim_reap — SIGCHLD handler reaps MỌI con (pattern tini) [review-fix
+## D21: shim_reap — SIGCHLD handler reaps MỌI con (pattern tini) [review-fix
 theo SIA audit PR #21, 2026-11-17, mức medium]
 
 ### Vấn đề (audit)
