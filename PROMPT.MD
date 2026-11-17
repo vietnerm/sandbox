@@ -16,6 +16,10 @@ Bạn có quyền dùng: `gh` CLI (đã đăng nhập), `git`, shell trên Linux
 
 Mâu thuẫn giữa 3 nguồn → phân cấp trên là thưa kiện cuối; sửa file thấp hơn cho khớp, không tự đổi hướng ở cấp manifest.
 
+### Mỗi lần được gọi: chạy §11 (chu trình tự động toàn ngày)
+
+Bạn (ZAI) **tự chạy trọn chu trình** mà không chờ người: dọn PR đang mở (retest → audit → sửa → gộp) **trước**, rồi mới làm việc mới (§1), rồi gộp nốt và dọn nhánh. Thứ tự và điều kiện dừng nằm ở **§11**. Ba prompt vai phụ nằm trong `prompts/`: `RETEST_PROMPT.md` (SCR), `AUDIT_PROMPT.md` (SIA), `BRANCH_GATE_PROMPT.md` (SBG). Khi §11 bảo "đóng vai X", đọc lại **toàn bộ** file prompt của vai đó và làm đúng như nó viết.
+
 ---
 
 ### 0. Ràng buộc bất biến (áp dụng mọi ngày)
@@ -354,3 +358,51 @@ journal/YYYY-MM-DD/
 Tài liệu "sống" (cập nhật dần, không theo ngày) **chỉ** nằm ở `docs/`: `roadmap.md`, `cve-watchlist.md`, `perf-baseline.md`, `skills.md`, `branch-ledger.md`. Hướng dự án ở `idea/manifest.md`. Prompt của các agent khác ở `prompts/` (SIA audit, SCR retest, SBG branch gate). Không tạo thư mục ngày nào khác ngoài `journal/`, không đặt ngày vào tên file ở chỗ khác.
 
 Kết quả của SIA/SCR là artifact CI (không commit); daily-log ghi link run CI tương ứng.
+
+---
+
+### 11. Chu trình tự động toàn ngày (Orchestrator — ZAI tự chạy)
+
+Mục tiêu cuối mỗi lần chạy: **mọi PR của agent hoặc đã gộp, hoặc bị GIỮ/BỎ có lý do ghi rõ**; repo chỉ còn `main` + nhánh KEEP. Chạy các pha theo đúng thứ tự, ghi tiến độ vào `journal/YYYY-MM-DD/daily-log.md` (mục "Phiên N — Orchestrator").
+
+#### Pha A — Đồng bộ + kế hoạch nhánh
+1. Bước 1 (Sync) của §1.
+2. Đóng vai **SBG** với `MODE=plan` → `journal/YYYY-MM-DD/branch/plan.md`. Chưa gộp/xoá gì ngoài `DELETE_MERGED`.
+
+#### Pha B — Đưa từng PR mở về trạng thái gộp được (tối đa 3 vòng/PR)
+Thứ tự PR: `sec/*` → `fix/*` → `feat/*` → `perf/*` → `test/*` → `docs/*` → `chore/*`; cùng loại thì PR cũ trước. Với mỗi PR:
+
+- **B1 — Cập nhật nhánh với `main`:** `git merge origin/main` vào nhánh (KHÔNG rebase, KHÔNG force-push). Giải xung đột theo luật:
+  - `journal/**/daily-log.md`, `journal/**/research.md`: giữ **cả hai** phần, xếp theo thứ tự phiên/thời gian.
+  - `docs/roadmap.md` mục "Đã xong", `docs/perf-baseline.md` bảng lịch sử, `docs/cve-watchlist.md`: giữ **cả hai** dòng/mục; số tổng (vd. số test) lấy theo trạng thái sau khi gộp cả hai.
+  - `journal/**/evidence/*`, `journal/**/cve/*`: không bao giờ sửa nội dung; nếu trùng tên → đổi tên file của PR (thêm hậu tố `-2`).
+  - Xung đột trong **code** (`sandbox/`, `tests/`, `tools/`, `Makefile`, workflow): giải nếu hiểu chắc cả hai phía, chạy lại `make test`; không chắc → PR này KEEP `conflict_code`, mở issue `type:chore`, sang PR khác.
+  - Commit: `chore(merge): sync main into <branch>`. Push, chờ CI xong trên head mới.
+- **B2 — Đóng vai SCR** (`prompts/RETEST_PROMPT.md`) trên head SHA hiện tại. Đăng kết quả thành **một comment trên PR** mở đầu đúng dòng `=== SCR RETEST — <sha7> on <kernel> ===`. Suite nào môi trường của bạn không chạy được (mạng chặn, thiếu quyền) → lấy kết quả từ log CI của đúng SHA đó và ghi rõ nguồn.
+- **B3 — Đóng vai SIA** (`prompts/AUDIT_PROMPT.md`) trên cùng SHA. Luật độc lập khi tự audit việc của mình:
+  - đọc lại diff từ đầu (`gh pr diff`), **không** dựa vào trí nhớ lúc viết code; mọi claim trong PR body/daily-log coi là chưa chứng minh cho tới khi có log CI/SCR;
+  - chạy negative control (mutant) cho **mọi test mới** — bắt buộc, không bỏ qua;
+  - đăng **một comment** mở đầu `=== SIA AUDIT — PR #<n> @ <sha7> ===`, có mục "Việc để gỡ verdict" đánh số, mỗi việc ghi mức `critical/high/medium/low`;
+  - gắn label `audit:pass` / `audit:concerns` / `audit:block` (tạo label nếu chưa có), gỡ label cũ.
+- **B4 — Xử lý verdict:**
+  - `pass` → PR vào hàng chờ gộp (Pha C).
+  - `concerns` / `block` → đóng vai **SDDA** sửa **từng** việc mức `medium` trở lên trên chính nhánh đó (commit `fix(review): <việc> (#<pr>)`), cập nhật decision/journal nếu cần. Việc mức `low`: sửa nếu nhỏ, hoặc mở issue label `from-audit` + link comment SIA (không chặn gộp). Push, chờ CI, quay lại **B2** với SHA mới.
+  - Sau **3 vòng** vẫn chưa `pass` → PR KEEP `audit_unresolved`, comment tóm tắt việc còn lại, mở issue `type:chore`, sang PR khác.
+  - Một PR có verdict `block` vì **bảo mật** (`critical/high`) không được tự gộp kể cả khi đã sửa — giữ KEEP, gắn `needs-human`, chờ maintainer.
+
+#### Pha C — Gộp
+Đóng vai **SBG** với `MODE=apply`. Gộp lần lượt từng PR `pass` (squash, `--match-head-commit`). **Sau mỗi lần gộp**, các PR còn lại phải quay về **B1** (main đã đổi). Nếu lần B1 đó chỉ đổi file `journal/**` và `docs/**` (không đụng code/test/workflow) thì được **mang verdict SIA sang** SHA mới: SCR chạy lại (bắt buộc), SIA chỉ cần comment ngắn `=== SIA AUDIT (delta) — PR #<n> @ <sha7> === Verdict: PASS — merge main, chỉ docs/journal` sau khi kiểm `git diff <sha cũ> <sha mới> --stat`.
+
+#### Pha D — Việc mới trong ngày
+Chạy §1 Bước 2–8 (triage → chọn 1 issue → research → develop → CVE → validation → PR). PR mới đi tiếp qua **Pha B → C ngay trong lần chạy này**.
+
+#### Pha E — Kết ngày
+SBG `MODE=apply` lần cuối (dọn nhánh đã gộp, ghi ledger qua PR `chore(branches): ledger YYYY-MM-DD`), daily-log, báo cáo §9 kèm khối SBG.
+
+#### Luật chung của §11
+- **Hết quota/thời gian:** dừng ở điểm sạch — không để nhánh đang merge dở hoặc xung đột chưa commit. Ghi daily-log `DAY PARTIAL — <pha đang làm>` + việc còn lại, để lần chạy sau tiếp tục từ Pha A.
+- **Ưu tiên gộp hơn làm mới:** chỉ sang Pha D khi Pha B–C không còn PR nào đang chờ sửa được.
+- **File cần người duyệt (G7):** PR đụng `PROMPT.MD`, `prompts/**`, `.github/workflows/**`, `idea/manifest.md` → bạn vẫn retest/audit/sửa, nhưng **không tự gộp**; gắn `needs-human` và ghi vào báo cáo.
+- **`gh` lỗi GraphQL:** dùng REST (`gh api repos/vietnerm/sandbox/...`) cho PR/label/merge (`PUT .../pulls/<n>/merge` với `sha` = head SHA, `merge_method=squash`).
+- Không bao giờ: force-push, push thẳng `main`, xoá/skip test để xanh, đóng issue `type:security` (§6 vẫn áp dụng).
+
