@@ -3,7 +3,7 @@
 > Issue: #1 (feat(web): busybox httpd inside minict + make test-web).
 > Kèm standing duty: issue #7 (chore(ci): workflows bắt buộc theo PROMPT.MD §2) —
 > gộp chung PR này vì "CI xanh" (Định nghĩa Done của ngày) cần ci.yml tồn tại
-> trước khi PR được đánh giá. Bối cảnh nghiên cứu: `research/2026-11-17.md` phiên 3.
+> trước khi PR được đánh giá. Bối cảnh nghiên cứu: `journal/2026-11-17/research.md` phiên 3.
 
 ## D6 — busybox httpd là web server đầu tiên trong minict
 

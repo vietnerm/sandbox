@@ -11,7 +11,7 @@
 #                                            (in-sandbox relay in minict) -> httpd.
 #                                            Port >= 1024 enforced (host proxy binds
 #                                            it rootless). See D16 in
-#                                            docs/decision-log/2026-11-17-netns.md
+#                                            journal/2026-11-17/decisions/netns.md
 #   ./sandbox/minict.sh exec <name> -- cmd   run one-shot cmd in instance rootfs (foreground)
 #   ./sandbox/minict.sh shell <name>         interactive-ish shell into instance rootfs
 #   ./sandbox/minict.sh down <name>          stop instance, remove its fs copy
@@ -22,7 +22,7 @@
 # namespaces (rootless userns re-entry requires caps we do not hold); it starts
 # a second namespace set sharing the same instance rootfs — with netns ON each
 # exec gets its OWN fresh netns (loopback-only), not the web instance's.
-# See docs/decision-log/2026-11-17.md.
+# See journal/2026-11-17/decisions/poc.md.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -47,7 +47,7 @@ up)
     # NOTE: bg `sh` with stdin=/dev/null exits on EOF, so the daemon runs a
     # long sleep as PID 1 instead; `exec`/`shell` still give you a shell in
     # the same instance fs (new ns set per process, PoC limitation — see
-    # docs/decision-log/2026-11-17.md)
+    # journal/2026-11-17/decisions/poc.md)
     nohup "$BIN" "$INST/$name/rootfs" /bin/sh -c 'sleep 31536000' \
         </dev/null >"$INST/$name/log" 2>&1 &
     echo $! > "$INST/$name/pid"

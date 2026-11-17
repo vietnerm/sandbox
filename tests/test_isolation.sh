@@ -44,7 +44,7 @@ nnp1_test() {
     return $rc
 }
 sig1_test() {
-    # ENV FACT (see research/2026-11-17.md): SIGTERM sent from outside to a
+    # ENV FACT (see journal/2026-11-17/research.md): SIGTERM sent from outside to a
     # process inside an unprivileged userns is swallowed here (kill() rc=0,
     # no delivery); SIGKILL is delivered. So the no-orphan guarantee is
     # verified via SIGKILL + PR_SET_PDEATHSIG + pidns-1-exit teardown.

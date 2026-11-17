@@ -55,7 +55,7 @@ filter của mình chứ không phải host.
 | **delta** | **+0.20 ms** | ~0 | ≈ chi phí cBPF qua ~1 lần syscall storm lúc spawn |
 
 Vẫn cách ngưỡng PROMPT (100 ms) một khoảng 70x. RSS/disk không đổi (1060 kB / 2.02 MB).
-Kết quả: `tests/evidence/2026-11-17-seccomp-ab.txt`.
+Kết quả: `journal/2026-11-17/evidence/seccomp-ab.txt`.
 
 ## Kẹt >30 phút? Có, 2 lần — đều do tự tin quá:
 1. probe test động-link trong rootfs busybox (không có ld.so) → exec ENOENT câm →

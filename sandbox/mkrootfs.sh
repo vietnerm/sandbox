@@ -37,7 +37,7 @@ for a in $("$TARGET/bin/busybox" --list | grep -vx busybox); do
 done
 
 # /dev placeholders: minict bind-mounts host nodes over these (mknod is
-# EPERM inside userns on kernel 5.10.134, see research/2026-11-17.md)
+# EPERM inside userns on kernel 5.10.134, see journal/2026-11-17/research.md)
 touch "$TARGET"/dev/{null,zero,urandom,random}
 chmod 0666 "$TARGET"/dev/{null,zero,urandom,random}
 

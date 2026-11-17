@@ -1,6 +1,6 @@
 # Branch Ledger — SBG (Sandbox Branch Gatekeeper), append-only
 
-> 1 dòng/nhánh theo BRANCH_GATE_PROMPT.md §5. Cập nhật qua PR (không push thẳng main).
+> 1 dòng/nhánh theo prompts/BRANCH_GATE_PROMPT.md §5. Cập nhật qua PR (không push thẳng main).
 > Quyết định: MERGE | DELETE_MERGED | KEEP | DROP. Archive tag chỉ cần cho DROP nhánh
 > còn commit chưa gộp; nhánh DELETE_MERGED không cần tag (nội dung đã nằm trọn trong main).
 

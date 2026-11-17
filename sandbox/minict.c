@@ -17,7 +17,7 @@
  *                       host webproxy.py reaches httpd through it because
  *                       AF_UNIX is filesystem-scoped, not netns-scoped)
  *
- * Verified on kernel 5.10.134 (see research/2026-11-17.md):
+ * Verified on kernel 5.10.134 (see journal/2026-11-17/research.md):
  *  - pivot_root works inside unprivileged userns
  *  - mounts over host mountpoints are EPERM (MNT_LOCKED), mounts over plain
  *    dirs inside our rootfs work

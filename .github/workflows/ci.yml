@@ -38,9 +38,9 @@ jobs:
       # an earlier suite is red, and fails if any of them failed — CI evidence
       # is complete and the exit code is real (pipefail above).
       - name: test (isolation 17 + seccomp 20 + netns 7, all suites)
-        run: make test 2>&1 | tee tests/evidence/ci-test-all.txt
+        run: mkdir -p ci-evidence && make test 2>&1 | tee ci-evidence/test-all.txt
       - name: test-web (6 cases)
-        run: make test-web 2>&1 | tee tests/evidence/ci-test-web.txt
+        run: mkdir -p ci-evidence && make test-web 2>&1 | tee ci-evidence/test-web.txt
       - name: perf-check (cold start / RSS / disk vs thresholds)
         run: make perf-check
 
@@ -49,5 +49,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: test-evidence
-          path: tests/evidence/ci-*.txt
+          path: ci-evidence/*.txt
           if-no-files-found: ignore

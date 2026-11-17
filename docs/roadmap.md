@@ -17,12 +17,12 @@
 ## Quy trình hằng ngày (từ 17-11, bắt buộc)
 1. A — Research kỹ thuật sandbox (Landlock+seccomp / bwrap / gVisor / Firecracker / Wasm)
 2. B — Develop prototype (web service trong sandbox, đo startup/RAM)
-3. C — CVE check: `python3 tools/cve-check.py --json evidence/cve-$(date +%F).json`
+3. C — CVE check: `python3 tools/cve-check.py --json journal/$(date +%F)/cve/<slug>.json`
    + cập nhật `docs/cve-watchlist.md`
 4. D — No-Compromise Validation: `make test` (isolation 17 + seccomp 20 + netns 7,
-   pipefail thật — issue #14) + `make test-web` + lưu evidence vào `tests/evidence/`
+   pipefail thật — issue #14) + `make test-web` + lưu evidence vào `journal/YYYY-MM-DD/evidence/`
    + integrity check host
-5. Ghi `docs/daily-log-YYYY-MM-DD.md` (format 5 mục)
+5. Ghi `journal/YYYY-MM-DD/daily-log.md` (quy tắc thư mục: PROMPT.MD §10)
 
 ## Đã xong
 - [x] 2026-11-17 (phiên 6): **CI xanh thật** — pipefail (`defaults: run: shell: bash`
@@ -40,12 +40,12 @@
   SC17–SC19 (control A/B netlink/tcp); suite mới tests/test_netns.sh 7/7 (NS1–NS7,
   gồm control NS2); NET1 từ xfail → pass thật (NET1/NET2); overhead +0.28ms
   (N=40 interleaved, perf-check PASS 1.90ms/1032kB/2.03MB); fix quay lại Makefile
-  tabs (GNU Make 4.4.1). SBG: gộp PR #11 (BRANCH_GATE_PROMPT.md lên repo theo
+  tabs (GNU Make 4.4.1). SBG: gộp PR #11 (prompts/BRANCH_GATE_PROMPT.md lên repo theo
   lệnh owner) trước phiên dev.
 - [x] 2026-11-17 (phiên 4, SDDA): **seccomp-bpf blocklist mặc định bật** — 32 syscall +
   arg-check clone(CLONE_NEW*)/socket(AF_ALG), clone3→ENOSYS (D11–D13); 17 test mới
   `tests/test_seccomp.sh` gồm 4 control A/B (chứng minh EPERM từ filter mình, không phải
-  host); overhead đo được +0.2ms cold start (A/B N=40, evidence `2026-11-17-seccomp-ab.txt`);
+  host); overhead đo được +0.2ms cold start (A/B N=40, evidence `journal/2026-11-17/evidence/seccomp-ab.txt`);
   bài học số syscall phải grep unistd_64.h (D14 — setns là 308, không phải 306). SBG:
   gộp PR #9, dọn 2 nhánh đã gộp, ledger `docs/branch-ledger.md` tạo mới.
 - [x] 2026-11-17 (phiên 3, SDDA): **web server trong sandbox** — `minict.sh web` +

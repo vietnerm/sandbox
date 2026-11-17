@@ -21,4 +21,4 @@ Closes #<issue-number>
 - [ ] Không dùng Docker
 - [ ] Rootless (uid ≥ 1000)
 - [ ] Có test mới trong `tests/`
-- [ ] Có `docs/decision-log/` tương ứng
+- [ ] Có `journal/YYYY-MM-DD/decisions/<slug>.md` tương ứng
