@@ -547,3 +547,22 @@
   trong pidns** (run 44039937935) — giả thuyết "runner 6.x/7.x cho phép" SAI.
   AL4 env-aware vẫn PASS (nhánh fail-soft). Root-cause runner (apparmor/lockdown/
   seccomp của azure?) → follow-up. Đã sửa D20-4 + roadmap cho khớp đo thật.
+
+# Phiên 8b (review-fix theo SIA audit) — PR #24: pin sha256 + honest AL4/AL7
+
+## Việc đã sửa (commit `fix(review): … (#24)`)
+1. **[medium supply-chain]** pin sha256 3.22.8 trong script (3 nguồn độc lập
+   chéo xác minh; CDN .sha256 giữ làm lớp transport); mutant bad-pin → rc=1.
+2. **[test rỗng]** AL4 → xfail known-gap PROC1-pattern (D22-2), hết vacuous.
+3. **[low]** AL7 assert EINVAL cụ thể (đo được "Invalid argument"); URL derive
+   từ `ALPINE_VERSION`; `bench-alpine-rss.py` → `benchmarks/`; AL5 env-blocked
+   không còn làm CI đỏ giả khi CDN outage.
+
+## Kết quả chạy (clean clone f6e41e0, uid 1001)
+- `make test` ×3: 17+20+7+8 PASS; web 6/6 ×3; perf 1.89/1032/2.02 PASS.
+- alpine RSS median 1103 kB (busybox 1130, N=5) — không regression.
+- sha256 pin: đo trùng pin trên 3 mirrors; bad-pin mutant ABORT rc=1.
+
+## Còn lại
+- Root-cause mount /proc (D20-4) — đề xuất thử mount proc trước umount old
+  root; theo dõi bằng case AL4 tự-đỏ khi sửa. Ghi ở decision D22-2.
