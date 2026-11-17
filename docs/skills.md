@@ -28,6 +28,7 @@
   pid=0 → ESRCH thay vì EPERM).
 - Probe binary chạy trong rootfs busybox phải `-static` — rootfs không có ld.so/libc,
   exec binary động = ENOENT câm (không có stderr giải thích).
+
 - cBPF không đọc được struct qua pointer → clone3 không arg-check được; trả ENOSYS
   để libc fallback về clone(2) (thì arg-check được). Trả EPERM sẽ làm fork() chết
   không fallback.
@@ -91,3 +92,18 @@ python3 -c 'import subprocess,time; t=time.monotonic_ns(); subprocess.run([...])
 - **GNU Make 4.4+ từ chối recipe 8-spaces** ("missing separator"); runner cũ
   (make 4.3) chấp nhận → bug trôi qua CI. Sau khi sửa Makefile, chạy
   `make -n <target>` với make 4.4 để xác nhận thật.
+
+## CI truth (phiên 6)
+- **GitHub Actions không khai `shell:` = `bash -e` KHÔNG pipefail** — `cmd | tee`
+  trả exit code của `tee` (gần như luôn 0): test đỏ vẫn xanh job (run #20 gánh
+  UID1+SIG1 FAIL). Sửa: `defaults: run: shell: bash` ở workflow level.
+- **busybox-static Ubuntu 24.04 chạy `sleep` NOFORK** — `sh -c "sleep N; …"` không
+  có process con; Debian busybox 1.37 thì fork. Test harness không được giả định
+  có child (SIG1). Tái hiện: tải đúng .deb Ubuntu, thay vào rootfs, probe bằng
+  `pgrep -P`.
+- **Supplementary groups của host user hiển thị qua `id -G` là overflowgid 65534**
+  trong sandbox: unprivileged userns bắt buộc `setgroups=deny` trước gid_map →
+  không thể drop/map thêm group. `id -G | grep -qx 0` fail trên runner (user
+  runner có docker/sudo/…). Test phải chấp nhận {0, 65534}.
+- `make test` kiểu "3 lệnh tuần tự" dừng ở suite đỏ đầu tiên → mất bằng chứng
+  suite sau; dùng aggregator chạy đủ + exit code tổng hợp (`tests/run-suites.sh`).
