@@ -531,7 +531,7 @@
 - Host baseline: passwd sha256 `21d5de2d…` khớp ngày 1 = unchanged; bash/sudo
   lần đầu ghi (không có record cũ để so — xem evidence); shadow EACCES như mọi phiên
 - Bằng chứng: `journal/2026-11-17/evidence/alpine-rootfs.txt`, `alpine-perf.txt`,
-  `host-baseline.txt`, `bench-alpine-rss.py`
+  `host-baseline.txt`; script bench `bench-alpine-rss.py` dời sang `benchmarks/` (B10 audit)
 
 ## PR
 - #24 — `feat(rootfs): alpine minirootfs 3.22.8 — rootless distro rootfs + apk offline (Closes #23)` — ready (không draft), CI xanh 3/3 trên HEAD 4d460cb (run 44040642447): ci + perf-guard PASS

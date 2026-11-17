@@ -3,9 +3,21 @@
 #
 # Kiểm chứng: Alpine rootfs boot được trong minict giữ nguyên isolation
 # (userns/mountns/pidns/netns/capdrop/NNP/seccomp), apk-tools hoạt động
-# offline (signature-verified), mô hình ownership single-uid (D20), và
-# mount /proc trong pidns — env-aware: máy dev (host seccomp chặn mount)
-# assert fail-soft, runner kernel ≥ 6.1 assert /proc thật của pidns.
+# offline (signature-verified), mô hình ownership single-uid (D20).
+#
+# AL4 là known-gap TRUNG THỰC (SIA audit PR #24): mount /proc trong mountns
+# sau pivot_root+umount old root bị EPERM trên CẢ máy dev lẫn runner (measured
+# run 44039937935 — kernel từ chối mount procfs khi không còn procfs "fully
+# visible" trong mount ns, fs/proc/root.c mnt_too_revealing). Case kiểu
+# "fail-soft vẫn PASS" là RỖNG (vacuous — pass cả khi mount hỏng vì lý do
+# khác) nên AL4 giờ assert NGƯỢC LẠI theo pattern PROC1 của suite isolation:
+# xfail — /proc KHÔNG có trong sandbox. Khi root-cause được sửa (đề xuất:
+# mount proc vào new root TRƯỚC khi umount old root — D20-4), AL4 sẽ đỏ
+# FAIL(unexpected success) để nhắc nâng cấp thành assert /proc thật.
+#
+# AL5 env-aware: nếu CDN/SETUP download fail thì đó KHÔNG phải fail của
+# sandbox — case báo PASS(env-blocked) + warning rõ, để CDN outage không làm
+# CI đỏ giả (SIA audit PR #24). apk add fail trong sandbox vẫn FAIL thật.
 #
 # Đếm kỳ vọng: 8 case (AL1–AL8).
 set -u
@@ -15,7 +27,8 @@ REPO="$(cd "$HERE/.." && pwd)"
 MINICT="$REPO/sandbox/minict"
 ROOTFS="$REPO/rootfs-alpine"
 MIRROR="${ALPINE_MIRROR:-https://dl-cdn.alpinelinux.org}"
-BRANCH="v3.22"
+ALPINE_VERSION="${ALPINE_VERSION:-3.22.8}"
+BRANCH="v${ALPINE_VERSION%.*}"   # derive URL branch từ version (audit low #4)
 ARCH="x86_64"
 
 [[ -x "$MINICT" ]] || { echo "build first: make -C sandbox"; exit 1; }
@@ -45,34 +58,34 @@ fi
 
 # run a command inside the alpine sandbox
 ic() { "$MINICT" "$ROOTFS" /bin/sh -c "$1"; }
-# same but capture stderr separately (AL4 needs the mount warn)
-icc() { "$MINICT" "$ROOTFS" /bin/sh -c "$1" 2>"$2"; }
 
-# AL4 helper: env-aware /proc assertion (D20)
-#   dev-host (host seccomp chặn mount — known gap PROC1): minict warn-continue,
-#     /proc KHÔNG được mount → assert sandbox vẫn chạy sạch (fail-soft).
-#   runner (lý thuyết pid_namespaces(7): userns sở hữu pidns → mount được):
-#     assert /proc/self/status Pid: 1 thật. MEASURED 2026-11-17: runner azure
-#     kernel 7.0.0 vẫn EPERM (run 44039937935) — cả 2 env thực tế đi nhánh
-#     fail-soft; root-cause = follow-up (D20-4).
+# AL4 helper: known-gap /proc (SIA audit PR #24 — honest PROC1 pattern):
+# mount /proc in the mountns after pivot_root+umount old root is EPERM on
+# BOTH dev machine and runner (measured run 44039937935 — kernel refuses to
+# mount procfs when no fully-visible procfs remains in the mount ns,
+# fs/proc/root.c mnt_too_revealing). A "fail-soft still PASS" case is
+# VACUOUS (passes even when mount fails for unrelated reasons), so AL4 now
+# asserts the opposite, PROC1-style: xfail — /proc must be ABSENT while the
+# gap exists. xfail semantics = PROC1: the command asserts the FIXED behavior
+# (`[ -e /proc/self ]`) and is expected to FAIL for now (rc!=0 ->
+# PASS(expected-fail)); once /proc mounts (D20-4 fixed in minict) rc==0 ->
+# FAIL(unexpected success) = the upgrade hint to a real /proc assertion.
+# When the root cause is fixed in minict (proposal: mount proc into the new
+# root BEFORE umount of the old root — D20-4), upgrade this case.
 proc4_test() {
-    local errfile out
-    errfile="$(mktemp)"
-    out="$(icc '[ -e /proc/self/status ] && grep -q "^Pid:[[:space:]]*1\$" /proc/self/status' "$errfile" 2>/dev/null)"
-    local rc=$?
-    if grep -q "mount /proc" "$errfile"; then
-        rm -f "$errfile"
-        # mount bị chặn: phải fail-soft — payload vẫn chạy và exit 0 khối khác
-        ic '[ ! -e /proc/self ]'
-        return $?
-    fi
-    rm -f "$errfile"
-    return $rc
+    ic '[ -e /proc/self ]'
 }
 
-# AL5 helper: offline apk add, signature-verified (không --allow-untrusted)
+# AL5 helper: offline apk add, signature-verified (không --allow-untrusted).
+# Setup download failure = env-blocked (PASS + visible warning): a CDN outage
+# must not paint CI red as a FAKE sandbox failure (SIA audit PR #24); a real
+# apk-add failure inside the sandbox still FAILs.
 al5_test() {
-    [[ -n "${PKG_VER:-}" ]] || { echo "       (setup: APKINDEX/pkg download fail — KHÔNG phải fail của sandbox)"; return 1; }
+    if [[ -z "${PKG_VER:-}" ]]; then
+        echo "       (env-blocked: APKINDEX/pkg download fail — CDN/mạng;"
+        echo "        KHÔNG phải fail của sandbox — SIA audit PR #24)"
+        return 0
+    fi
     ic "/sbin/apk add --no-network --no-cache --repositories-file /dev/null /opt/local-repo/$PKG.apk >/dev/null 2>&1 && /sbin/apk info -e $PKG"
 }
 
@@ -83,14 +96,30 @@ al6_test() {
     [[ "$(stat -c %u "$ROOTFS/etc/init.d/acpid" 2>/dev/null)" == "$(id -u)" ]]
 }
 
+# AL7 helper (SIA audit PR #24, low): chown sang uid lạ phải fail với EINVAL
+# cụ thể (uid 100 không nằm trong single-uid mapping, D20) — KHÔNG phải fail
+# chung chung (expect=fail cũ cũng PASS khi minict không boot được). EINVAL đo
+# được 2026-11-17: `chown: /etc/passwd: Invalid argument`, rc=1 — hành vi
+# kernel với unmapped uid, giống nhau trên busybox và alpine rootfs.
+al7_test() {
+    local out
+    out="$(ic 'chown 100:100 /etc/passwd 2>&1; echo RC=$?')"
+    echo "$out" | grep -q '^RC=1$' || return 1
+    echo "$out" | grep -qi 'invalid argument' || return 1
+    # sandbox phải còn sống sau chown fail (không chết vì lỗi khác)
+    ic '[ -e /etc/passwd ]'
+}
+
 PASS=0; FAIL=0
-run_case() { # <id> <desc> <expect: pass|fail> <cmd...>
+run_case() { # <id> <desc> <expect: pass|fail|xfail> <cmd...>
     local id="$1" desc="$2" expect="$3"; shift 3
     local out rc verdict
     out="$("$@" 2>&1)"; rc=$?
     case "$expect" in
-        pass) [[ $rc -eq 0 ]] && verdict=PASS || verdict=FAIL ;;
-        fail) [[ $rc -ne 0 ]] && verdict=PASS || verdict=FAIL ;;
+        pass)  [[ $rc -eq 0 ]] && verdict=PASS || verdict=FAIL ;;
+        fail)  [[ $rc -ne 0 ]] && verdict=PASS || verdict=FAIL ;;
+        xfail) if [[ $rc -ne 0 ]]; then verdict="PASS(expected-fail)"; rc=0;
+               else verdict="FAIL(unexpected success)"; fi ;;
     esac
     printf '%-5s %-56s %s\n' "$id" "$desc" "$verdict"
     if [[ "$verdict" == FAIL* ]]; then
@@ -110,11 +139,10 @@ run_case AL2 "sandbox sees OUR passwd marker (not host)" pass \
     ic 'grep -q minict-sandbox /etc/passwd'
 run_case AL3 "apk-tools present and runnable in sandbox" pass \
     ic '/sbin/apk --version | grep -q apk-tools'
-run_case AL4 "/proc in pidns (env-aware: runner true / dev fail-soft)" pass proc4_test
+run_case AL4 "mount /proc in ns EPERM (known gap — audit PR24)" xfail proc4_test
 run_case AL5 "offline apk add works, signature-verified" pass al5_test
 run_case AL6 "single-uid ownership: 0:0 in ns = real uid on host" pass al6_test
-run_case AL7 "chown to foreign uid fails post-capdrop" fail \
-    ic 'chown 100:100 /etc/passwd'
+run_case AL7 "chown foreign uid: EINVAL (unmapped), sandbox alive" pass al7_test
 run_case AL8 "hostname isolated ('minict') on alpine rootfs" pass \
     ic 'hostname | grep -qx minict'
 
