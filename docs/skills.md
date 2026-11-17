@@ -17,6 +17,24 @@
 -busybox ash: exec-optimize lệnh cuối `sh -c` + defer fatal signal khi wait con →
   giết tree phải bằng process group (setpgid + kill(-pgid)).
 
+## Seccomp (phiên 4)
+- **Số syscall không được nhớ — grep `asm/unistd_64.h`.** Nhớ-tay sai 5/36: setns là
+  308 (306 là syncfs), finit_module 313, delete_module 176, remap_file_pages 216,
+  kexec_file_load 320. Filter đã chạy không lỗi vì JEQ chỉ không khớp — không crash,
+  chỉ "quên chặn" — bug dạng này không thấy qua test thiếu control.
+- Mọi assert "syscall bị chặn" cần **control A/B**: cùng probe với filter tắt
+  (`MINICT_NO_SECCOMP=1`) phải KHÔNG EPERM — nếu host đã tự EPERM sẵn (như AF_ALG
+  trên env này) thì control không phân biệt được, chọn syscall khác (VD process_vm_readv
+  pid=0 → ESRCH thay vì EPERM).
+- Probe binary chạy trong rootfs busybox phải `-static` — rootfs không có ld.so/libc,
+  exec binary động = ENOENT câm (không có stderr giải thích).
+- cBPF không đọc được struct qua pointer → clone3 không arg-check được; trả ENOSYS
+  để libc fallback về clone(2) (thì arg-check được). Trả EPERM sẽ làm fork() chết
+  không fallback.
+- `prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER)` cần NNP đã set (minict set trước
+  unshare — NNP kế thừa qua fork); kernel validate cả program lúc install → install
+  lỗi phải die() fail-closed.
+
 ## Bash (dính 3 lần trong 1 ngày)
 - **`return` semantics: 0 = success.** Đừng map flag `ok=1` thành `return $ok` —
   cứ dùng biến `rc=1` default và `&& rc=0`, hoặc `if ...; then return 0; fi`.
@@ -47,6 +65,8 @@ python3 -c 'import subprocess,time; t=time.monotonic_ns(); subprocess.run([...])
 ## Env-specific (kernel 5.10.134 kangaroo.al8)
 - Seccomp host chặn: mount /proc (mọi nơi), mknod device, **SIGTERM cross-userns
   (rc=0, không delivery!)**. SIGKILL OK.
+- Host cũng đã EPERM sẵn socket(AF_ALG) cho user thường (đo 17-11, phiên 4) —
+  không dùng được làm A/B control trên env này (CI runner khác có thể khác).
 - Không có cgroups v2 unified, không có Landlock (cần ≥5.13), không có KVM.
 - Bất cứ gì "đáng lẽ hoạt động theo man page" phải **đo trước** — env này đã lệch
   man page ít nhất 3 lần trong ngày 1.

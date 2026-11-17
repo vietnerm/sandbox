@@ -1,0 +1,5 @@
+kernel: 5.10.134-013.15.kangaroo.al8.x86_64  N=40 interleaved  (spawn->exit, ms)
+seccomp ON  (default): min=1.18 p50=1.38 p95=1.64 max=4.86
+seccomp OFF (env knob): min=1.02 p50=1.18 p95=1.66 max=3.80
+delta p50 = +0.20 ms (+17.4%)
+delta p95 = -0.02 ms

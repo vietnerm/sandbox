@@ -15,6 +15,7 @@
 |---|---|---|---|---|
 | 2026-11-17 (PoC) | 1.2 (p95 1.4) | ~1128 wrapper, ~1.1–2.3 total | 2.0 | minict v0.1, N=20 |
 | 2026-11-17 (web, phiên 3) | 1.03 | 1148 | 2.01 | + busybox httpd in-sandbox (`minict.sh web`), perf-check PASS |
+| 2026-11-17 (seccomp, phiên 4) | 1.15 (perf-check N=20) | 1060 | 2.02 | + seccomp-bpf blocklist mặc định BẬT; A/B N=40: ON 1.38 vs OFF 1.18 → **+0.2ms** (chi tiết D11/D14, evidence `2026-11-17-seccomp-ab.txt`) |
 
 ## Web instance (bổ sung cho area:web)
 
