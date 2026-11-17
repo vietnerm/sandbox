@@ -25,6 +25,21 @@
 5. Ghi `journal/YYYY-MM-DD/daily-log.md` (quy tắc thư mục: PROMPT.MD §10)
 
 ## Đã xong
+- [x] 2026-11-17 (phiên 8, SDDA): **rootfs Alpine minirootfs 3.22.8** — distro thật
+  boot được trong minict giữ nguyên isolation (D20): `sandbox/mkrootfs-alpine.sh`
+  (pin version + sha256 verify CDN, tar non-root `--no-same-owner` = fakeroot tự
+  nhiên của single-uid mapping — đo AL6: `0:0` trong ns ↔ host-uid); suite mới
+  `tests/test_alpine.sh` 8 case (AL1–AL8) vào `make test` (4 suite, 52 case);
+  apk offline signature-verified chạy trong sandbox (AL5, `acpid-openrc`);
+  **gói hỏng vì chown foreign-uid: đo được** (AL7 — chown `100:100` EPERM
+  post-capdrop; nginx/postgres-type sẽ hỏng ở bước adduser — phương án (a) root-in-ns,
+  (b) pre-bake ownership, (c) idmapped mounts GĐ2 — chi tiết D20);
+  /proc trong pidns env-aware — **ENV FACT đo được phiên này: mount /proc
+  EPERM ở cả máy dev VÀ runner azure kernel 7.0** (run 44039937935) — AL4
+  assert fail-soft đúng cả hai; root-cause runner = follow-up; perf: cold
+  1.83ms, rss 1087KB, disk 8.6MB — PASS mọi ngưỡng;
+  apk add online chờ egress pasta (mục 4); apk-tools quét CVE (2 CVE cũ đã vá,
+  0 mở) → `docs/cve-watchlist.md` có mục apk-tools. (#23)
 - [x] 2026-11-17 (phiên 7, SDDA): **SIGTERM/SIGINT delivered qua pidns-1 signal
   shim** — root cause #6 là semantics chuẩn pidns-init (pid_namespaces(7): init
   chỉ nhận signal có handler; SIGKILL/SIGSTOP bị ép qua), KHÔNG phải host
@@ -86,6 +101,8 @@
    `apk add nginx` / `apt-get install` dưới **single-uid
    mapping** (manifest §5: không dùng `newuidmap` setuid). Ghi rõ gói nào hỏng
    vì `chown` sang uid khác và phương án (bỏ qua / giả lập).
+   → Alpine **xong phiên 8** (xem "Đã xong"); phần còn mở: `apk add` online
+   trong instance **chờ egress pasta (mục 4)** + Debian rootfs (sau).
 2. **chroot-escape test sâu hơn** (issue #5): fd-based escape, /proc/self/root,
    setuid binary trong rootfs (NNP chặn), core dump leak; case seccomp SIGSYS;
    chạy lại cả suite trên rootfs distro thật (có `/proc`, nhiều mặt tấn công hơn busybox).

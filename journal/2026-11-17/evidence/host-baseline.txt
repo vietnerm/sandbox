@@ -1,0 +1,23 @@
+=== EVIDENCE: host baseline + listeners — 2026-11-17 (phiên 8, alpine-rootfs) ===
+kernel: 5.10.134-013.15.kangaroo.al8.x86_64
+user: uid=1001(z)
+
+/etc/passwd sha256:
+21d5de2dc39f2ceb19e33f8cc124b311b57a48aea6d7703a9a98b93079d412bd
+  => KHỚP baseline ngày 1 (21d5de2d...d412bd, ghi trong evidence/isolation.txt cũ)
+  => UNCHANGED
+/bin/bash sha256:
+223fe8564b60636bc738b6178d3ba9a50ef7d791266b0efae6363bb716e4c47f
+  => lần đầu ghi (không có record trước trong journal/ để so — ghi làm baseline mới)
+/usr/bin/sudo sha256:
+a59f393bad5037644b89de64fe558ae6d5d1473c25c63022241e7c7019ad2f0c
+  => lần đầu ghi (như trên)
+/etc/shadow: Permission denied (uid 1001 — đúng như mọi phiên trước)
+
+ss -tlnp (listener host, lúc chạy phiên 8):
+127.0.0.1:12700, 127.0.0.1:12600, 127.0.0.1:19001  — infra môi trường (gateway/agent)
+0.0.0.0:19005, 0.0.0.0:19006                       — infra môi trường
+*:81                                               — infra môi trường
+  => KHÔNG listener lạ từ minict (test-web đã down, NS5 chứng minh proxy bind
+     loopback-only). Không có listener mới do phiên này tạo.
+Kết luận: host baseline UNCHANGED, không dấu hiệu nhiễm.

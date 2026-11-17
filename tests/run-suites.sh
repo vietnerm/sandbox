@@ -11,7 +11,7 @@
 set -u
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-SUITES=(test_isolation.sh test_seccomp.sh test_netns.sh)
+SUITES=(test_isolation.sh test_seccomp.sh test_netns.sh test_alpine.sh)
 
 rc_total=0
 failed=()

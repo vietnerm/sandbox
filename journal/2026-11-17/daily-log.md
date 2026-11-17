@@ -586,3 +586,83 @@ mới, PR #25): sửa trên chính nhánh, rồi SCR/SIA lại trên SHA mới.
 
 ## Kế hoạch
 - Push, chờ CI, SCR/SIA lại trên SHA mới → nếu PASS vào hàng chờ gộp Pha C.
+
+---
+
+# Phiên 8 — Alpine minirootfs (issue #23, GĐ1 mục 2)
+
+## Issue xử lý
+- #23 — feat(rootfs): Alpine minirootfs — status: done (PR chờ merge)
+- Triage: #6 +label `status:in-progress` (PR #21 đang xử lý); #4/#5/#8 backlog
+  p2 giữ nguyên; tạo label `area:rootfs`
+
+## Research
+- Alpine CDN v3.22 (dl-cdn.alpinelinux.org): pin `alpine-minirootfs-3.22.8-x86_64`
+  (05-Nov-2026), CDN có `.sha256` per-file → verify bắt buộc (D20-1)
+- pid_namespaces(7) (man7): mount procfs hợp lệ khi userns sở hữu pidns — nền
+  cho AL4 env-aware
+- "Bootstrapping Alpine Linux without root" (blog.brixit.nl 03/2024): apk.static
+  --root --initdb + bind-mount dev + `--mount-proc`; dùng newuidmap+subuid —
+  không áp dụng cho minict (manifest §5 cấm) → chiến lược ownership riêng (D20-2)
+- Apptainer fakeroot docs: `FAKEROOTDONTTRYCHOWN=1` pattern — precedent cho
+  "unprivileged extract không cố chown"; single-uid map = fakeroot tự nhiên
+
+## Development
+- Nhánh: `feat/23-alpine-rootfs`
+- Thay đổi: `sandbox/mkrootfs-alpine.sh` (mới), `tests/test_alpine.sh` (mới,
+  AL1–AL8), `run-suites.sh` +4th suite, Makefile (`rootfs-alpine`/`test-alpine`),
+  `.gitignore`, docs (perf-baseline, cve-watchlist, roadmap), decision D20
+- Đo nổi bật: apk add offline signature-verified rc=0 (AL5); ownership
+  `0:0` ns ↔ `1001:1001` host (AL6); chown foreign-uid EPERM post-capdrop (AL7)
+- Perf: cold_start=1.83 ms (busybox 1.88 cùng lúc), rss=1087 KB, disk=8.6 MB —
+  PASS mọi ngưỡng; perf-check busybox baseline vẫn PASS (1.84/1140/2.02)
+
+## CVE Check
+- Kernel: 5.10.134-013.15.kangaroo.al8.x86_64
+- CVE mới: 0 (16 CVE watchlist đối chiếu NVD — file `cve/alpine-rootfs.{md,json}`)
+- Component mới apk-tools 2.14.13: 2 CVE cũ đã vá (2021-30139, 2021-36159),
+  0 CVE mở; CVE-2026-39973 = Apktool (Android) KHÔNG phải apk-tools (D9 lần nữa)
+- Ảnh hưởng sandbox: không (apk offline; online chờ mục 4)
+- Hành động: watchlist thêm mục apk-tools, re-check khi bật egress
+
+## Validation "không bị nhiễm"
+- `make test`: PASS 52/52 (isolation 17 + seccomp 20 + netns 7 + **alpine 8**)
+- `make test-web`: PASS 6/6
+- Host baseline: passwd sha256 `21d5de2d…` khớp ngày 1 = unchanged; bash/sudo
+  lần đầu ghi (không có record cũ để so — xem evidence); shadow EACCES như mọi phiên
+- Bằng chứng: `journal/2026-11-17/evidence/alpine-rootfs.txt`, `alpine-perf.txt`,
+  `host-baseline.txt`; script bench `bench-alpine-rss.py` dời sang `benchmarks/` (B10 audit)
+
+## PR
+- #24 — `feat(rootfs): alpine minirootfs 3.22.8 — rootless distro rootfs + apk offline (Closes #23)` — ready (không draft), CI xanh 3/3 trên HEAD 4d460cb (run 44040642447): ci + perf-guard PASS
+- Merge: để SBG phiên sau xét cổng G1–G8 (giữ nguyên cơ chế branch-gate, không tự merge)
+
+## Kế hoạch ngày mai
+- GĐ1 mục 3 (issue #5): escape test sâu trên rootfs distro thật (`/proc` thật,
+  nhiều mặt tấn công hơn busybox) — Alpine giờ có sẵn làm mồi
+- SBG: gộp PR #21 (fix #6) nếu không còn commit < 2h + có retest/audit artifact
+
+### ENV FACT bổ sung (sau lần chạy CI đầu của PR #24)
+- Runner ubuntu-24.04 kernel `7.0.0-1017-azure` cũng **EPERM khi mount /proc
+  trong pidns** (run 44039937935) — giả thuyết "runner 6.x/7.x cho phép" SAI.
+  AL4 env-aware vẫn PASS (nhánh fail-soft). Root-cause runner (apparmor/lockdown/
+  seccomp của azure?) → follow-up. Đã sửa D20-4 + roadmap cho khớp đo thật.
+
+# Phiên 8b (review-fix theo SIA audit) — PR #24: pin sha256 + honest AL4/AL7
+
+## Việc đã sửa (commit `fix(review): … (#24)`)
+1. **[medium supply-chain]** pin sha256 3.22.8 trong script (3 nguồn độc lập
+   chéo xác minh; CDN .sha256 giữ làm lớp transport); mutant bad-pin → rc=1.
+2. **[test rỗng]** AL4 → xfail known-gap PROC1-pattern (D22-2), hết vacuous.
+3. **[low]** AL7 assert EINVAL cụ thể (đo được "Invalid argument"); URL derive
+   từ `ALPINE_VERSION`; `bench-alpine-rss.py` → `benchmarks/`; AL5 env-blocked
+   không còn làm CI đỏ giả khi CDN outage.
+
+## Kết quả chạy (clean clone f6e41e0, uid 1001)
+- `make test` ×3: 17+20+7+8 PASS; web 6/6 ×3; perf 1.89/1032/2.02 PASS.
+- alpine RSS median 1103 kB (busybox 1130, N=5) — không regression.
+- sha256 pin: đo trùng pin trên 3 mirrors; bad-pin mutant ABORT rc=1.
+
+## Còn lại
+- Root-cause mount /proc (D20-4) — đề xuất thử mount proc trước umount old
+  root; theo dõi bằng case AL4 tự-đỏ khi sửa. Ghi ở decision D22-2.

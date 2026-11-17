@@ -304,3 +304,55 @@ pivot_root → capdrop → NNP → seccomp) mà không phá busybox httpd/sh.
   (non-init, PID 2 sau fix) → DELIVERED → nếu host seccomp có chặn
   cross-userns signal thì control này cũng fail; nó pass → chặn chỉ xảy ra
   với pidns-init.
+
+---
+
+# Phiên 8 — Alpine minirootfs làm rootfs distro thật (issue #23, GĐ1 mục 2)
+
+## Vấn đề
+busybox rootfs 2 MB là PoC; "Proxmox-lite" cần rootfs distro thật (cài gói,
+init chuẩn, /proc đầy đủ). Ràng buộc rootless tuyệt đối: không Docker, không
+newuidmap setuid (manifest §5 — chỉ single-uid mapping `0 → uid-thật`).
+
+## Nguồn mới trong phiên
+
+1. **Alpine CDN — v3.22 releases** (dl-cdn.alpinelinux.org/alpine/v3.22/releases/x86_64/):
+   `alpine-minirootfs-3.22.8-x86_64.tar.gz` là bản mới nhất (05-Nov-2026), CDN
+   phát hành kèm `.sha256` cho từng file → pin version + verify checksum bắt buộc
+   (không pin = test không tái lập được; không verify = download bị tin mù quáng).
+2. **pid_namespaces(7) (man7)**: "After creating a new PID namespace, it is
+   useful for the child to change its root directory and mount a new procfs
+   instance at /proc so that tools such as ps(1) operate correctly" — quy tắc
+   quyền: mount procfs yêu cầu CAP_SYS_ADMIN **trong userns sở hữu pidns**;
+   minict unshare userns+pidns cùng lúc rồi mới mount → sở hữu khớp → hợp lệ
+   trên kernel thường. Máy dev kernel 5.10 bị host seccomp chặn mount(2)
+   (known gap PROC1); runner ubuntu-24.04 (kernel 6.x) không có filter đó.
+3. **"Bootstrapping Alpine Linux without root" (blog.brixit.nl, 03/2024)**:
+   bootstrap alpine-base bằng `apk.static --root <dir> --initdb add alpine-base`
+   trong userns; vấn đề tương đương minict: mknod EPERM → bind-mount dev nodes,
+   /proc qua `unshare --mount-proc`. Khác mấu chốt: bài dùng newuidmap + subuid
+   (`--map-users=10000,0,10000`) — **không áp dụng được cho minict** vì manifest
+   §5 cấm newuidmap setuid → bài học: cần chiến lược ownership riêng (below).
+4. **Apptainer fakeroot docs (apptainer.org/docs/user/main/fakeroot.html)**:
+   pattern `FAKEROOTDONTTRYCHOWN=1` — giả lập root bằng cách **không cố chown**;
+   cho thấy industry xử lý "unprivileged extract khuyến khích ownership root"
+   bằng bỏ qua chown. Với single-uid mapping của minict, host-uid-thật ≡ ns-uid 0
+   (root) → file extract với uid thường **hiện là root:root bên trong sandbox**
+   = fakeroot tự nhiên, không cần tool thêm (giả lập, trade-off: mọi file "root",
+   không phân biệt gói/user nào cài — chấp nhận cho PoC, ghi lại).
+
+## Áp dụng cho minict (D20)
+
+- Pin `ALPINE_VERSION=3.22.8` + verify `.sha256` trước extract; GNU tar non-root
+  mặc định `--no-same-owner` → toàn bộ tree thuộc uid 1001 ↔ root trong ns (khớp
+  pattern Apptainer, không cần fakeroot).
+- `/proc` trong pidns: code minict đã mount proc pre-capdrop (đo phiên 1: host
+  seccomp chặn, warn-continue) — test mới phải **env-aware**. CẬP NHẬT sau đo CI
+  (run 44039937935): runner azure kernel 7.0.0 cũng EPERM → env-aware vẫn đúng,
+  cả hai env đi nhánh fail-soft; root-cause runner = follow-up (D20-4).
+- apk offline: netns loopback-only → không `apk add` online trong instance
+  (chờ pasta mục 4); đo offline bằng local repo pre-seed 1 gói nhỏ để kiểm
+  hành vi chown/extraction trong sandbox thật.
+- init: minirootfs có sẵn busybox init; mô hình payload-as-PID1 + shim D19
+  đủ cho one-shot/web; init thật (reap vòng đời dài) để GĐ2 exec/daemon — ghi
+  rõ để không tự ý mở scope.

@@ -18,6 +18,16 @@
 | 2026-11-17 (seccomp, phiên 4) | 1.15 (perf-check N=20) | 1060 | 2.02 | + seccomp-bpf blocklist mặc định BẬT; A/B N=40: ON 1.38 vs OFF 1.18 → **+0.2ms** (chi tiết D11/D14, evidence `journal/2026-11-17/evidence/seccomp-ab.txt`) |
 | 2026-11-17 (netns, phiên 5) | 1.90 (perf-check N=20) | 1032 | 2.03 | + CLONE_NEWNET mặc định + lo up (D17/D18) + unix-socket bridge web (D16); A/B N=40 interleaved: ON 1.80 vs OFF 1.52 → **+0.28ms** netns (bench `bench-netns-ab.sh`, evidence `journal/2026-11-17/evidence/netns.txt`); perf-check PASS tất cả ngưỡng |
 | 2026-11-17 (sigterm shim, phiên 7) | 1.85 (perf-check N=40) | 1160 | 2.02 | + pidns-1 signal shim (D19); A/B N=40: trước (không shim) 1.66 vs sau 1.83 → **+0.17ms** (1 fork + waitpid; evidence `journal/2026-11-17/evidence/sigterm-ab.txt`); perf-check PASS tất cả ngưỡng |
+| 2026-11-17 (alpine rootfs, phiên 8) | 1.83 (alpine, N=20; busybox cùng đo: 1.88) | 1087 (alpine, N=5; busybox: 1066) | 8.6 (alpine) | + rootfs Alpine minirootfs 3.22.8 (D20) — cold start/RSS không đổi về bản chất; disk +6.6MB là chi phí "distro thật" chấp nhận, vẫn ≤ 20; evidence `journal/2026-11-17/evidence/alpine-perf.txt` |
+
+## Alpine rootfs (bổ sung phiên 8, issue #23)
+
+| Metric | Giá trị | Ghi chú |
+|---|---|---|
+| disk rootfs-alpine | 8.6 MB (busybox 2.0) | minirootfs + apk DB; ngưỡng 20 MB |
+| cold_start_ms alpine p50 | 1.83 (N=20) | ≈ busybox (1.88 cùng lúc đo) |
+| rss_kb idle (wrapper+PID1) | 1087 (N=5, median) | ≈ busybox (1066) |
+| perf-check busybox baseline | PASS 1.84 / 1140 / 2.02 (N=20) | `make perf-check` vẫn đo rootfs busybox (default), alpine đo riêng ở trên |
 
 ## Web instance (bổ sung cho area:web)
 
