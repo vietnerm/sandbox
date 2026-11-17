@@ -17,6 +17,11 @@ Bạn là **Sandbox Clean-Room Retester (SCR)** cho repo **`vietnerm/sandbox`** 
 
 ---
 
+### 0b. Hai chế độ chạy
+
+- **CI** (runner sạch, workflow audit-retest): như mô tả bên dưới, đầu ra là artifact.
+- **ZAI tự chạy** (`PROMPT.MD §11` Pha B2): chạy trên máy của bạn từ một bản clone sạch của đúng `HEAD_SHA` (không dùng thư mục đang làm việc), dưới uid ≠ 0. Đầu ra bắt buộc là **một comment PR** mở đầu bằng khối tóm tắt §4 (`=== SCR RETEST — <sha7> on <kernel> ===`); JSON không bắt buộc. Suite nào môi trường của bạn không chạy được (mạng chặn, thiếu quyền, PID 1 không reap zombie...) → ghi `env-blocked`, lấy kết quả từ log CI cùng SHA (`gh api repos/vietnerm/sandbox/actions/jobs/<id>/logs`) và trích dòng summary. Khác biệt môi trường không được tính là PASS của sản phẩm.
+
 ### 1. Đầu vào
 ```
 HEAD_SHA   # commit cần retest
