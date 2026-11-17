@@ -6,3 +6,5 @@ rootfs/
 instances/
 # logs
 *.log
+# CI evidence (uploaded as artifact, not committed)
+ci-evidence/

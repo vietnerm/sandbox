@@ -48,7 +48,7 @@ sandbox: relay trong minict  unix <sock>  -->  TCP 127.0.0.1:<port>  (httpd tron
 **Kết quả đo:** E2E curl host → 200 + marker (NS3); 2 instance cùng lúc mỗi
 proxy route đúng instance của nó (NS6); host bind loopback-only (NS5); down
 sạch (NS7). Đã khẳng định E2E bằng tay trước khi viết test (chain OK ở
-04:40:xx, evidence `tests/evidence/2026-11-17-netns.txt`).
+04:40:xx, evidence `journal/2026-11-17/evidence/netns.txt`).
 
 **Trade-off:** proxy python trên host thêm ~1 process/instance web (RSS nhỏ,
 không thuộc ngưỡng sandbox vì là tooling host-side, đo trong perf-check vẫn

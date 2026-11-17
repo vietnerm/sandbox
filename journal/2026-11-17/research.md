@@ -208,7 +208,7 @@ pivot_root → capdrop → NNP → seccomp) mà không phá busybox httpd/sh.
 # Phiên 5 (SDDA cycle) — netns: CLONE_NEWNET + unix-socket bridge (issue #3)
 
 > Kế hoạch ngày mai của phiên 1-2 + phiên 3/4: netns cho minict, web vẫn phải
-> reachable, kèm seccomp chặn netlink (D10). Bằng chứng: tests/evidence/2026-11-17-netns.txt.
+> reachable, kèm seccomp chặn netlink (D10). Bằng chứng: journal/2026-11-17/evidence/netns.txt.
 
 ## Nguồn mới (≥2, đã đọc thật)
 
