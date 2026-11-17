@@ -1,0 +1,43 @@
+name: ci
+on: [push, pull_request]
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      # ubuntu-24.04 runner images may restrict unprivileged user namespaces
+      # via apparmor (kernel.apparmor_restrict_unprivileged_userns) — minict
+      # is built on userns, so lift the restriction defensively before tests.
+      - name: allow unprivileged userns
+        run: |
+          uname -r
+          if [ -f /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          fi
+          unshare --user --map-root-user --mount echo "userns OK"
+
+      - name: build
+        run: make build
+      - name: rootfs
+        run: make rootfs
+      - name: test (isolation/escape, 16 cases)
+        run: make test 2>&1 | tee tests/evidence/ci-test-isolation.txt
+      - name: test-escape
+        run: make test-escape 2>&1 | tee tests/evidence/ci-test-escape.txt
+      - name: test-web (6 cases)
+        run: make test-web 2>&1 | tee tests/evidence/ci-test-web.txt
+      - name: perf-check (cold start / RSS / disk vs thresholds)
+        run: make perf-check
+
+      - name: upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-evidence
+          path: tests/evidence/ci-*.txt
+          if-no-files-found: ignore

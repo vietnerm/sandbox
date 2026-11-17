@@ -13,7 +13,8 @@ không Docker, không root, chỉ cơ chế kernel Linux có sẵn.
 | RAM overhead | ~1.1 MB | < 30 MB |
 | disk base | 2.0 MB | < 50 MB |
 | rootless | ✅ (uid 1001) | bắt buộc |
-| escape tests | 13 PASS + 3 gap có chủ đích | — |
+| escape tests | 16 PASS (13 cũ + 3 gap có chủ đích) + 6 web tests | — |
+| web trong sandbox | busybox httpd, HTTP 200, bind 127.0.0.1, ready 18ms | DoD mục 1 |
 
 Isolation: user ns + mount ns + pid ns + uts ns + ipc ns, pivot_root (host fs
 tàng hình), capability drop, no_new_privs, PDEATHSIG + pidns teardown.
@@ -28,6 +29,8 @@ bash tests/test_isolation.sh # 16 isolation tests
 
 # lifecycle
 ./sandbox/minict.sh up demo            # instance với private rootfs copy
+./sandbox/minict.sh web demo 8080      # web: busybox httpd trong sandbox, bind 127.0.0.1
+curl -s http://127.0.0.1:8080/         # HTTP 200 từ bên trong sandbox
 ./sandbox/minict.sh exec demo -- /bin/sh -c 'echo hi && id && hostname'
 ./sandbox/minict.sh shell demo         # shell vào instance fs
 ./sandbox/minict.sh ps
@@ -41,7 +44,10 @@ bash tests/test_isolation.sh # 16 isolation tests
 sandbox/minict.c        core (C, 1 file, 0 dependency ngoài libc)
 sandbox/mkrootfs.sh     rootfs builder (apt-get download + dpkg-deb -x, rootless)
 sandbox/minict.sh       lifecycle CLI
-tests/test_isolation.sh escape/isolation tests
+tests/test_isolation.sh escape/isolation tests (16 cases)
+tests/test_web.sh web-in-sandbox tests (6 cases)
+Makefile                entry points: build/test/test-escape/test-web/perf-check/cve-check
+.github/workflows/      ci, cve-daily, perf-guard, issue-triage, research-log
 benchmarks/             bench.sh + kết quả hàng ngày
 research/               research notes hàng ngày
 docs/decision-log/      quyết định + lý do
@@ -55,6 +61,8 @@ tests/evidence/         bằng chứng test + integrity check host
 
 ## Giới hạn đã biết (ngày 1)
 
+- Web bind loopback-only (chưa có netns — D7); không httpd.conf/auth/proxy/CGI
+  (CVE-2026-124739/88829 re-check trước khi bật).
 - Không netns (chia sẻ host network), không /proc trong sandbox (host seccomp chặn
   mount proc), không cgroup limits (env chỉ có cgroups v1), không overlayfs
   (private copy 2MB/instance thay thế, 25ms), `exec` tạo ns set mới trên cùng

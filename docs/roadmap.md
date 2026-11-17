@@ -10,15 +10,29 @@
 5. Ghi `docs/daily-log-YYYY-MM-DD.md` (format 5 mục)
 
 ## Đã xong
+- [x] 2026-11-17 (phiên 3, SDDA): **web server trong sandbox** — `minict.sh web` +
+  busybox httpd static, bind 127.0.0.1 (D6/D7), `tests/test_web.sh` 6/6 PASS,
+  root Makefile + 5 GitHub Actions workflows + PR template + `tools/perf-check.sh`
+  (perf-guard gate) + cve-check CLI `--kernel/--watchlist/--format md` (D9 — chỉ parse
+  dòng bảng, bài học false positive CVE-2022-0316). CVE check 16 CVE (NVD): 5 CVE
+  kernel mới 2026 + 5 CVE busybox httpd mới — tất cả đo được "không với tới" hoặc
+  host-side (issue #8 track backport). Research: veth trong userns tạo được nhưng
+  không nối host rootless; netns phải đi cùng seccomp (D10).
 - [x] 2026-11-17: **minict v0.1** — mini-container rootless (userns+mountns+pidns+utsns+ipcns,
   pivot_root, capdrop, NNP, PDEATHSIG, group-kill), busybox rootfs builder, lifecycle CLI
   (up/exec/shell/down/ps), 16 test isolation, benchmark đầy đủ. Cold start 1.2ms, RAM ~1.1MB, disk 2MB.
 
 ## Đang làm
-- [ ] (nếu tiếp tục hôm nay) test song song nhiều instance + stress rollback
+- [ ] (phiên 3) PR feat/web-busybox-httpd: chờ CI xanh (ci.yml lần đầu chạy)
+- [ ] test song song nhiều instance + stress rollback
 
 ## Tiếp theo (theo thứ tự ưu tiên cho các ngày tới)
-1. **seccomp-bpf tối thiểu cho sandbox** — filter sau capdrop: chặn open_by_handle_at,
+1. **netns + networking cho web stack** — theo PROMPT.MD §8 ưu tiên area:web đã đạt
+   mốc đầu; tiếp theo là netns. Đo được 17-11: veth/dummy tạo được trong userns+netns
+   (CAP_NET_ADMIN trong ns mới) NHƯNG không nối ra host rootless → cần usermode proxy
+   hoặc unix-socket bridge. **Bắt buộc đi cùng seccomp chặn netlink/nftables** (D10 —
+   edera.dev: userns mở CAP_NET_ADMIN-in-ns → nf_tables surface; issue #3 + #2)
+2. **seccomp-bpf tối thiểu cho sandbox** — filter sau capdrop: chặn open_by_handle_at,
    keyctl, bpf, setns ra ngoài... (backlog #3; kernel 5.10 OK; dùng prctl+ BPF tự viết,
    đo overhead syscall)
 2. **netns + networking cho web stack** — slirp4netns/pasta không có trong env →
@@ -43,4 +57,5 @@
 - [ ] cold start toàn stack < 5s; RAM idle < 300MB
 - [ ] escape test cơ bản pass
 - [ ] `./sandbox up|down|bench` một lệnh
-- Tiến độ: **2/5** (rootless ✅, escape test cơ bản ✅; còn stack, netns, một-lệnh-stack)
+- Tiến độ: **3/5** (rootless ✅, escape test cơ bản ✅, web server tĩnh trong sandbox ✅;
+  còn stack đầy đủ nginx/API/DB, netns, một-lệnh-stack)
