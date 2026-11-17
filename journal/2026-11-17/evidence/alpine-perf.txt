@@ -1,0 +1,8 @@
+cold_start_ms busybox (baseline): p50=1.88 p95=2.20 (N=20)
+cold_start_ms alpine 3.22.8: p50=1.83 p95=2.58 (N=20)
+rss_kb alpine (sandboxed sh idle): 4
+disk_base_mb alpine: 9.0 MB (busybox: 2)
+rss_kb busybox (baseline): min=988 max=1152 median=1066 (N=5)
+rss_kb alpine 3.22.8     : min=984 max=1136 median=1087 (N=5)
+disk: rootfs-alpine = 8.6 MB
+disk: rootfs = 2.0 MB

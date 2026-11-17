@@ -25,6 +25,19 @@
 5. Ghi `journal/YYYY-MM-DD/daily-log.md` (quy tắc thư mục: PROMPT.MD §10)
 
 ## Đã xong
+- [x] 2026-11-17 (phiên 8, SDDA): **rootfs Alpine minirootfs 3.22.8** — distro thật
+  boot được trong minict giữ nguyên isolation (D20): `sandbox/mkrootfs-alpine.sh`
+  (pin version + sha256 verify CDN, tar non-root `--no-same-owner` = fakeroot tự
+  nhiên của single-uid mapping — đo AL6: `0:0` trong ns ↔ host-uid); suite mới
+  `tests/test_alpine.sh` 8 case (AL1–AL8) vào `make test` (4 suite, 52 case);
+  apk offline signature-verified chạy trong sandbox (AL5, `acpid-openrc`);
+  **gói hỏng vì chown foreign-uid: đo được** (AL7 — chown `100:100` EPERM
+  post-capdrop; nginx/postgres-type sẽ hỏng ở bước adduser — phương án (a) root-in-ns,
+  (b) pre-bake ownership, (c) idmapped mounts GĐ2 — chi tiết D20);
+  /proc trong pidns env-aware (runner 6.x assert Pid:1 thật, dev-host assert
+  fail-soft); perf: cold 1.83ms, rss 1087KB, disk 8.6MB — PASS mọi ngưỡng;
+  apk add online chờ egress pasta (mục 4); apk-tools quét CVE (2 CVE cũ đã vá,
+  0 mở) → `docs/cve-watchlist.md` có mục apk-tools. (#23)
 - [x] 2026-11-17 (phiên 6): **CI xanh thật** — pipefail (`defaults: run: shell: bash`
   cho ci.yml + cve-daily.yml), SIG1 NOFORK-aware (busybox Ubuntu 24.04 chạy sleep
   NOFORK — tái hiện bằng chính .deb của runner), UID1 overflow-aware (supplementary
@@ -71,10 +84,8 @@
 1. **Sửa SIGTERM swallowed (issue #6)**: control plane GĐ2 cần graceful stop;
    xử lý ở tầng runtime (minict wrapper forward/chuyển tín hiệu), không phải ở người dùng.
 2. **Rootfs distro thật** (mới): Alpine minirootfs trước (nhỏ, musl), Debian sau.
-   Đo trên runner (kernel ≥ 6.1): mount `/proc` trong pidns, init tối thiểu
-   (tini/busybox init), `apk add nginx` / `apt-get install` dưới **single-uid
-   mapping** (manifest §5: không dùng `newuidmap` setuid). Ghi rõ gói nào hỏng
-   vì `chown` sang uid khác và phương án (bỏ qua / giả lập).
+   → Alpine **xong phiên 8** (xem "Đã xong"); phần còn mở: `apk add` online
+   trong instance **chờ egress pasta (mục 4)** + Debian rootfs (sau).
 3. **chroot-escape test sâu hơn** (issue #5): fd-based escape, /proc/self/root,
    setuid binary trong rootfs (NNP chặn), core dump leak; case seccomp SIGSYS;
    chạy lại cả suite trên rootfs distro thật (có `/proc`, nhiều mặt tấn công hơn busybox).

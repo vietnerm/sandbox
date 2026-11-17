@@ -486,3 +486,57 @@
 2. GĐ1 mục 4: đánh giá pasta/slirp4netns A/B với bridge D16 (cài rootless trên runner).
 3. CVE check lại với NVD (phiên này timeout) + kiểm run cve-daily cron đầu tiên.
 4. Kiểm `/dev/kvm` trên runner GitHub (probe workflow) — precondition GĐ3.
+
+---
+
+# Phiên 8 — Alpine minirootfs (issue #23, GĐ1 mục 2)
+
+## Issue xử lý
+- #23 — feat(rootfs): Alpine minirootfs — status: done (PR chờ merge)
+- Triage: #6 +label `status:in-progress` (PR #21 đang xử lý); #4/#5/#8 backlog
+  p2 giữ nguyên; tạo label `area:rootfs`
+
+## Research
+- Alpine CDN v3.22 (dl-cdn.alpinelinux.org): pin `alpine-minirootfs-3.22.8-x86_64`
+  (05-Nov-2026), CDN có `.sha256` per-file → verify bắt buộc (D20-1)
+- pid_namespaces(7) (man7): mount procfs hợp lệ khi userns sở hữu pidns — nền
+  cho AL4 env-aware
+- "Bootstrapping Alpine Linux without root" (blog.brixit.nl 03/2024): apk.static
+  --root --initdb + bind-mount dev + `--mount-proc`; dùng newuidmap+subuid —
+  không áp dụng cho minict (manifest §5 cấm) → chiến lược ownership riêng (D20-2)
+- Apptainer fakeroot docs: `FAKEROOTDONTTRYCHOWN=1` pattern — precedent cho
+  "unprivileged extract không cố chown"; single-uid map = fakeroot tự nhiên
+
+## Development
+- Nhánh: `feat/23-alpine-rootfs`
+- Thay đổi: `sandbox/mkrootfs-alpine.sh` (mới), `tests/test_alpine.sh` (mới,
+  AL1–AL8), `run-suites.sh` +4th suite, Makefile (`rootfs-alpine`/`test-alpine`),
+  `.gitignore`, docs (perf-baseline, cve-watchlist, roadmap), decision D20
+- Đo nổi bật: apk add offline signature-verified rc=0 (AL5); ownership
+  `0:0` ns ↔ `1001:1001` host (AL6); chown foreign-uid EPERM post-capdrop (AL7)
+- Perf: cold_start=1.83 ms (busybox 1.88 cùng lúc), rss=1087 KB, disk=8.6 MB —
+  PASS mọi ngưỡng; perf-check busybox baseline vẫn PASS (1.84/1140/2.02)
+
+## CVE Check
+- Kernel: 5.10.134-013.15.kangaroo.al8.x86_64
+- CVE mới: 0 (16 CVE watchlist đối chiếu NVD — file `cve/alpine-rootfs.{md,json}`)
+- Component mới apk-tools 2.14.13: 2 CVE cũ đã vá (2021-30139, 2021-36159),
+  0 CVE mở; CVE-2026-39973 = Apktool (Android) KHÔNG phải apk-tools (D9 lần nữa)
+- Ảnh hưởng sandbox: không (apk offline; online chờ mục 4)
+- Hành động: watchlist thêm mục apk-tools, re-check khi bật egress
+
+## Validation "không bị nhiễm"
+- `make test`: PASS 52/52 (isolation 17 + seccomp 20 + netns 7 + **alpine 8**)
+- `make test-web`: PASS 6/6
+- Host baseline: passwd sha256 `21d5de2d…` khớp ngày 1 = unchanged; bash/sudo
+  lần đầu ghi (không có record cũ để so — xem evidence); shadow EACCES như mọi phiên
+- Bằng chứng: `journal/2026-11-17/evidence/alpine-rootfs.txt`, `alpine-perf.txt`,
+  `host-baseline.txt`, `bench-alpine-rss.py`
+
+## PR
+- Đang mở — `feat(rootfs): alpine minirootfs …` (Closes #23), draft → ready khi CI xanh
+
+## Kế hoạch ngày mai
+- GĐ1 mục 3 (issue #5): escape test sâu trên rootfs distro thật (`/proc` thật,
+  nhiều mặt tấn công hơn busybox) — Alpine giờ có sẵn làm mồi
+- SBG: gộp PR #21 (fix #6) nếu không còn commit < 2h + có retest/audit artifact
