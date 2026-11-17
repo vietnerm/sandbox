@@ -21,6 +21,14 @@ MINICT="$REPO/sandbox/minict"
 [[ -x "$MINICT" ]] || { echo "build first: make -C sandbox"; exit 1; }
 [[ -d "$REPO/rootfs" ]] || bash "$REPO/sandbox/mkrootfs.sh" "$REPO/rootfs" >/dev/null
 
+# WEB2 uses `ss` to verify the listener is loopback-only. Missing iproute2
+# previously surfaced as an opaque WEB2 FAIL (issue #14) — fail loudly with
+# the fix instead, keeping the check itself strict.
+command -v ss >/dev/null 2>&1 || {
+    echo "WEB2 needs 'ss' (iproute2). Install it, e.g.: apt-get install -y iproute2"
+    exit 1
+}
+
 NAME="webci-$$"
 PORT=$(( 18000 + RANDOM % 2000 ))
 HOST_USER="$(id -un)"

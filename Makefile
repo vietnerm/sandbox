@@ -11,14 +11,11 @@ build:
 rootfs:
 	bash sandbox/mkrootfs.sh rootfs
 
-# isolation + escape suite (17 cases) + seccomp blocklist suite (19 cases)
-# + netns suite (7 cases)
-# (the escape/isolation suites are currently flat scripts; splitting them
-# into one suite per area is roadmap work)
+# isolation suite (17 cases) + seccomp blocklist suite (20 cases)
+# + netns suite (7 cases) — ALL suites run even if an earlier one fails
+# (tests/run-suites.sh), aggregate exit code (issue #14).
 test: build rootfs
-	bash tests/test_isolation.sh
-	bash tests/test_seccomp.sh
-	bash tests/test_netns.sh
+	bash tests/run-suites.sh
 
 test-escape: test
 
@@ -48,10 +45,10 @@ clean:
 help:
 	@echo "make build        - build minict binary"
 	@echo "make rootfs       - build busybox rootfs (rootless)"
-	@echo "make test         - isolation/escape (17) + seccomp (19) + netns (7)"
+	@echo "make test         - isolation (17) + seccomp (20) + netns (7), all suites always run"
 	@echo "make test-escape  - same suites (alias, CI requirement)"
 	@echo "make test-web     - web service suite (6 cases)"
-	@echo "make test-seccomp - seccomp blocklist suite (19 cases)"
+	@echo "make test-seccomp - seccomp blocklist suite (20 cases)"
 	@echo "make test-netns   - netns isolation suite (7 cases)"
 	@echo "make perf-check   - cold start / RSS / disk vs thresholds"
 	@echo "make cve-check    - NVD check of the CVE watchlist"

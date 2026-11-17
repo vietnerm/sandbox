@@ -50,20 +50,39 @@ sig1_test() {
     # verified via SIGKILL + PR_SET_PDEATHSIG + pidns-1-exit teardown.
     # sh -c has TWO commands so busybox ash does NOT exec-optimize away the
     # shell: the sh keeps the tag in its cmdline and owns the sleep child.
+    # ENV FACT (CI run #20, issue #14): busybox-static on ubuntu-24.04
+    # (1.36.1-6ubuntu3.1) runs the `sleep` applet NOFORK — there is NO child
+    # process and the sh itself is the sleeper (Debian busybox 1.37 forks).
+    # The no-orphan guarantee is unchanged (PDEATHSIG targets the sh; pidns
+    # teardown covers any other process), so an empty child pid is expected
+    # there — only a missing sh is an error.
     local tag="mk-sigtest-$$"
     "$MINICT" "$ROOTFS" /bin/sh -c "sleep 61; true # $tag" >/dev/null 2>&1 & local w=$!
     sleep 0.4
     local shpid mp
     shpid=$(pgrep -f "$tag" | grep -vw "$w" | head -1)   # sandboxed sh
-    mp=$(pgrep -P "$shpid" 2>/dev/null | head -1)        # its sleep child
-    if [[ -z "$shpid" || -z "$mp" ]]; then kill -9 "$w" 2>/dev/null; return 1; fi
+    mp=$(pgrep -P "$shpid" 2>/dev/null | head -1)        # sleep child (empty = NOFORK sleep)
+    if [[ -z "$shpid" ]]; then kill -9 "$w" 2>/dev/null; return 1; fi
     kill -KILL "$w" 2>/dev/null
     for _ in 1 2 3 4; do
         sleep 0.3
         { kill -0 "$shpid" 2>/dev/null || kill -0 "$mp" 2>/dev/null; } || return 0
     done
-    kill -9 "$shpid" "$mp" 2>/dev/null
+    kill -9 "$shpid" ${mp:+"$mp"} 2>/dev/null
     return 1
+}
+
+uid1_test() {
+    # issue #14: `id -G` shows supplementary groups of the HOST user as
+    # overflowgid 65534 inside the sandbox: map_ids() maps exactly one gid
+    # and setgroups is deny-locked in the userns (mandatory before an
+    # unprivileged gid_map write), so the host user's extra groups cannot be
+    # dropped or mapped. They belong to the SAME principal (uid 1001) and
+    # carry no extra host access; UID2 already proves files map back to the
+    # host uid. What this test still catches: a FOREIGN gid actually mapped
+    # into the namespace (anything other than 0 = our map, 65534 = overflow).
+    ic '[ "$(id -u)" = 0 ]' && ic '[ "$(id -g)" = 0 ]' \
+        && ! ic 'id -G | tr " " "\n" | grep -qvE "^(0|65534)$"'
 }
 
 PASS=0; FAIL=0
@@ -107,8 +126,7 @@ run_case PID1 "shell is PID 1 in its own pid namespace" pass \
     ic '[ $$ -eq 1 ]'
 run_case PID2 "no host processes visible (ps lists none)" pass \
     ic 'ps | tail -n +2 | grep -q . && exit 1 || exit 0'
-run_case UID1 "uid=0 inside (mapped), no other uids" pass \
-    ic 'id -u | grep -qx 0 && id -G | grep -qx 0'
+run_case UID1 "uid=0 inside, no foreign gid visible (0/overflow only)" pass uid1_test
 run_case UID2 "files created inside owned by real host uid" pass uid2_test
 
 # ---------- privilege state ----------

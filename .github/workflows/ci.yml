@@ -3,6 +3,15 @@ on: [push, pull_request]
 permissions:
   contents: read
 
+# issue #14: without an explicit shell, GitHub runs steps with `bash -e`
+# WITHOUT pipefail, so `make test 2>&1 | tee ...` reported tee's exit code
+# (almost always 0) and red tests still greened the job — run #20 shipped
+# UID1+SIG1 failures as "success". `shell: bash` on GH Actions adds
+# `-o pipefail`, making the pipe return make's real exit code.
+defaults:
+  run:
+    shell: bash
+
 jobs:
   build-test:
     runs-on: ubuntu-24.04
@@ -25,10 +34,11 @@ jobs:
         run: make build
       - name: rootfs
         run: make rootfs
-      - name: test (isolation/escape, 16 cases)
-        run: make test 2>&1 | tee tests/evidence/ci-test-isolation.txt
-      - name: test-escape
-        run: make test-escape 2>&1 | tee tests/evidence/ci-test-escape.txt
+      # run-suites.sh runs isolation (17) + seccomp (20) + netns (7) even when
+      # an earlier suite is red, and fails if any of them failed — CI evidence
+      # is complete and the exit code is real (pipefail above).
+      - name: test (isolation 17 + seccomp 20 + netns 7, all suites)
+        run: make test 2>&1 | tee tests/evidence/ci-test-all.txt
       - name: test-web (6 cases)
         run: make test-web 2>&1 | tee tests/evidence/ci-test-web.txt
       - name: perf-check (cold start / RSS / disk vs thresholds)
