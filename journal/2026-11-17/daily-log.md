@@ -534,7 +534,8 @@
   `host-baseline.txt`, `bench-alpine-rss.py`
 
 ## PR
-- Đang mở — `feat(rootfs): alpine minirootfs …` (Closes #23), draft → ready khi CI xanh
+- #24 — `feat(rootfs): alpine minirootfs 3.22.8 — rootless distro rootfs + apk offline (Closes #23)` — ready (không draft), CI xanh 3/3 trên HEAD 4d460cb (run 44040642447): ci + perf-guard PASS
+- Merge: để SBG phiên sau xét cổng G1–G8 (giữ nguyên cơ chế branch-gate, không tự merge)
 
 ## Kế hoạch ngày mai
 - GĐ1 mục 3 (issue #5): escape test sâu trên rootfs distro thật (`/proc` thật,
