@@ -1,0 +1,86 @@
+=== SDDA session 4 evidence — seccomp-bpf (issue #2) — 2026-11-17 04:15:57 ===
+
+--- make perf-check ---
+make -C sandbox
+make[1]: Entering directory '/home/z/my-project/sandbox/sandbox'
+make[1]: Nothing to be done for 'all'.
+make[1]: Leaving directory '/home/z/my-project/sandbox/sandbox'
+bash sandbox/mkrootfs.sh rootfs
+rootfs 'rootfs' already exists, skipping (rm -rf it to rebuild)
+bash tools/perf-check.sh
+== perf-check 2026-11-17 04:15:58 — kernel 5.10.134-013.15.kangaroo.al8.x86_64, N=20 ==
+cold_start_ms  :     1.27  (threshold 100)
+rss_kb         :     1052  (threshold 10240)
+disk_base_mb   :     2.02  (threshold 20)
+perf-check: PASS
+
+--- tests/test_seccomp.sh (17 cases) ---
+=== minict seccomp tests (2026-11-17 04:15:58) ===
+SC0   shell workload works under filter                        PASS
+SC1   keyctl blocked (EPERM)                                   PASS
+SC2   open_by_handle_at blocked (EPERM)                        PASS
+SC3   bpf blocked (EPERM)                                      PASS
+SC4   setns blocked (EPERM)                                    PASS
+SC5   unshare blocked (EPERM)                                  PASS
+SC6   io_uring_setup blocked (EPERM)                           PASS
+SC7   clone(CLONE_NEWUSER) blocked (EPERM)                     PASS
+SC8   ptrace blocked (EPERM)                                   PASS
+SC9   socket(AF_ALG) blocked (EPERM)                           PASS
+SC10  clone3 returns ENOSYS (fallback-friendly)                PASS
+SC11  control: setns NOT EPERM without filter                  PASS
+SC12  control: io_uring NOT EPERM without filter               PASS
+SC13  process_vm_readv blocked (EPERM)                         PASS
+SC14  control: keyctl works without filter                     PASS
+SC15  mount inside sandbox fails under filter (EPERM)          PASS
+SC16  control: process_vm NOT EPERM without filter             PASS
+=== summary: PASS=17 FAIL=0 ===
+
+--- tests/test_isolation.sh (16 cases) ---
+=== minict isolation tests (2026-11-17 04:15:58) ===
+FS1   sandbox sees OUR /etc/passwd (marker)                    PASS
+FS2   host home dir /home/z unreachable                        PASS
+FS3   no /old-* escape path after pivot_root+umount            PASS
+FS4   mount --bind host / fails (no caps post-drop)            PASS
+FS5   post-capdrop tmpfs mount also fails                      PASS
+FS6   write to /home lands on-disk in rootfs (host view)       PASS
+PID1  shell is PID 1 in its own pid namespace                  PASS
+PID2  no host processes visible (ps lists none)                PASS
+UID1  uid=0 inside (mapped), no other uids                     PASS
+UID2  files created inside owned by real host uid              PASS
+NNP1  PR_SET_NO_NEW_PRIVS=1 verified via host /proc            PASS
+HOST1 hostname isolated ('minict')                             PASS
+SIG1  SIGKILL wrapper: PDEATHSIG+pidns teardown, no orphan     PASS
+NET1  netns NOT isolated (shared host net — known gap)       PASS(expected-fail)
+PROC1 /proc mount blocked by host seccomp (known gap)          PASS(expected-fail)
+CG1   no cgroup limits (cgroups v1 only — known gap)         PASS(expected-fail)
+=== summary: PASS=16 FAIL=0 ===
+
+--- tests/test_web.sh (6 cases) ---
+=== minict web tests (2026-11-17 04:15:59) — port 18675 ===
+WEB1  httpd inside sandbox answers 200 with marker             PASS
+WEB2  listener is loopback-only (no 0.0.0.0 bind)              PASS
+WEB3  path traversal cannot read host /etc/passwd              PASS
+WEB4  probe in instance rootfs served; host cwd is not         PASS
+WEB5  missing file -> 404, server stays alive                  PASS
+WEB6  down closes port and leaves no processes                 PASS
+=== summary: PASS=6 FAIL=0 ===
+
+--- A/B seccomp overhead (tests/evidence/2026-11-17-seccomp-ab.txt) ---
+kernel: 5.10.134-013.15.kangaroo.al8.x86_64  N=40 interleaved  (spawn->exit, ms)
+seccomp ON  (default): min=1.18 p50=1.38 p95=1.64 max=4.86
+seccomp OFF (env knob): min=1.02 p50=1.18 p95=1.66 max=3.80
+delta p50 = +0.20 ms (+17.4%)
+delta p95 = -0.02 ms
+
+--- host baseline (sha256) ---
+21d5de2dc39f2ceb19e33f8cc124b311b57a48aea6d7703a9a98b93079d412bd  /etc/passwd
+223fe8564b60636bc738b6178d3ba9a50ef7d791266b0efae6363bb716e4c47f  /bin/bash
+a59f393bad5037644b89de64fe558ae6d5d1473c25c63022241e7c7019ad2f0c  /usr/bin/sudo
+/etc/shadow: not readable (unprivileged host user) — passwd hash matches day-1 baseline 21d5de2d...d412bd => unchanged
+
+--- leaked sandbox processes ---
+none - clean
+
+--- cve-check (tests/evidence/cve-2026-11-17-seccomp.md) ---
+CVE rows: 17
+error mentions: 0

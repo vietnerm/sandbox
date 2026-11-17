@@ -17,7 +17,10 @@
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
+#include <linux/audit.h>
 #include <linux/capability.h>
+#include <linux/filter.h>
+#include <linux/seccomp.h>
 #include <sched.h>
 #include <signal.h>
 #include <stdio.h>
@@ -108,6 +111,162 @@ static void drop_all_caps(void)
          * which makes setgroups() permanently EPERM in this userns and, as a
          * side effect, already forces an empty supplementary group list.
          * See user_namespaces(7). */
+}
+
+/* ------------------------------------------------------------------ *
+ * seccomp-bpf blocklist (issue #2, decision D11).
+ *
+ * Installed in the sandboxed child AFTER capdrop + NNP, BEFORE exec.
+ * Strategy: blocklist of known-dangerous syscalls (default ALLOW) —
+ * NOT an allowlist: busybox httpd/sh need a broad syscall set and a
+ * wrong allowlist entry turns into a runtime outage (see D11 for the
+ * trade-off and the measured overhead).
+ *
+ * Blocked (flat): ptrace, mount/umount2/swapon/swapoff/reboot, module
+ * loading, keyctl/add_key/request_key, kexec, bpf, perf_event_open,
+ * name/open_by_handle_at, setns, unshare, process_vm_*, userfaultfd,
+ * io_uring_* (2026-08: ring ops bypass per-syscall filtering entirely),
+ * acct, _sysctl, lookup_dcookie, remap_file_pages, iopl/ioperm.
+ * Arg-checked: clone() with any CLONE_NEW* flag (no nested namespaces),
+ * socket(AF_ALG) (userspace crypto interface — issue #8 mitigation),
+ * clone3 -> ENOSYS (glibc-style fallbacks then use clone(), which IS
+ * arg-checked above).
+ *
+ * Blocked calls return EPERM (fail-closed, predictable, testable);
+ * MINICT_NO_SECCOMP=1 skips the filter (A/B overhead measurement).
+ * Syscall numbers are the fixed x86_64 ABI (this sandbox is x86_64
+ * only; the arch check makes the filter kill any other-ABI caller).
+ * ------------------------------------------------------------------ */
+
+#ifndef BPF_STMT
+#define BPF_STMT(code, k) { (unsigned short)(code), 0, 0, k }
+#endif
+#ifndef BPF_DT
+#define BPF_DT(code, jt, jf, k) { (unsigned short)(code), jt, jf, k }
+#endif
+
+enum {
+        NR_socket = 41,
+        NR_clone = 56,
+        NR_ptrace = 101,
+        NR__sysctl = 156,
+        NR_acct = 163,
+        NR_mount = 165,
+        NR_umount2 = 166,
+        NR_swapon = 167,
+        NR_swapoff = 168,
+        NR_reboot = 169,
+        NR_iopl = 172,
+        NR_ioperm = 173,
+        NR_create_module = 174,
+        NR_init_module = 175,
+        NR_delete_module = 176,
+        NR_nfsservctl = 180,
+        NR_lookup_dcookie = 212,
+        NR_remap_file_pages = 216,
+        NR_kexec_load = 246,
+        NR_add_key = 248,
+        NR_request_key = 249,
+        NR_keyctl = 250,
+        NR_unshare = 272,
+        NR_perf_event_open = 298,
+        NR_name_to_handle_at = 303,
+        NR_open_by_handle_at = 304,
+        NR_finit_module = 313,
+        NR_setns = 308,
+        NR_process_vm_readv = 310,
+        NR_process_vm_writev = 311,
+        NR_bpf = 321,
+        NR_userfaultfd = 323,
+        NR_clone3 = 435,
+        NR_io_uring_setup = 425,
+        NR_io_uring_enter = 426,
+        NR_io_uring_register = 427,
+};
+
+static const unsigned short g_blocklist[] = {
+        NR_ptrace, NR__sysctl, NR_acct, NR_mount, NR_umount2, NR_swapon,
+        NR_swapoff, NR_reboot, NR_iopl, NR_ioperm, NR_create_module,
+        NR_init_module, NR_finit_module, NR_delete_module, NR_nfsservctl,
+        NR_lookup_dcookie, NR_remap_file_pages, NR_kexec_load, NR_add_key,
+        NR_request_key, NR_keyctl, NR_unshare,
+        NR_perf_event_open, NR_name_to_handle_at, NR_open_by_handle_at,
+        NR_setns, NR_process_vm_readv, NR_process_vm_writev, NR_bpf,
+        NR_userfaultfd, NR_io_uring_setup, NR_io_uring_enter,
+        NR_io_uring_register,
+};
+
+/* any namespace-creation flag on clone() is denied (fits in 32 bits) */
+#define CLONE_NS_MASK (CLONE_NEWNS | CLONE_NEWUTS | CLONE_NEWIPC | \
+                       CLONE_NEWUSER | CLONE_NEWPID | CLONE_NEWNET | \
+                       CLONE_NEWCGROUP)
+
+#define SECCOMP_EPERM (SECCOMP_RET_ERRNO | (unsigned int)EPERM)
+#define SECCOMP_ENOSYS (SECCOMP_RET_ERRNO | (unsigned int)ENOSYS)
+
+static void install_seccomp(void)
+{
+        struct sock_filter prog[160];
+        struct sock_fprog fprog;
+        size_t i, n = 0;
+
+        if (getenv("MINICT_NO_SECCOMP")) {
+                warn("seccomp disabled via MINICT_NO_SECCOMP");
+                return;
+        }
+
+        /* load arch; anything but x86_64 never gets to run */
+        prog[n++] = (struct sock_filter)BPF_STMT(BPF_LD | BPF_W | BPF_ABS, 4);
+        prog[n++] = (struct sock_filter)BPF_DT(BPF_JMP | BPF_JEQ | BPF_K,
+                                               1, 0, AUDIT_ARCH_X86_64);
+        prog[n++] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K,
+                                                 SECCOMP_RET_KILL_THREAD);
+        prog[n++] = (struct sock_filter)BPF_STMT(BPF_LD | BPF_W | BPF_ABS, 0);
+
+        /* flat blocklist: JEQ nr -> RET EPERM (2 instructions per entry) */
+        for (i = 0; i < sizeof(g_blocklist) / sizeof(g_blocklist[0]); i++) {
+                prog[n++] = (struct sock_filter)BPF_DT(BPF_JMP | BPF_JEQ | BPF_K,
+                                                       0, 1, g_blocklist[i]);
+                prog[n++] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K,
+                                                         SECCOMP_EPERM);
+        }
+
+        /* clone(2): deny any namespace-creating flag (args[0] low 32 bits) */
+        prog[n++] = (struct sock_filter)BPF_DT(BPF_JMP | BPF_JEQ | BPF_K,
+                                               0, 3, NR_clone);
+        prog[n++] = (struct sock_filter)BPF_STMT(BPF_LD | BPF_W | BPF_ABS, 16);
+        prog[n++] = (struct sock_filter)BPF_DT(BPF_JMP | BPF_JSET | BPF_K,
+                                               0, 1, (unsigned int)CLONE_NS_MASK);
+        prog[n++] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K, SECCOMP_EPERM);
+        prog[n++] = (struct sock_filter)BPF_STMT(BPF_LD | BPF_W | BPF_ABS, 0);
+
+        /* socket(2): deny AF_ALG (38) — userspace crypto interface */
+        prog[n++] = (struct sock_filter)BPF_DT(BPF_JMP | BPF_JEQ | BPF_K,
+                                               0, 3, NR_socket);
+        prog[n++] = (struct sock_filter)BPF_STMT(BPF_LD | BPF_W | BPF_ABS, 16);
+        prog[n++] = (struct sock_filter)BPF_DT(BPF_JMP | BPF_JEQ | BPF_K,
+                                               0, 1, 38);
+        prog[n++] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K, SECCOMP_EPERM);
+        prog[n++] = (struct sock_filter)BPF_STMT(BPF_LD | BPF_W | BPF_ABS, 0);
+
+        /* clone3: ENOSYS so libc-style fallbacks retry via clone(2), which
+         * IS arg-checked above; everything else is allowed */
+        prog[n++] = (struct sock_filter)BPF_DT(BPF_JMP | BPF_JEQ | BPF_K,
+                                               0, 1, NR_clone3);
+        prog[n++] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K,
+                                                 SECCOMP_ENOSYS);
+        prog[n++] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K,
+                                                 SECCOMP_RET_ALLOW);
+
+        if (n > sizeof(prog) / sizeof(prog[0]))
+                die("seccomp program overflow (build bug)");
+
+        fprog.len = (unsigned short)n;
+        fprog.filter = prog;
+        /* requires NO_NEW_PRIVS (set before unshare, inherited here);
+         * kernel validates the whole program atomically — fail closed */
+        if (prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &fprog, 0, 0) < 0)
+                die("prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER)");
 }
 
 static volatile sig_atomic_t g_child_pid = 0;
@@ -214,6 +373,8 @@ int main(int argc, char **argv)
                         warn("mount /tmp (child)");
 
                 drop_all_caps(); /* after ALL privileged-in-ns work is done */
+
+                install_seccomp(); /* last lock: syscall blocklist, before exec */
 
                 setenv("PATH", "/bin:/sbin:/usr/bin", 1);
                 setenv("HOME", "/", 1);

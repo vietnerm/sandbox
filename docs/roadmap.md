@@ -10,6 +10,12 @@
 5. Ghi `docs/daily-log-YYYY-MM-DD.md` (format 5 mục)
 
 ## Đã xong
+- [x] 2026-11-17 (phiên 4, SDDA): **seccomp-bpf blocklist mặc định bật** — 32 syscall +
+  arg-check clone(CLONE_NEW*)/socket(AF_ALG), clone3→ENOSYS (D11–D13); 17 test mới
+  `tests/test_seccomp.sh` gồm 4 control A/B (chứng minh EPERM từ filter mình, không phải
+  host); overhead đo được +0.2ms cold start (A/B N=40, evidence `2026-11-17-seccomp-ab.txt`);
+  bài học số syscall phải grep unistd_64.h (D14 — setns là 308, không phải 306). SBG:
+  gộp PR #9, dọn 2 nhánh đã gộp, ledger `docs/branch-ledger.md` tạo mới.
 - [x] 2026-11-17 (phiên 3, SDDA): **web server trong sandbox** — `minict.sh web` +
   busybox httpd static, bind 127.0.0.1 (D6/D7), `tests/test_web.sh` 6/6 PASS,
   root Makefile + 5 GitHub Actions workflows + PR template + `tools/perf-check.sh`
@@ -23,28 +29,23 @@
   (up/exec/shell/down/ps), 16 test isolation, benchmark đầy đủ. Cold start 1.2ms, RAM ~1.1MB, disk 2MB.
 
 ## Đang làm
-- [ ] (phiên 3) PR feat/web-busybox-httpd: chờ CI xanh (ci.yml lần đầu chạy)
-- [ ] test song song nhiều instance + stress rollback
+- (trống)
 
 ## Tiếp theo (theo thứ tự ưu tiên cho các ngày tới)
-1. **netns + networking cho web stack** — theo PROMPT.MD §8 ưu tiên area:web đã đạt
-   mốc đầu; tiếp theo là netns. Đo được 17-11: veth/dummy tạo được trong userns+netns
-   (CAP_NET_ADMIN trong ns mới) NHƯNG không nối ra host rootless → cần usermode proxy
-   hoặc unix-socket bridge. **Bắt buộc đi cùng seccomp chặn netlink/nftables** (D10 —
-   edera.dev: userns mở CAP_NET_ADMIN-in-ns → nf_tables surface; issue #3 + #2)
-2. **seccomp-bpf tối thiểu cho sandbox** — filter sau capdrop: chặn open_by_handle_at,
-   keyctl, bpf, setns ra ngoài... (backlog #3; kernel 5.10 OK; dùng prctl+ BPF tự viết,
-   đo overhead syscall)
-2. **netns + networking cho web stack** — slirp4netns/pasta không có trong env →
-   tự làm: netns loopback-only + unix-socket proxy qua rootfs path, hoặc veth cần
-   CAP_NET_ADMIN (đo xem userns có cho phép tạo veth trong ns riêng không)
-3. **Full web stack trong minict** (Definition of Done tổng thể): nginx/caddy + API +
+1. **netns + networking cho web stack** (issue #3) — theo PROMPT.MD §8 area:web đã đạt
+   mốc đầu, seccomp (issue #2) đã xong; tiếp theo là netns. Đo được 17-11: veth/dummy
+   tạo được trong userns+netns (CAP_NET_ADMIN trong ns mới) NHƯNG không nối ra host
+   rootless → cần usermode proxy hoặc unix-socket bridge. Lưu ý: netns mở thêm mặt
+   netlink/nftables — seccomp blocklist (phiên 4) phải GIỮ khi thêm CLONE_NEWNET.
+2. **Full web stack trong minict** (Definition of Done tổng thể): nginx/caddy + API +
    SQLite bên trong 1 instance; `./sandbox up|down|bench` một lệnh; cold start stack < 5s
-4. **chroot-escape test sâu hơn** — fd-based escape, /proc/self/root tricks, setuid
-   binary trong rootfs (NNP phải chặn), core dump leak
-5. **cgroups v1 delegation** (nếu host cho phép) hoặc đánh dấu parked vì v1 không rootless-friendly
-6. Wasmtime/WASI cho backend — so sánh với minict về RAM/startup/isolation model
-7. overlayfs rootless + idmapped mounts — parked cho tới khi kernel ≥5.15 (CVE-2023-0386)
+3. **chroot-escape test sâu hơn** (issue #5) — fd-based escape, /proc/self/root tricks, setuid
+   binary trong rootfs (NNP phải chặn), core dump leak; thêm case cho seccomp (SIGSYS mode)
+4. **cgroups v1 delegation** (nếu host cho phép) hoặc đánh dấu parked vì v1 không rootless-friendly
+5. Wasmtime/WASI cho backend — so sánh với minict về RAM/startup/isolation model
+6. overlayfs rootless + idmapped mounts — parked cho tới khi kernel ≥5.15 (CVE-2023-0386)
+7. seccomp allowlist mode — parked: chỉ làm khi có matrix workload httpd được audit
+   đầy đủ; blocklist hiện tại + capdrop + NNP đủ cho DoD hiện tại
 
 ## Parked ideas
 - Firecracker/Cloud Hypervisor: env không có KVM — chỉ có thể research lý thuyết
@@ -57,5 +58,5 @@
 - [ ] cold start toàn stack < 5s; RAM idle < 300MB
 - [ ] escape test cơ bản pass
 - [ ] `./sandbox up|down|bench` một lệnh
-- Tiến độ: **3/5** (rootless ✅, escape test cơ bản ✅, web server tĩnh trong sandbox ✅;
-  còn stack đầy đủ nginx/API/DB, netns, một-lệnh-stack)
+- Tiến độ: **4/5** (rootless ✅, escape test cơ bản ✅, web server tĩnh trong sandbox ✅,
+  syscall filter seccomp ✅; còn stack đầy đủ nginx/API/DB, netns, một-lệnh-stack)
