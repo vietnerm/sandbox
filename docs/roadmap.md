@@ -34,8 +34,10 @@
   **gói hỏng vì chown foreign-uid: đo được** (AL7 — chown `100:100` EPERM
   post-capdrop; nginx/postgres-type sẽ hỏng ở bước adduser — phương án (a) root-in-ns,
   (b) pre-bake ownership, (c) idmapped mounts GĐ2 — chi tiết D20);
-  /proc trong pidns env-aware (runner 6.x assert Pid:1 thật, dev-host assert
-  fail-soft); perf: cold 1.83ms, rss 1087KB, disk 8.6MB — PASS mọi ngưỡng;
+  /proc trong pidns env-aware — **ENV FACT đo được phiên này: mount /proc
+  EPERM ở cả máy dev VÀ runner azure kernel 7.0** (run 44039937935) — AL4
+  assert fail-soft đúng cả hai; root-cause runner = follow-up; perf: cold
+  1.83ms, rss 1087KB, disk 8.6MB — PASS mọi ngưỡng;
   apk add online chờ egress pasta (mục 4); apk-tools quét CVE (2 CVE cũ đã vá,
   0 mở) → `docs/cve-watchlist.md` có mục apk-tools. (#23)
 - [x] 2026-11-17 (phiên 6): **CI xanh thật** — pipefail (`defaults: run: shell: bash`

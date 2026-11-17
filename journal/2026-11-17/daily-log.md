@@ -540,3 +540,9 @@
 - GĐ1 mục 3 (issue #5): escape test sâu trên rootfs distro thật (`/proc` thật,
   nhiều mặt tấn công hơn busybox) — Alpine giờ có sẵn làm mồi
 - SBG: gộp PR #21 (fix #6) nếu không còn commit < 2h + có retest/audit artifact
+
+### ENV FACT bổ sung (sau lần chạy CI đầu của PR #24)
+- Runner ubuntu-24.04 kernel `7.0.0-1017-azure` cũng **EPERM khi mount /proc
+  trong pidns** (run 44039937935) — giả thuyết "runner 6.x/7.x cho phép" SAI.
+  AL4 env-aware vẫn PASS (nhánh fail-soft). Root-cause runner (apparmor/lockdown/
+  seccomp của azure?) → follow-up. Đã sửa D20-4 + roadmap cho khớp đo thật.

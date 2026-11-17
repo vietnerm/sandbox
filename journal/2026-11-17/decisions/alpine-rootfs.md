@@ -24,10 +24,18 @@ setuid** (manifest §5), không Docker.
    từ APKINDEX v3.22 tại build-time); apk verify bằng alpine-keys preinstall.
    **Đo được** (AL5): `apk add --no-network` rc=0 trong sandbox. `--allow-untrusted`
    bị loại vì làm mù lớp kiểm tra.
-4. **/proc trong pidns: env-aware test** (D20-4). Kernel cho phép mount procfs
-   khi userns sở hữu pidns (pid_namespaces(7)) — runner (6.x) assert
-   `/proc/self/status` `Pid: 1` thật; máy dev host-seccomp chặn mount(2) → assert
-   fail-soft (payload vẫn chạy, exit sạch). Không hardcode một môi trường.
+4. **/proc trong pidns: env-aware test + ENV FACT mới đo được** (D20-4).
+   Kernel cho phép mount procfs khi userns sở hữu pidns (pid_namespaces(7)) —
+   lý thuyết nói chạy được. **Thực đo 2026-11-17: EPERM ở CẢ HAI môi trường**:
+   máy dev (host seccomp chặn mount, known gap PROC1) VÀ runner GitHub
+   ubuntu-24.04 kernel `7.0.0-1017-azure` (run 44039937935 — warn
+   `mount /proc … Operation not permitted` xuất hiện trong CI). Test AL4
+   env-aware: ở môi trường nào mount được → assert `/proc/self/status`
+   `Pid: 1`; bị chặn → assert fail-soft (payload chạy sạch). Root-cause vì sao
+   azure kernel vẫn EPERM (apparmor/lockdown/seccomp của runner?) = việc tra
+   cứu tiếp theo, không khẳng định hôm nay. Hệ quả: mọi thứ phụ thuộc /proc
+   trong sandbox (openrc boot script, `ps` đầy đủ) chưa chạy được ở cả 2 env
+   — ghi rõ, không claim.
 5. **init: busybox init có sẵn; payload-as-PID1 + shim D19 đủ cho one-shot/web**
    (D20-5). Init thật (reap vòng đời dài, multi-service) = việc của GĐ2
    exec/daemon — không mở scope hôm nay.

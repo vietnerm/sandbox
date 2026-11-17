@@ -300,8 +300,9 @@ newuidmap setuid (manifest §5 — chỉ single-uid mapping `0 → uid-thật`).
   mặc định `--no-same-owner` → toàn bộ tree thuộc uid 1001 ↔ root trong ns (khớp
   pattern Apptainer, không cần fakeroot).
 - `/proc` trong pidns: code minict đã mount proc pre-capdrop (đo phiên 1: host
-  seccomp chặn, warn-continue) — test mới phải **env-aware** (dev-host: assert
-  fail-soft không crash; runner: assert `/proc/self/status` Pid:1 thật).
+  seccomp chặn, warn-continue) — test mới phải **env-aware**. CẬP NHẬT sau đo CI
+  (run 44039937935): runner azure kernel 7.0.0 cũng EPERM → env-aware vẫn đúng,
+  cả hai env đi nhánh fail-soft; root-cause runner = follow-up (D20-4).
 - apk offline: netns loopback-only → không `apk add` online trong instance
   (chờ pasta mục 4); đo offline bằng local repo pre-seed 1 gói nhỏ để kiểm
   hành vi chown/extraction trong sandbox thật.

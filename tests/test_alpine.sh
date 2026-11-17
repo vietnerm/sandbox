@@ -51,8 +51,10 @@ icc() { "$MINICT" "$ROOTFS" /bin/sh -c "$1" 2>"$2"; }
 # AL4 helper: env-aware /proc assertion (D20)
 #   dev-host (host seccomp chặn mount — known gap PROC1): minict warn-continue,
 #     /proc KHÔNG được mount → assert sandbox vẫn chạy sạch (fail-soft).
-#   runner (kernel ≥ 6.1, không filter): procfs mount được vì userns sở hữu
-#     pidns (pid_namespaces(7)) → assert /proc/self/status Pid: 1 thật.
+#   runner (lý thuyết pid_namespaces(7): userns sở hữu pidns → mount được):
+#     assert /proc/self/status Pid: 1 thật. MEASURED 2026-11-17: runner azure
+#     kernel 7.0.0 vẫn EPERM (run 44039937935) — cả 2 env thực tế đi nhánh
+#     fail-soft; root-cause = follow-up (D20-4).
 proc4_test() {
     local errfile out
     errfile="$(mktemp)"
