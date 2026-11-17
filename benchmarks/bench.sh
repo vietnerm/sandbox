@@ -70,9 +70,9 @@ echo "|---|---|"
 echo "| busybox binary | $(du -h "$ROOTFS/bin/busybox" | cut -f1) |"
 echo "| rootfs (full, with symlinks) | $(du -sh "$ROOTFS" | cut -f1) |"
 echo "| minict binary | $(du -h "$MINICT" | cut -f1) |"
-TRACKED=$(git -C "$REPO" ls-files 2>/dev/null | tr '\n' '\0')
-if [[ -n "$TRACKED" ]]; then
-    echo "| repo code (git-tracked only) | $(printf '%s' "$TRACKED" | xargs -0 du -cb | tail -1 | awk '{printf "%.0f kB", $1/1024}') |"
+TRACKED_COUNT=$(git -C "$REPO" ls-files 2>/dev/null | wc -l)
+if [[ "$TRACKED_COUNT" -gt 0 ]]; then
+    echo "| repo code (git-tracked only) | $(git -C "$REPO" ls-files -z | xargs -0 du -cb | tail -1 | awk '{printf "%.0f kB", $1/1024}') |"
 else
     echo "| repo code (git-tracked only) | (not committed yet) |"
 fi
