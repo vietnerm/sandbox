@@ -1,0 +1,9 @@
+=== SDDA self-audit 2026-11-17 03:41:13 ===
+CG1   no cgroup limits (cgroups v1 only — known gap)         PASS(expected-fail)
+=== summary: PASS=16 FAIL=0 ===
+CG1   no cgroup limits (cgroups v1 only — known gap)         PASS(expected-fail)
+=== summary: PASS=16 FAIL=0 ===
+WEB6  down closes port and leaves no processes                 PASS
+=== summary: PASS=6 FAIL=0 ===
+--- cve-check (last run: tests/evidence/cve-2026-11-17-web.md) — 16 CVE, 0 errors ---
+--- CI checks on f78fc7d: build-test success ×2, perf success ---
