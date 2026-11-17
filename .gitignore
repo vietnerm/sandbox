@@ -1,0 +1,8 @@
+# build artifacts
+sandbox/minict
+*.o
+# generated at runtime
+rootfs/
+instances/
+# logs
+*.log
