@@ -560,6 +560,8 @@ static volatile sig_atomic_t g_child_pid = 0;
  */
 
 static volatile sig_atomic_t g_payload_pid = 0;
+static volatile sig_atomic_t g_payload_done = 0;
+static volatile sig_atomic_t g_payload_status = 0;
 
 /* async-signal-safe forwarder (kill(2) is AS-safe per signal-safety(7)) */
 static void fwd_to_payload(int sig)
@@ -568,19 +570,53 @@ static void fwd_to_payload(int sig)
                 kill((pid_t)g_payload_pid, sig);
 }
 
-/* shim event loop: mirror the payload's exit status, never returns */
-static void shim_wait_loop(pid_t payload)
+/* async-signal-safe reaper (SIGCHLD): every orphaned grandchild re-parents
+ * to pidns-1 = US, so its SIGCHLD fires here; reap every available child
+ * (tini pattern) so a long-running instance does not accumulate zombies,
+ * and flag the main loop when the PAYLOAD itself exited so its status is
+ * mirrored exactly once (audit 2026-11-17, medium — SIG5 test).
+ * errno is saved/restored: sigsuspend() in the main loop must still see
+ * the kernel's own errno, not one clobbered by this handler. */
+static void shim_reap(int sig)
 {
-        int status;
+        int saved_errno = errno;
 
-        while (waitpid(payload, &status, 0) < 0) {
-                if (errno != EINTR)
-                        _exit(127);
+        (void)sig;
+        for (;;) {
+                int st;
+                pid_t w = waitpid(-1, &st, WNOHANG);
+
+                if (w > 0) {
+                        if (w == (pid_t)g_payload_pid) {
+                                g_payload_status = st;
+                                g_payload_done = 1;
+                        }
+                        continue;
+                }
+                if (w < 0 && errno == EINTR)
+                        continue;
+                break; /* 0 = children alive but none dead; ECHILD = none */
         }
-        if (WIFEXITED(status))
-                _exit(WEXITSTATUS(status));
-        if (WIFSIGNALED(status))
-                _exit(128 + WTERMSIG(status));
+        errno = saved_errno;
+}
+
+/* shim event loop: orphan grandchildren are reaped by shim_reap() as they
+ * die; we only block until the PAYLOAD exits, then mirror its status.
+ * never returns. */
+static void shim_wait_loop(void)
+{
+        sigset_t empty;
+
+        sigemptyset(&empty);
+        while (!g_payload_done) {
+                /* sleep until any signal fires (sigsuspend unblocks all
+                 * signals atomically); the SIGCHLD handler does the work */
+                (void)sigsuspend(&empty);
+        }
+        if (WIFEXITED((int)g_payload_status))
+                _exit(WEXITSTATUS((int)g_payload_status));
+        if (WIFSIGNALED((int)g_payload_status))
+                _exit(128 + WTERMSIG((int)g_payload_status));
         _exit(127);
 }
 
@@ -722,7 +758,11 @@ int main(int argc, char **argv)
 
                 /* block the forwardable signals around the payload fork so
                  * one racing fork->g_payload_pid is QUEUED, not lost; they
-                 * are delivered right after the handlers are installed */
+                 * are delivered right after the handlers are installed.
+                 * SIGCHLD joins the set: without it, a payload dying between
+                 * fork() and the shim_reap() install below would lose its
+                 * only SIGCHLD (default disposition is ignore) and the wait
+                 * loop would hang forever (lost wakeup) */
                 sigemptyset(&fwd);
                 sigaddset(&fwd, SIGTERM);
                 sigaddset(&fwd, SIGINT);
@@ -731,6 +771,7 @@ int main(int argc, char **argv)
                 sigaddset(&fwd, SIGUSR1);
                 sigaddset(&fwd, SIGUSR2);
                 sigaddset(&fwd, SIGWINCH);
+                sigaddset(&fwd, SIGCHLD);
                 if (sigprocmask(SIG_BLOCK, &fwd, &old) < 0)
                         die("sigprocmask(SIG_BLOCK)");
 
@@ -793,13 +834,18 @@ int main(int argc, char **argv)
                     sigaction(SIGUSR2, &sa, NULL) < 0 ||
                     sigaction(SIGWINCH, &sa, NULL) < 0)
                         die("sigaction(shim)");
+                sa.sa_handler = shim_reap;
+                sa.sa_flags = SA_RESTART | SA_NOCLDSTOP;
+                if (sigaction(SIGCHLD, &sa, NULL) < 0)
+                        die("sigaction(SIGCHLD shim)");
 
                 /* pending signals queued during the fork window fire NOW,
-                 * with g_payload_pid already set (race closed) */
+                 * with g_payload_pid already set (race closed) — including
+                 * the queued SIGCHLD of an early payload death */
                 if (sigprocmask(SIG_SETMASK, &old, NULL) < 0)
                         die("sigprocmask(SIG_SETMASK)");
 
-                shim_wait_loop(payload); /* never returns */
+                shim_wait_loop(); /* never returns */
         }
 
         /* ---- host side: supervisor, no extra privileges ---- */

@@ -154,6 +154,43 @@ sigfwd_test() {
     [[ $rc -eq $exprc ]]
 }
 
+# SIG5: orphaned grandchildren re-parented to pidns-1 are REAPED by the
+# shim, not left as zombies (SIA audit of PR #21, 2026-11-17, medium).
+# Repro of the old bug: `sh -c 'for i in 1..5; do (sleep 0.1 &); done;
+# sleep 2'` — each backgrounded sleep re-parents to the shim when its
+# subshell exits, then dies. The old shim_wait_loop() only waited for the
+# payload, so those re-parented children lingered as permanent Z processes
+# under the shim for the whole payload lifetime (pid table leak for
+# long-running instances, GĐ2). The fix (tini pattern): a SIGCHLD handler
+# reaps every available child (shim_reap, minict.c).
+# Host-view detection: a zombie's state is visible in host `ps` regardless
+# of pidns; re-parented zombies show PPID = shim's host pid. The payload's
+# own unreaped subshell zombies (PPID = payload) are normal shell behavior
+# and NOT part of this contract.
+sig5_test() {
+    "$MINICT" "$ROOTFS" /bin/sh -c \
+        'for i in 1 2 3 4 5; do (sleep 0.1 &); done; sleep 2' \
+        >/dev/null 2>&1 & local w=$!
+    sleep 1.2 # orphans long dead, payload still sleeping
+    local mp="" p
+    if [[ "$(cat "/proc/$w/comm" 2>/dev/null)" == "minict" ]]; then
+        mp="$w"
+    else
+        for p in $(pgrep -P "$w" 2>/dev/null); do
+            if [[ "$(cat "/proc/$p/comm" 2>/dev/null)" == "minict" ]]; then
+                mp="$p"; break
+            fi
+        done
+    fi
+    if [[ -z "$mp" ]]; then kill -9 "$w" 2>/dev/null; return 1; fi
+    local shim z
+    shim=$(pgrep -P "$mp" 2>/dev/null | head -1)
+    if [[ ! "$shim" ]]; then kill -9 "$mp" "$w" 2>/dev/null; return 1; fi
+    z=$(ps -eo ppid=,stat= | awk -v s="$shim" '$1==s && $2 ~ /^Z/' | wc -l)
+    wait "$w" 2>/dev/null
+    [[ "$z" -eq 0 ]]
+}
+
 uid1_test() {
     # issue #14: `id -G` shows supplementary groups of the HOST user as
     # overflowgid 65534 inside the sandbox: map_ids() maps exactly one gid
@@ -222,6 +259,7 @@ run_case SIG3 "SIGINT wrapper: tree exits 130 (128+2)" pass \
     sigfwd_test INT 130 wrapper trapint
 run_case SIG4 "control: TERM to payload (non-init) delivered (143)" pass \
     sigfwd_test TERM 143 payload
+run_case SIG5 "orphan grandchildren reaped by shim, no zombies" pass sig5_test
 
 # ---------- network isolation (netns ON since issue #3) ----------
 run_case NET1 "netns isolated: only lo inside, no host iface" pass \

@@ -550,3 +550,39 @@
 2. GĐ1 mục 3: đánh giá pasta/slirp4netns A/B với bridge D16 (cài rootless trên
    runner) — điều kiện cho web stack đa service + egress.
 3. Kiểm `/dev/kvm` trên runner GitHub (probe workflow) — precondition GĐ3.
+
+# Phiên 7b (review-fix theo SIA audit) — PR #21: shim reap zombie + khôi phục evidence
+
+## Bối cảnh
+SIA audit của PR #21 @ `2d82c95` (07:48Z) verdict CONCERNS với 2 việc mức
+medium/B10 để gỡ verdict. Phiên này chạy Pha B4 của `PROMPT.MD §11` (orchestrator
+mới, PR #25): sửa trên chính nhánh, rồi SCR/SIA lại trên SHA mới.
+
+## Việc đã sửa (commit `fix(review): … (#21)`)
+1. **[medium] Reap zombie**: `shim_wait_loop` cũ chỉ wait payload → grandchild
+   re-parent về pidns-1 thành zombie vĩnh viễn. Sửa theo pattern tini: SIGCHLD
+   handler `shim_reap` (`waitpid(-1, WNOHANG)`), flag riêng cho payload, SIGCHLD
+   vào tập block quanh fork (lost-wakeup), `SA_NOCLDSTOP`. Decision **D20**.
+   Test mới **SIG5** (isolation 20 → 21): đếm `Z` theo PPID=shim từ host view.
+   Negative control: mutant không-reap → 5 zombie (FAIL) / bản thật → 0 (PASS).
+2. **[B10] Khôi phục evidence cũ**: `evidence/isolation.txt` (phiên 1) và
+   `evidence/web.txt` (phiên 3/6) trở về nguyên bản từ `main`; log suite đầy đủ
+   của PR #21 chuyển sang `evidence/sigterm-suites.txt` (evidence là log thô
+   append-only, không ghi đè sau commit — `PROMPT.MD` §10).
+3. **[low] Cửa sổ µs trước `sigprocmask`** (audit phát hiện 2): KHÔNG sửa trong
+   PR này (nguy cơ vỡ SIG2–4 cao hơn lợi ích); theo luật §11 B4 việc low →
+   issue `from-audit` theo sau.
+
+## Kết quả chạy (env local: Debian 13, kernel 5.10.134 al8, uid 1001)
+- `make build` không warning (-Wall -Wextra); mutant build được.
+- isolation **21/21** (SIG5 mới PASS) + seccomp **20/20** + netns **7/7** +
+  web **6/6** + perf-check PASS (cold 1.93 ms / rss 1204 kB / disk 2.02 MB).
+- Negative control SIG5: mutant đo được 5 zombie → test bắt được bug (không rỗng).
+
+## CVE Check (phiên 7b)
+- Không có syscall surface mới (SIGCHLD handler + waitpid(-1) chỉ nội bộ shim;
+  waitpid đã nằm trong allowlist-implicit blocklist cũ). Watchlist 16 CVE giữ
+  nguyên; NVD check đầy đủ ghi ở Phiên orchestrator cuối ngày.
+
+## Kế hoạch
+- Push, chờ CI, SCR/SIA lại trên SHA mới → nếu PASS vào hàng chờ gộp Pha C.

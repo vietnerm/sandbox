@@ -94,3 +94,44 @@ phải dùng `trap INT` + bg `sleep & wait` (wait builtin là wait có thể ng�
 - **Shim có seccomp filter:** shim không exec, capdrop, attack surface = byte
   pump signal-forwarder; cùng posture với relay D16 (không filter). unshare/
   setns đã EPERM sau capdrop.
+
+## D20: shim_reap — SIGCHLD handler reaps MỌI con (pattern tini) [review-fix
+theo SIA audit PR #21, 2026-11-17, mức medium]
+
+### Vấn đề (audit)
+`shim_wait_loop` cũ chỉ `waitpid(payload)`. Grandchild mồ côi trong pidns được
+re-parent về pidns-1 (= shim) và thành zombie vĩnh viễn trong lifetime của
+payload — tái hiện: `sh -c 'for i in 1..5; do (sleep 0.1 &); done; sleep 2'`
+→ 5 tiến trình `Z` dưới shim. Vô hại với lệnh ngắn, nhưng instance chạy lâu
+(nginx, GĐ2) rò bảng pid.
+
+### Giải pháp
+- `shim_reap` (SIGCHLD handler, AS-safe): vòng `waitpid(-1, …, WNOHANG)` reap
+  mọi con chết (orphan lẫn payload); chỉ payload set flag `g_payload_done` +
+  lưu status vào `g_payload_status` (sig_atomic_t) để main loop mirror đúng
+  một lần. errno save/restore để không clobber errno của `sigsuspend`.
+- `shim_wait_loop` mới: vòng `while (!g_payload_done) sigsuspend(&empty)`.
+- **SIGCHLD vào tập block quanh payload fork** (lost-wakeup): nếu payload chết
+  giữa `fork()` và lúc cài handler, SIGCHLD mặc định là ignore → treo vô hạn.
+  Block từ trước fork, unblock sau khi cài handler + set `g_payload_pid` →
+  SIGCHLD pending phát đúng lúc (cơ chế "pending signals fire NOW" sẵn có).
+- `SA_NOCLDSTOP`: SIGCHLD do STOP không phải chết — handler chỉ quan tâm exit.
+- Không đợi grandchild SỐNG sau khi payload chết: WNOHANG reaper thoát ngay,
+  process còn sống chết theo teardown pidns (kernel SIGKILL toàn namespace khi
+  pidns-1 thoát, pid_namespaces(7)) — hành vi docker-init.
+
+### Bị từ chối
+- `waitpid(-1)` blocking thay `waitpid(payload)` blocking: payload kiểu daemon
+  (`cmd &`) sẽ treo minict đến khi grandchild tự chết — regression cho use-case
+  service. WNOHANG + teardown pidns đúng hơn.
+
+### Kiểm chứng
+- Suite isolation 20 → **21** (SIG5 "orphan grandchildren reaped by shim, no
+  zombies"): host-view đếm `ps -eo ppid=,stat=` PPID=shim stat Z — zombie thấy
+  từ host bất kể pidns. Tổng baseline 48 + web 6 = 54.
+- Negative control (bắt buộc audit): mutant đổi `waitpid(-1,…)` →
+  `waitpid(payload,…)` (không reap orphan) → SIG5 đo được **5 zombie → FAIL**;
+  bản thật → 0 zombie → PASS. Test không rỗng.
+- Env local (uid 1001, kernel 5.10.134): isolation 21/21 + seccomp 20/20 +
+  netns 7/7 + web 6/6 + perf-check PASS (1.93/1204/2.02).
+- Cold start không đổi đo được ngoài nhiễu (handler chỉ chạy khi SIGCHLD).
