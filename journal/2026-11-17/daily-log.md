@@ -536,14 +536,17 @@
 
 ## 6. PR (phiên 7)
 
-- PR mở: `fix(lifecycle): pidns-1 signal shim — SIGTERM/SIGINT delivered (Closes #6)`
-  — chứa code + tests + decision-log D19 + research + evidence + roadmap/README/
-  perf-baseline/daily-log cập nhật; perf number trong body; CI chờ kết quả.
+- **#21** — `fix(lifecycle): pidns-1 signal shim — SIGTERM/SIGINT delivered
+  (Closes #6)` — chứa code + tests + D19 (`journal/2026-11-17/decisions/sigterm.md`)
+  + research + evidence + roadmap/README/perf-baseline/daily-log cập nhật.
+- CI: **GREEN thật** (ci + perf-guard) trên SHA gốc `6cea7f9` và merge commit
+  `6046dd0`; merge main vào nhánh để theo layout `journal/` + manifest
+  Proxmox-lite mới (PR #19/#20). Mergeable: clean. Chờ SBG gate (không tự merge).
 
 ## Kế hoạch tiếp theo
 
-1. GĐ1 roadmap mục 1 (mới): deep escape tests (#5) — fd-based escape, setuid
-   vs NNP, core_dump leak; SIGSYS-mode case.
+1. GĐ1 roadmap mục 1 (sau renumber): **Rootfs distro thật** (Alpine trước) —
+   precondition cho escape suite sâu (#5, mục 2) và web stack (mục 4).
 2. GĐ1 mục 3: đánh giá pasta/slirp4netns A/B với bridge D16 (cài rootless trên
    runner) — điều kiện cho web stack đa service + egress.
 3. Kiểm `/dev/kvm` trên runner GitHub (probe workflow) — precondition GĐ3.
