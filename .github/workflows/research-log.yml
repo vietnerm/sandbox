@@ -1,0 +1,29 @@
+name: research-log
+on:
+  schedule: [{cron: "0 3 * * *"}]
+  workflow_dispatch:
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: nudge when research/ goes stale (>= 2 days)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          last="$(git log -1 --format=%cs -- research/ 2>/dev/null || echo 1970-01-01)"
+          today="$(date +%F)"
+          days=$(( ( $(date -d "$today" +%s) - $(date -d "$last" +%s) ) / 86400 ))
+          echo "research/ last touch: $last (${days}d ago)"
+          if [ "$days" -ge 2 ]; then
+            gh issue create \
+              --title "chore: no research log for ${days} days" \
+              --label "type:chore,priority:p2" \
+              --body "Last file touching \`research/\` is dated $last (${days} days ago). PROMPT.MD requires a daily research note (Bước 4). Write research/$(date +%F).md."
+          else
+            echo "research/ is fresh — no action"
+          fi

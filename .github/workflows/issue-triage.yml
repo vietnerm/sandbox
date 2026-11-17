@@ -1,0 +1,36 @@
+name: issue-triage
+on:
+  issues:
+    types: [opened]
+permissions:
+  issues: write
+
+jobs:
+  triage:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const body = [
+              'Thanks for opening an issue. To let the daily agent triage it fast, please add:',
+              '',
+              '- `uname -r` of the host kernel where it happens',
+              '- minict version / commit SHA (`git log -1 --oneline`)',
+              '- minimal repro command + full output log',
+              '',
+              'Auto-labeled `needs-repro` until reproduction steps are present.',
+              'Labels used by the agent: see docs/roadmap.md and PROMPT.MD section 2.'
+            ].join('\n');
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              labels: ['needs-repro'],
+            });
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });

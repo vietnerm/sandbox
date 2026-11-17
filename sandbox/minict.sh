@@ -2,6 +2,11 @@
 # minict.sh — lifecycle CLI for the minict rootless container.
 #
 #   ./sandbox/minict.sh up <name>            start instance (bg shell), private rootfs copy
+#   ./sandbox/minict.sh web <name> <port>    web instance: busybox httpd serving a
+#                                            docroot INSIDE the sandbox, bind on
+#                                            127.0.0.1:<port> (no netns yet — loopback
+#                                            only, port >= 1024 enforced; see
+#                                            docs/decision-log/2026-11-17-web-httpd.md)
 #   ./sandbox/minict.sh exec <name> -- cmd   run one-shot cmd in instance rootfs (foreground)
 #   ./sandbox/minict.sh shell <name>         interactive-ish shell into instance rootfs
 #   ./sandbox/minict.sh down <name>          stop instance, remove its fs copy
@@ -42,6 +47,56 @@ up)
     echo $! > "$INST/$name/pid"
     sleep 0.1
     echo "instance '$name' up (pid $(cat "$INST/$name/pid"), rootfs $INST/$name/rootfs)"
+    ;;
+web)
+    name="${2:?usage: minict.sh web <name> <port> [docdir]}"
+    port="${3:?usage: minict.sh web <name> <port> [docdir]}"
+    doc="${4:-/www}"
+    [[ -x "$BIN" ]] || { echo "minict binary missing; run: make -C $HERE"; exit 1; }
+    [[ -d "$REPO/rootfs" ]] || "$HERE/mkrootfs.sh" "$REPO/rootfs"
+    # bind must be loopback (no netns yet) and unprivileged (capdrop inside)
+    case "$port" in
+        ''|*[!0-9]*) echo "port must be numeric, got '$port'"; exit 1 ;;
+    esac
+    if [[ "$port" -lt 1024 ]]; then
+        echo "refusing port < 1024: sandbox has no netns (shared host net) and" \
+             "runs capdropped — use an unprivileged port >= 1024"; exit 1
+    fi
+    if [[ "$doc" != /* ]]; then echo "docdir must be absolute inside rootfs"; exit 1; fi
+    mkdir -p "$INST/$name"
+    if [[ -f "$INST/$name/pid" ]] && kill -0 "$(cat "$INST/$name/pid")" 2>/dev/null; then
+        echo "instance '$name' already running (pid $(cat "$INST/$name/pid"))"
+        exit 1
+    fi
+    # private rootfs copy per instance: ~2MB, no overlayfs needed
+    rm -rf "$INST/$name/rootfs"
+    cp -a "$REPO/rootfs" "$INST/$name/rootfs"
+    # default docroot lives INSIDE the private copy (served by the sandboxed httpd)
+    mkdir -p "$INST/$name/rootfs$doc"
+    if [[ ! -f "$INST/$name/rootfs$doc/index.html" ]]; then
+        cat > "$INST/$name/rootfs$doc/index.html" <<HTML
+<html><head><title>minict web</title></head>
+<body><h1>minict web</h1>
+<p>instance: $name</p>
+<p>marker: minict-web</p>
+<p>served from inside the sandbox (userns+mountns+pivot_root+capdrop+NNP)</p>
+</body></html>
+HTML
+    fi
+    nohup "$BIN" "$INST/$name/rootfs" /bin/sh -c \
+        "exec busybox httpd -f -p 127.0.0.1:$port -h $doc" \
+        </dev/null >"$INST/$name/log" 2>&1 &
+    echo $! > "$INST/$name/pid"
+    # wait until the port answers from the host side (max ~2s)
+    for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+        if curl -s -m 1 -o /dev/null "http://127.0.0.1:$port/"; then
+            echo "web '$name' serving http://127.0.0.1:$port (docroot $doc)"
+            exit 0
+        fi
+        sleep 0.1
+    done
+    echo "web '$name' failed to listen on 127.0.0.1:$port (log: $INST/$name/log)"
+    exit 1
     ;;
 exec)
     name="${2:?usage: minict.sh exec <name> -- cmd...}"
@@ -84,6 +139,6 @@ bench)
     exec bash "$REPO/benchmarks/bench.sh"
     ;;
 help|*)
-    sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
     ;;
 esac

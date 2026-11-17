@@ -1,0 +1,35 @@
+name: perf-guard
+on: [pull_request]
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  perf:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: allow unprivileged userns
+        run: |
+          if [ -f /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          fi
+      - name: perf check vs thresholds (cold start / RSS / disk)
+        id: perf
+        run: make perf-check
+
+      # PROMPT.MD: fail when over budget unless the PR is explicitly labeled.
+      - name: enforce threshold (skip only with perf-regression-approved)
+        if: failure() && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          if gh pr view "$PR" --json labels -q '.labels[].name' \
+              | grep -qx 'perf-regression-approved'; then
+            echo "perf regression approved by label — passing perf-guard"
+            exit 0
+          fi
+          echo "perf regression WITHOUT approval label — blocking"
+          exit 1
