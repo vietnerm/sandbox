@@ -260,6 +260,53 @@ pivot_root → capdrop → NNP → seccomp) mà không phá busybox httpd/sh.
 
 ---
 
+# Phiên 7 (SDDA cycle) — SIGTERM bị nuốt: nguyên nhân thật + pidns-1 signal shim (issue #6)
+
+## Vấn đề
+- Phiên 1 đo được (bảng dòng 11, D4): `kill -TERM` vào process trong sandbox →
+  rc=0 nhưng không delivery (SigPnd=0 mãi); SIGKILL OK. Giả thuyết lúc đó:
+  "host seccomp/LSM chặn cross-userns signal với fake-success".
+- Hệ quả: `minict.sh down` luôn phải chạy đường kill -9 sau 0.5s; không có
+  graceful stop — điều kiện cần cho control plane GĐ2.
+
+## Nguồn mới hôm nay (đã đọc thật)
+1. **pid_namespaces(7)** — https://man7.org/linux/man-pages/man7/pid_namespaces.7.html:
+   "a process in an ancestor namespace can ... send signals to the 'init'
+   process of a child PID namespace **only if the 'init' process has
+   established a handler for that signal** ... SIGKILL or SIGSTOP are treated
+   exceptionally: **these signals are forcibly delivered** when sent from an
+   ancestor PID namespace." → TRÙNG KHỚP 100% matrix đã đo: payload của minict
+   được exec TRỰC TIẾP làm pidns-1, SIGTERM có disposition mặc định (không
+   handler) nên bị kernel BỎ QUA ở bước prepare, còn SIGKILL được ép qua.
+   **Giả thuyết host-seccomp của phiên 1 là SAI** — đây là semantics chuẩn của
+   pidns-init, không phải chặn của môi trường.
+2. **tini** — https://github.com/krallin/tini: init cho container = PID 1 cài
+   handler rồi **forward signal cho child**, reap zombie, reuse exit code;
+   docker stop gửi SIGTERM cho PID 1; `-g` mở rộng kill cả process group.
+   Mô hình giống runc/docker-init (`docker run --init`).
+3. (tham chiếu chéo) docker docs — runtime chỉ signal PID 1, PID 1 chịu trách
+   nhiệm lan tỏa xuống tree của mình.
+
+## Vấn đề / giải pháp đã có / trade-off / áp dụng cho minict
+- **Giải pháp chuẩn (tini/runc):** shim nhỏ ở pidns-1 cài handler cho tập
+  signal forward-able → kernel DELIVER (handler ≠ SIG_DFL) → shim forward cho
+  payload con → waitpid → mirror exit status (chết bởi signal → exit 128+sig,
+  bash convention).
+- **Trade-off:** +1 fork (~+0.1ms cold start) và payload không còn là PID 1
+  (shim = PID 1, payload = PID 2); đổi lại signal lifecycle hoạt động đúng,
+  `down` graceful, nền cho control plane GĐ2 (stop có graceful).
+- **Áp dụng (D19):** shim trong minict.c, fork payload TRƯỚC capdrop (shim cùng
+  posture relay D16: không exec, không seccomp, capdrop); wrapper gửi signal
+  VÀO SHIM PID (docker semantics) thay vì kill(-pgid) để payload không trúng
+  2 lần; SIGKILL/SIGSTOP không cài được handler — vẫn qua đường ép của kernel +
+  teardown D4 (PDEATHSIG + pidns-1-exit) giữ nguyên như fail-safe.
+- **Bằng chứng bổ sung cho root cause:** control test TERM thẳng vào payload
+  (non-init, PID 2 sau fix) → DELIVERED → nếu host seccomp có chặn
+  cross-userns signal thì control này cũng fail; nó pass → chặn chỉ xảy ra
+  với pidns-init.
+
+---
+
 # Phiên 8 — Alpine minirootfs làm rootfs distro thật (issue #23, GĐ1 mục 2)
 
 ## Vấn đề

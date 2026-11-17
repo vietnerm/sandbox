@@ -9,11 +9,12 @@ không Docker, không root, chỉ cơ chế kernel Linux có sẵn.
 
 | metric | đo được | target |
 |---|---|---|
-| cold start | 1.90 ms (p50, gồm netns+seccomp) | < 2s |
-| RAM overhead | ~1.0 MB | < 30 MB |
-| disk base | 2.03 MB | < 50 MB |
+| cold start | 1.85 ms (p50, gồm netns+seccomp+signal shim) | < 2s |
+| RAM overhead | ~1.1 MB | < 30 MB |
+| disk base | 2.02 MB | < 50 MB |
 | rootless | ✅ (uid 1001) | bắt buộc |
-| escape tests | 17 PASS (incl. netns isolation thật) + 6 web + 20 seccomp + 7 netns | — |
+| escape tests | 20 PASS (incl. netns isolation thật + signal shim) + 6 web + 20 seccomp + 7 netns | — |
+| signal lifecycle | SIGTERM/SIGINT delivered qua pidns-1 shim (tini/runc pattern), exit 128+sig; teardown SIGKILL+PDEATHSIG giữ làm fail-safe | D19 |
 | web trong sandbox | busybox httpd TRONG netns riêng (loopback-only), host truy cập qua unix-socket bridge, E2E 200 | DoD mục 1 |
 | syscall filter | seccomp-bpf blocklist mặc định bật (incl. AF_NETLINK), overhead +0.2ms | D11/D15 |
 | network | netns riêng mặc định BẬT — không thấy iface host, không với tới host loopback | D17 |
@@ -29,7 +30,7 @@ Isolated dirs: tmpfs /tmp; /dev = bind 4 node (null/zero/urandom/random).
 ```bash
 make -C sandbox              # build minict
 bash sandbox/mkrootfs.sh     # build busybox rootfs (~2MB, rootless)
-bash tests/test_isolation.sh # 17 isolation tests (netns isolation thật)
+bash tests/test_isolation.sh # 20 isolation tests (netns isolation thật + signal shim)
 bash tests/test_seccomp.sh   # 20 seccomp blocklist tests (có control A/B)
 bash tests/test_netns.sh     # 7 netns + bridge tests
 
@@ -51,7 +52,7 @@ sandbox/minict.c        core (C, 1 file, 0 dependency ngoài libc)
 sandbox/mkrootfs.sh     rootfs builder (apt-get download + dpkg-deb -x, rootless)
 sandbox/minict.sh       lifecycle CLI (web = netns + unix-socket bridge)
 tools/webproxy.py       host-side TCP->unix relay cho web bridge (D16)
-tests/test_isolation.sh escape/isolation tests (17 cases)
+tests/test_isolation.sh escape/isolation tests (20 cases)
 tests/test_seccomp.sh   seccomp blocklist tests (20 cases, có control A/B)
 tests/test_netns.sh     netns + bridge tests (7 cases, có control NS2)
 tests/seccomp_probe.c   probe syscall dùng bởi test_seccomp.sh (build static)
@@ -80,8 +81,11 @@ docs/branch-ledger.md   sổ gộp/xoá nhánh (append-only)
   25ms), `exec` tạo ns set mới trên cùng rootfs chứ không setns vào daemon
   (rootless không đủ caps để setns) — mỗi exec còn có netns RIÊNG (không thấy
   httpd của instance web qua loopback).
-- SIGTERM từ host vào process trong userns bị môi trường nuốt (rc=0, không delivery) —
-  cleanup dựa SIGKILL + PDEATHSIG + pidns teardown. Chi tiết: journal/2026-11-17/decisions/poc.md.
+- SIGTERM từ host vào process trong userns: ĐÃ SỬA (phiên 7, D19) — nguyên nhân
+  là semantics pidns-init của kernel (pid_namespaces(7)), không phải môi trường;
+  shim pidns-1 cài handler + forward, `minict.sh down` giờ graceful (exit 128+sig).
+  Teardown SIGKILL + PDEATHSIG + pidns teardown vẫn giữ làm fail-safe.
+  Chi tiết: journal/2026-11-17/decisions/sigterm.md.
 - Seccomp là blocklist (default ALLOW) chứ không allowlist — syscall không trong
   blocklist vẫn chạy; allowlist mode parked (D11). Rootfs test probe phải build
   `-static` (rootfs chỉ có busybox, không ld.so/libc).

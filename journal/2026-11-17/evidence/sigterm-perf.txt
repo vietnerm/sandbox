@@ -1,0 +1,6 @@
+minict: warn: mount /proc (blocked in this environment): Operation not permitted
+== perf-check 2026-11-17 06:36:00 — kernel 5.10.134-013.15.kangaroo.al8.x86_64, N=40 ==
+cold_start_ms  :     1.85  (threshold 100)
+rss_kb         :     1160  (threshold 10240)
+disk_base_mb   :     2.02  (threshold 20)
+perf-check: PASS

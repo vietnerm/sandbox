@@ -487,6 +487,106 @@
 3. CVE check lại với NVD (phiên này timeout) + kiểm run cve-daily cron đầu tiên.
 4. Kiểm `/dev/kvm` trên runner GitHub (probe workflow) — precondition GĐ3.
 
+# Phiên 7 (SDDA cycle) — SIGTERM/SIGINT delivered qua pidns-1 signal shim (issue #6)
+
+## 1. Issue xử lý (phiên 7)
+
+- #6 — bug(lifecycle): SIGTERM từ host vào process trong userns bị nuốt
+  (kill() rc=0, không delivery) — status: done (PR chờ CI/gate; Closes #6).
+- Lý do chọn: GĐ1 roadmap mục 1 (mục thấp nhất chưa xong của giai đoạn hiện
+  tại, theo phân cấp PROMPT.MD §8); không có issue p0/p1 nào mở.
+
+## 2. Research Summary (phiên 7 — `journal/2026-11-17/research.md` mục Phiên 7)
+
+- pid_namespaces(7): init của pidns CHỈ nhận signal mà nó có handler;
+  SIGKILL/SIGSTOP bị ép delivery từ ancestor namespace → nguyên nhân gốc #6
+  là semantics chuẩn kernel, KHÔNG phải host seccomp (giả thuyết D4 sửa).
+- tini + docker --init: shim PID 1 cài handler, forward child, mirror exit
+  code; runtime chỉ signal PID 1 (docker stop semantics).
+
+## 3. Development Progress (phiên 7)
+
+- Nhánh: `fix/6-sigterm-shim`
+- minict.c: shim pidns-1 (sigaction 7 signal → fwd_to_payload → waitpid →
+  mirror exit 128+sig); payload = fork+exec con của shim, reset DFL pre-exec;
+  forwarders INT/TERM cài TRƯỚC fork pidns (bẫy SIG_IGN async-job của bash
+  sống sót fork+exec — SIG3); wrapper bỏ group-kill, signal shim pid.
+- Tests: isolation 17 → 20 (SIG2 TERM-wrapper=143, SIG3 INT-wrapper=130,
+  SIG4 control TERM-payload delivered); PID1 đổi thành "payload is PID 2";
+  SIG1 giữ nguyên (teardown fail-safe D4 không đổi).
+- Perf: cold_start **1.85 ms** | rss **1160 kB** | disk **2.02 MB** (N=40) —
+  A/B với binary HEAD: 1.66 → 1.83 (**+0.17ms** = 1 fork), evidence
+  `journal/2026-11-17/evidence/sigterm-ab.txt`.
+
+## 4. CVE Check Results (phiên 7 — evidence `journal/2026-11-17/cve/sigterm.{md,json}`)
+
+- NVD API live OK trong phiên này (phiên 6 đã timeout): 16 CVE trên watchlist,
+  0 CVE mới. Thay đổi chỉ chạm signal path (không mở syscall surface mới) —
+  watchlist giữ nguyên, không cần dòng mới.
+
+## 5. No-Compromise Validation (phiên 7 — evidence `journal/2026-11-17/evidence/{isolation,web,sigterm-perf}.txt`)
+
+- `make test`: **47/47 PASS** (isolation 20 + seccomp 20 + netns 7, rc=0).
+- `make test-web`: **6/6 PASS**; `make perf-check`: PASS (1.85/1160/2.02).
+- A/B signal: BEFORE TERM swallowed (alive-after-3s) → AFTER delivered rc=143;
+  INT 130 (phiên trước lẫn sau fix đều 130 cho payload có trap — khớp luật
+  pid_namespaces(7), thêm 1 control cho root cause).
+- Host baseline: passwd/bash/sudo sha256 khớp phiên trước (shadow EACCES như
+  mọi phiên — uid 1001) — **unchanged**; không listener lạ.
+
+## 6. PR (phiên 7)
+
+- **#21** — `fix(lifecycle): pidns-1 signal shim — SIGTERM/SIGINT delivered
+  (Closes #6)` — chứa code + tests + D19 (`journal/2026-11-17/decisions/sigterm.md`)
+  + research + evidence + roadmap/README/perf-baseline/daily-log cập nhật.
+- CI: **GREEN thật** (ci + perf-guard) trên SHA gốc `6cea7f9` và merge commit
+  `6046dd0`; merge main vào nhánh để theo layout `journal/` + manifest
+  Proxmox-lite mới (PR #19/#20). Mergeable: clean. Chờ SBG gate (không tự merge).
+
+## Kế hoạch tiếp theo
+
+1. GĐ1 roadmap mục 1 (sau renumber): **Rootfs distro thật** (Alpine trước) —
+   precondition cho escape suite sâu (#5, mục 2) và web stack (mục 4).
+2. GĐ1 mục 3: đánh giá pasta/slirp4netns A/B với bridge D16 (cài rootless trên
+   runner) — điều kiện cho web stack đa service + egress.
+3. Kiểm `/dev/kvm` trên runner GitHub (probe workflow) — precondition GĐ3.
+
+# Phiên 7b (review-fix theo SIA audit) — PR #21: shim reap zombie + khôi phục evidence
+
+## Bối cảnh
+SIA audit của PR #21 @ `2d82c95` (07:48Z) verdict CONCERNS với 2 việc mức
+medium/B10 để gỡ verdict. Phiên này chạy Pha B4 của `PROMPT.MD §11` (orchestrator
+mới, PR #25): sửa trên chính nhánh, rồi SCR/SIA lại trên SHA mới.
+
+## Việc đã sửa (commit `fix(review): … (#21)`)
+1. **[medium] Reap zombie**: `shim_wait_loop` cũ chỉ wait payload → grandchild
+   re-parent về pidns-1 thành zombie vĩnh viễn. Sửa theo pattern tini: SIGCHLD
+   handler `shim_reap` (`waitpid(-1, WNOHANG)`), flag riêng cho payload, SIGCHLD
+   vào tập block quanh fork (lost-wakeup), `SA_NOCLDSTOP`. Decision **D21**.
+   Test mới **SIG5** (isolation 20 → 21): đếm `Z` theo PPID=shim từ host view.
+   Negative control: mutant không-reap → 5 zombie (FAIL) / bản thật → 0 (PASS).
+2. **[B10] Khôi phục evidence cũ**: `evidence/isolation.txt` (phiên 1) và
+   `evidence/web.txt` (phiên 3/6) trở về nguyên bản từ `main`; log suite đầy đủ
+   của PR #21 chuyển sang `evidence/sigterm-suites.txt` (evidence là log thô
+   append-only, không ghi đè sau commit — `PROMPT.MD` §10).
+3. **[low] Cửa sổ µs trước `sigprocmask`** (audit phát hiện 2): KHÔNG sửa trong
+   PR này (nguy cơ vỡ SIG2–4 cao hơn lợi ích); theo luật §11 B4 việc low →
+   issue `from-audit` theo sau.
+
+## Kết quả chạy (env local: Debian 13, kernel 5.10.134 al8, uid 1001)
+- `make build` không warning (-Wall -Wextra); mutant build được.
+- isolation **21/21** (SIG5 mới PASS) + seccomp **20/20** + netns **7/7** +
+  web **6/6** + perf-check PASS (cold 1.93 ms / rss 1204 kB / disk 2.02 MB).
+- Negative control SIG5: mutant đo được 5 zombie → test bắt được bug (không rỗng).
+
+## CVE Check (phiên 7b)
+- Không có syscall surface mới (SIGCHLD handler + waitpid(-1) chỉ nội bộ shim;
+  waitpid đã nằm trong allowlist-implicit blocklist cũ). Watchlist 16 CVE giữ
+  nguyên; NVD check đầy đủ ghi ở Phiên orchestrator cuối ngày.
+
+## Kế hoạch
+- Push, chờ CI, SCR/SIA lại trên SHA mới → nếu PASS vào hàng chờ gộp Pha C.
+
 ---
 
 # Phiên 8 — Alpine minirootfs (issue #23, GĐ1 mục 2)

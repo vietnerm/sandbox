@@ -15,6 +15,14 @@ ROOTFS="$REPO/rootfs"
 # run a command inside the sandbox
 ic() { "$MINICT" "$ROOTFS" /bin/sh -c "$1"; }
 
+# alive <pid>: true iff the process exists and is NOT a zombie (a dead bg
+# job stays kill-0-able as a zombie until reaped, which would make signal
+# delivery polls report "alive" forever in some harnesses)
+alive() {
+    [[ -d "/proc/$1" ]] \
+        && [[ "$(awk '{print $3}' "/proc/$1/stat" 2>/dev/null)" != Z ]]
+}
+
 fs6_test() {
     ic 'echo marker > /home/iso && cat /home/iso | grep -q marker'
     local rc=1
@@ -44,18 +52,21 @@ nnp1_test() {
     return $rc
 }
 sig1_test() {
-    # ENV FACT (see journal/2026-11-17/research.md): SIGTERM sent from outside to a
-    # process inside an unprivileged userns is swallowed here (kill() rc=0,
-    # no delivery); SIGKILL is delivered. So the no-orphan guarantee is
-    # verified via SIGKILL + PR_SET_PDEATHSIG + pidns-1-exit teardown.
+    # SIGTERM from outside the pidns is DELIVERED since the shim (D19), but
+    # the no-orphan guarantee must not depend on it: SIGKILL to the wrapper
+    # + PR_SET_PDEATHSIG + pidns-1-exit teardown still has to clean up the
+    # whole tree (minict -> shim = pidns-1 -> payload) on its own.
+    # (Day-1 ENV FACT corrected by D19: the swallowed SIGTERM was pidns-init
+    # semantics per pid_namespaces(7), not host seccomp — see
+    # journal/2026-11-17/decisions/sigterm.md + SIG4 control below.)
     # sh -c has TWO commands so busybox ash does NOT exec-optimize away the
     # shell: the sh keeps the tag in its cmdline and owns the sleep child.
     # ENV FACT (CI run #20, issue #14): busybox-static on ubuntu-24.04
     # (1.36.1-6ubuntu3.1) runs the `sleep` applet NOFORK — there is NO child
     # process and the sh itself is the sleeper (Debian busybox 1.37 forks).
-    # The no-orphan guarantee is unchanged (PDEATHSIG targets the sh; pidns
-    # teardown covers any other process), so an empty child pid is expected
-    # there — only a missing sh is an error.
+    # With the shim (D19) the first tag-bearing process found is the SHIM
+    # (it forked from minict before the payload exec'd), its child is the
+    # payload sh (empty on NOFORK sleep); the guarantee is checked on both.
     local tag="mk-sigtest-$$"
     "$MINICT" "$ROOTFS" /bin/sh -c "sleep 61; true # $tag" >/dev/null 2>&1 & local w=$!
     sleep 0.4
@@ -66,10 +77,118 @@ sig1_test() {
     kill -KILL "$w" 2>/dev/null
     for _ in 1 2 3 4; do
         sleep 0.3
-        { kill -0 "$shpid" 2>/dev/null || kill -0 "$mp" 2>/dev/null; } || return 0
+        { alive "$shpid" || alive "$mp"; } || return 0
     done
     kill -9 "$shpid" ${mp:+"$mp"} 2>/dev/null
     return 1
+}
+
+# sigfwd_test <sig> <expected-rc> <target: wrapper|payload> <payload-mode>
+#   payload-mode=sleep   : exec'd busybox sleep — pure applet, default
+#                          dispositions for TERM and INT (native SigIgn=0,
+#                          Popen-verified 2026-11-17; the SigIgn=0x6 seen
+#                          earlier came from the launcher's POSIX
+#                          "asynchronous list" SIG_IGN, fixed in minict by
+#                          installing forwarders before the pidns fork and
+#                          resetting DFL in the payload pre-exec).
+#   payload-mode=trapint : ash that traps INT and exits 130, waiting on a
+#                          background sleep (the `wait` builtin is the
+#                          interruptible wait). A FOREGROUND sleep child
+#                          does not work: non-interactive ash swallows a
+#                          direct SIGINT while waiting on it (classic
+#                          "sh -c sleep survives INT to the shell" quirk —
+#                          would test the shell not minict).
+#   target=wrapper : signal to the minict wrapper pid — the real user flow
+#                    (`minict.sh down` sends SIGTERM, Ctrl-C sends SIGINT).
+#                    The wrapper forwards to the pidns-1 shim, the shim
+#                    forwards to the payload (D19); the tree must exit with
+#                    128+<sig> (bash convention, mirrored by the shim) and
+#                    leave no orphans.
+#   target=payload : ROOT-CAUSE CONTROL for issue #6 (D19): a direct host
+#                    signal to the payload — a NON-init pidns member since
+#                    the shim — is DELIVERED (the pid_namespaces(7) init
+#                    rule does not apply to it). This disproves the old D4
+#                    hypothesis that the host seccomp swallowed cross-userns
+#                    signals: if that were true, this control would fail.
+sigfwd_test() {
+    local sig="$1" exprc="$2" target="$3" mode="${4:-sleep}"
+    local payload_cmd="exec /bin/busybox sleep 61"
+    [[ "$mode" == trapint ]] && payload_cmd='trap "exit 130" INT; sleep 61 & wait'
+    "$MINICT" "$ROOTFS" /bin/sh -c "$payload_cmd" >/dev/null 2>&1 & local w=$!
+    sleep 0.4
+    local mp="" p
+    if [[ "$(cat "/proc/$w/comm" 2>/dev/null)" == "minict" ]]; then
+        mp="$w" # bash fork+exec'd minict directly ($! = minict)
+    else
+        for p in $(pgrep -P "$w" 2>/dev/null); do
+            if [[ "$(cat "/proc/$p/comm" 2>/dev/null)" == "minict" ]]; then
+                mp="$p"; break
+            fi
+        done
+    fi
+    if [[ -z "$mp" ]]; then kill -9 "$w" 2>/dev/null; return 1; fi
+    local shim payload
+    shim=$(pgrep -P "$mp" 2>/dev/null | head -1)
+    payload=$(pgrep -P "$shim" 2>/dev/null | head -1)
+    if [[ ! "$shim" || ! "$payload" ]]; then
+        kill -9 "$mp" "$w" 2>/dev/null; return 1
+    fi
+    if [[ "$target" == wrapper ]]; then
+        kill -"$sig" "$mp" 2>/dev/null
+    else
+        kill -"$sig" "$payload" 2>/dev/null
+    fi
+    # whole tree (wrapper, shim, payload) gone within ~2.5s, exit 128+sig
+    local gone=0
+    for _ in 1 2 3 4 5 6 7 8; do
+        { alive "$w" || alive "$shim" || alive "$payload"; } \
+            || { gone=1; break; }
+        sleep 0.3
+    done
+    if [[ $gone -eq 0 ]]; then
+        kill -9 "$mp" "$shim" "$payload" 2>/dev/null
+        return 1
+    fi
+    wait "$w" 2>/dev/null
+    local rc=$?
+    [[ $rc -eq $exprc ]]
+}
+
+# SIG5: orphaned grandchildren re-parented to pidns-1 are REAPED by the
+# shim, not left as zombies (SIA audit of PR #21, 2026-11-17, medium).
+# Repro of the old bug: `sh -c 'for i in 1..5; do (sleep 0.1 &); done;
+# sleep 2'` — each backgrounded sleep re-parents to the shim when its
+# subshell exits, then dies. The old shim_wait_loop() only waited for the
+# payload, so those re-parented children lingered as permanent Z processes
+# under the shim for the whole payload lifetime (pid table leak for
+# long-running instances, GĐ2). The fix (tini pattern): a SIGCHLD handler
+# reaps every available child (shim_reap, minict.c).
+# Host-view detection: a zombie's state is visible in host `ps` regardless
+# of pidns; re-parented zombies show PPID = shim's host pid. The payload's
+# own unreaped subshell zombies (PPID = payload) are normal shell behavior
+# and NOT part of this contract.
+sig5_test() {
+    "$MINICT" "$ROOTFS" /bin/sh -c \
+        'for i in 1 2 3 4 5; do (sleep 0.1 &); done; sleep 2' \
+        >/dev/null 2>&1 & local w=$!
+    sleep 1.2 # orphans long dead, payload still sleeping
+    local mp="" p
+    if [[ "$(cat "/proc/$w/comm" 2>/dev/null)" == "minict" ]]; then
+        mp="$w"
+    else
+        for p in $(pgrep -P "$w" 2>/dev/null); do
+            if [[ "$(cat "/proc/$p/comm" 2>/dev/null)" == "minict" ]]; then
+                mp="$p"; break
+            fi
+        done
+    fi
+    if [[ -z "$mp" ]]; then kill -9 "$w" 2>/dev/null; return 1; fi
+    local shim z
+    shim=$(pgrep -P "$mp" 2>/dev/null | head -1)
+    if [[ ! "$shim" ]]; then kill -9 "$mp" "$w" 2>/dev/null; return 1; fi
+    z=$(ps -eo ppid=,stat= | awk -v s="$shim" '$1==s && $2 ~ /^Z/' | wc -l)
+    wait "$w" 2>/dev/null
+    [[ "$z" -eq 0 ]]
 }
 
 uid1_test() {
@@ -122,8 +241,8 @@ run_case FS5 "post-capdrop tmpfs mount also fails" fail \
 run_case FS6 "write to /home lands on-disk in rootfs (host view)" pass fs6_test
 
 # ---------- pid/identity isolation ----------
-run_case PID1 "shell is PID 1 in its own pid namespace" pass \
-    ic '[ $$ -eq 1 ]'
+run_case PID1 "payload is PID 2 behind pidns-1 signal shim" pass \
+    ic '[ $$ -eq 2 ]'
 run_case PID2 "no host processes visible (ps lists none)" pass \
     ic 'ps | tail -n +2 | grep -q . && exit 1 || exit 0'
 run_case UID1 "uid=0 inside, no foreign gid visible (0/overflow only)" pass uid1_test
@@ -134,6 +253,13 @@ run_case NNP1 "PR_SET_NO_NEW_PRIVS=1 verified via host /proc" pass nnp1_test
 run_case HOST1 "hostname isolated ('minict')" pass \
     ic 'hostname | grep -qx minict'
 run_case SIG1 "SIGKILL wrapper: PDEATHSIG+pidns teardown, no orphan" pass sig1_test
+run_case SIG2 "SIGTERM wrapper: tree exits 143 (128+15), no orphan" pass \
+    sigfwd_test TERM 143 wrapper
+run_case SIG3 "SIGINT wrapper: tree exits 130 (128+2)" pass \
+    sigfwd_test INT 130 wrapper trapint
+run_case SIG4 "control: TERM to payload (non-init) delivered (143)" pass \
+    sigfwd_test TERM 143 payload
+run_case SIG5 "orphan grandchildren reaped by shim, no zombies" pass sig5_test
 
 # ---------- network isolation (netns ON since issue #3) ----------
 run_case NET1 "netns isolated: only lo inside, no host iface" pass \

@@ -19,7 +19,7 @@
 2. B — Develop prototype (web service trong sandbox, đo startup/RAM)
 3. C — CVE check: `python3 tools/cve-check.py --json journal/$(date +%F)/cve/<slug>.json`
    + cập nhật `docs/cve-watchlist.md`
-4. D — No-Compromise Validation: `make test` (isolation 17 + seccomp 20 + netns 7,
+4. D — No-Compromise Validation: `make test` (isolation 20 + seccomp 20 + netns 7,
    pipefail thật — issue #14) + `make test-web` + lưu evidence vào `journal/YYYY-MM-DD/evidence/`
    + integrity check host
 5. Ghi `journal/YYYY-MM-DD/daily-log.md` (quy tắc thư mục: PROMPT.MD §10)
@@ -40,6 +40,18 @@
   1.83ms, rss 1087KB, disk 8.6MB — PASS mọi ngưỡng;
   apk add online chờ egress pasta (mục 4); apk-tools quét CVE (2 CVE cũ đã vá,
   0 mở) → `docs/cve-watchlist.md` có mục apk-tools. (#23)
+- [x] 2026-11-17 (phiên 7, SDDA): **SIGTERM/SIGINT delivered qua pidns-1 signal
+  shim** — root cause #6 là semantics chuẩn pidns-init (pid_namespaces(7): init
+  chỉ nhận signal có handler; SIGKILL/SIGSTOP bị ép qua), KHÔNG phải host
+  seccomp (giả thuyết D4 sửa — SIG4 control chứng minh); shim cài
+  {TERM,INT,HUP,QUIT,USR1,USR2,WINCH} + forward payload + mirror exit
+  128+sig; wrapper gửi signal vào shim pid (docker semantics), bỏ group-kill;
+  fix 2 bẫy SIG_IGN sống sót fork+exec (forwarders cài trước fork pidns +
+  payload reset DFL pre-exec); isolation 17 → 20 (SIG2/SIG3/SIG4), PID1 =
+  "payload is PID 2"; teardown D4 giữ nguyên fail-safe. A/B: TERM swallowed →
+  delivered rc=143; cold start +0.17ms (1.66→1.83, N=40); perf-check PASS
+  1.85/1160/2.02. (D19 `journal/2026-11-17/decisions/sigterm.md`, evidence
+  `journal/2026-11-17/evidence/sigterm-ab.txt`)
 - [x] 2026-11-17 (phiên 6): **CI xanh thật** — pipefail (`defaults: run: shell: bash`
   cho ci.yml + cve-daily.yml), SIG1 NOFORK-aware (busybox Ubuntu 24.04 chạy sleep
   NOFORK — tái hiện bằng chính .deb của runner), UID1 overflow-aware (supplementary
@@ -83,19 +95,23 @@
 > Hướng dự án (manifest, chốt 2026-11-17): **"Proxmox nhẹ", rootless tuyệt đối**.
 > GĐ1 là nền runtime; lõi "Proxmox" (API, template, snapshot, quota) là GĐ2–3.
 
-1. **Sửa SIGTERM swallowed (issue #6)**: control plane GĐ2 cần graceful stop;
-   xử lý ở tầng runtime (minict wrapper forward/chuyển tín hiệu), không phải ở người dùng.
-2. **Rootfs distro thật** (mới): Alpine minirootfs trước (nhỏ, musl), Debian sau.
+1. **Rootfs distro thật** (mới): Alpine minirootfs trước (nhỏ, musl), Debian sau.
+   Đo trên runner (kernel ≥ 6.1): mount `/proc` trong pidns, init tối thiểu
+   (tini/busybox init — shim signal của minict (D19) là cùng pattern),
+   `apk add nginx` / `apt-get install` dưới **single-uid
+   mapping** (manifest §5: không dùng `newuidmap` setuid). Ghi rõ gói nào hỏng
+   vì `chown` sang uid khác và phương án (bỏ qua / giả lập).
    → Alpine **xong phiên 8** (xem "Đã xong"); phần còn mở: `apk add` online
    trong instance **chờ egress pasta (mục 4)** + Debian rootfs (sau).
-3. **chroot-escape test sâu hơn** (issue #5): fd-based escape, /proc/self/root,
+2. **chroot-escape test sâu hơn** (issue #5): fd-based escape, /proc/self/root,
    setuid binary trong rootfs (NNP chặn), core dump leak; case seccomp SIGSYS;
    chạy lại cả suite trên rootfs distro thật (có `/proc`, nhiều mặt tấn công hơn busybox).
-4. **Connectivity qua pasta/slirp4netns** (thay proxy tự viết): A/B với bridge D16;
+3. **Connectivity qua pasta/slirp4netns** (thay proxy tự viết): A/B với bridge D16;
    D16 chỉ còn fallback loopback-only. Điều kiện cho egress (cài gói trong instance)
    và cho port-forward theo instance ở GĐ2.
-5. **Stack web thật trong 1 instance**: nginx/caddy + API + SQLite trên rootfs
-   distro; `./sandbox up|down|bench` một lệnh; cold start stack < 5 s.
+4. **Stack web thật trong 1 instance**: nginx/caddy + API + SQLite trên rootfs
+   distro; `./sandbox up|down|bench` một lệnh; cold start stack < 5 s;
+   signal lifecycle graceful đã có từ phiên 7 (D19).
 
 ## Giai đoạn 2 — Control plane + storage (KẾ TIẾP, chưa mở code)
 
@@ -143,7 +159,8 @@
 - [ ] nginx/caddy + API (Node/Python/Go) + SQLite/Postgres + Redis trong sandbox
 - [x] không Docker, không root (bất biến từ PoC — mọi test chạy uid 1001)
 - [ ] cold start toàn stack < 5s; RAM idle < 300MB
-- [x] escape test cơ bản pass (isolation 17/17 + seccomp 20/20 + netns 7/7, pipefail thật)
+- [x] escape test cơ bản pass (isolation 20/20 + seccomp 20/20 + netns 7/7, pipefail thật;
+  signal lifecycle graceful từ phiên 7)
 - [ ] `./sandbox up|down|bench` một lệnh
 - **Tiến độ: 2/5** (mục 2 và 4).
 - Lưu ý sửa sai đếm cũ ("5/5 mục phụ đã có nền"): web tĩnh busybox + seccomp +

@@ -1,0 +1,23 @@
+kernel: 5.10.134-013.15.kangaroo.al8.x86_64  user: 1001
+cold start p50 (N=40 each, interleaved 5 rounds x 8 runs):
+  BEFORE (HEAD, no shim) : 1.66 ms
+  AFTER  (shim, D19)     : 1.83 ms   delta = +0.16 ms
+SIGTERM -> wrapper (user flow of `minict.sh down`):
+  BEFORE : alive-after-3s(no delivery)
+  AFTER  : exited rc=143 (+15 = 128+SIGTERM)
+SIGINT -> wrapper (trap payload; Ctrl-C flow):
+  BEFORE : exited rc=130
+  AFTER  : exited rc=130
+
+Interpretation (session 7):
+- BEFORE SIGTERM: swallowed (tree alive 3s after kill rc=0) — issue #6.
+- AFTER  SIGTERM: delivered, exit 143 = 128+15 (bash convention, shim mirror).
+- BEFORE SIGINT (trap payload): delivered rc=130 — pid_namespaces(7):
+  init DOES receive signals for which a handler is installed; the swallow
+  only affects default-disposition signals. This BEFORE-line is itself a
+  root-cause control, consistent with the pidns-init semantics fix.
+- SIG4 (in-suite control): TERM straight to the payload (non-init since the
+  shim) is delivered — disproves the old D4 "host seccomp swallows
+  cross-userns signals" hypothesis.
+- Cold start +0.17 ms p50 (one extra fork + waitpid), RSS 1160 kB,
+  disk 2.02 MB — all inside the PROMPT.MD budgets (100 ms / 10 MB / 20 MB).
