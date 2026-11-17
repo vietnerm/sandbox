@@ -7,7 +7,7 @@
 ## 1. Research Summary
 
 - **Kỹ thuật đã khảo sát (phiên 1):** user namespaces + mount ns + pivot_root —
-  tự viết mini-container không runtime (chi tiết: `research/2026-11-17.md`).
+  tự viết mini-container không runtime (chi tiết: `journal/2026-11-17/research.md`).
 - **Kỹ thuật đã khảo sát (phiên 2 — engines cho Giai đoạn A tương lai):**
   - Landlock + seccomp (kiểu landrun/sandlock): cần kernel ≥5.13 — **kernel này 5.10.134
     không có Landlock** → chỉ research lý thuyết cho env đích; ưu tiên seccomp-bpf thuần
@@ -83,9 +83,9 @@
   - Known gaps (expected-fail, có chủ đích): netns chưa isolate, /proc bị host
     seccomp chặn, không cgroup v2 (3)
 - **Bằng chứng:**
-  - `tests/evidence/2026-11-17-test-output.txt` — full test output + integrity check
-  - `benchmarks/2026-11-17.md` — số liệu hiệu năng
-  - `docs/decision-log/2026-11-17.md` — D1-D5
+  - `journal/2026-11-17/evidence/isolation.txt` — full test output + integrity check
+  - `journal/2026-11-17/bench.md` — số liệu hiệu năng
+  - `journal/2026-11-17/decisions/poc.md` — D1-D5
 - **Kết luận:** sandbox không bị escape, host không bị ảnh hưởng. Không chạy mã
   không tin cậy bên ngoài sandbox; mọi thí nghiệm trong scope kiểm soát.
 
@@ -106,7 +106,7 @@
 
 > Vòng lặp SDDA 8 bước theo PROMPT.MD: Sync → Triage (7 issues + 24 labels) → chọn
 > issue #1 (area:web) → Research → Develop → CVE check → Validation → PR. Bằng chứng
-> đầy đủ trong `tests/evidence/2026-11-17-web-output.txt`.
+> đầy đủ trong `journal/2026-11-17/evidence/web.txt`.
 
 ## 0. Issue xử lý (SDDA)
 
@@ -117,7 +117,7 @@
 - Triage: repo trước phiên này có 0 issue / 0 PR / chỉ default labels → tạo 24 labels
   + 8 issues từ known gaps (daily-log phiên 1-2 + roadmap + PROMPT §8).
 
-## 1. Research Summary (phiên 3 — `research/2026-11-17.md` mục Phiên 3)
+## 1. Research Summary (phiên 3 — `journal/2026-11-17/research.md` mục Phiên 3)
 
 - **busybox `httpd.c` (source, đúng bản 1.37.0 trong rootfs):** `-p [IP:]PORT`,
   `-u` privilege drop, Deny/Allow IP logic, CGI theo build config. Đối chiếu live:
@@ -145,13 +145,13 @@
     parse CVE ở cột đầu của dòng bảng; bài học false positive)
   - `.github/workflows/`: ci.yml, cve-daily.yml, perf-guard.yml, issue-triage.yml,
     research-log.yml + `.github/PULL_REQUEST_TEMPLATE.md` (PROMPT §2-3)
-  - `docs/perf-baseline.md` (ngưỡng + số đo), `docs/decision-log/2026-11-17-web-httpd.md`
+  - `docs/perf-baseline.md` (ngưỡng + số đo), `journal/2026-11-17/decisions/web-httpd.md`
     (D6-D10), `benchmarks/bench-web.sh` + benchmark phiên 3
 - **Perf:** cold_start p50 = **1.03-1.41 ms** | rss = **1028-1148 kB** |
   disk = **2.01-2.02 MB** (perf-check PASS) | web-ready p50 = **18 ms**,
   RSS web instance ~2.0 MB, disk 2.1 MB
 
-## 3. CVE Check Results (phiên 3 — evidence `tests/evidence/cve-2026-11-17-web.md`)
+## 3. CVE Check Results (phiên 3 — evidence `journal/2026-11-17/cve/web.md`)
 
 - **Kernel:** `5.10.134-013.15.kangaroo.al8.x86_64` (cùng env phiên trước).
 - **Watchlist 16 CVE (NVD verify thật):** 6 kernel/engine cũ (CVE-2021-22555 update
@@ -171,7 +171,7 @@
 - **Không có CVE critical CHƯA-VÁ ẢNH HƯỞNG trực tiếp minict** → tiếp tục thử nghiệm
   trong phạm vi kiểm soát; không cần dừng dev (giữ điều kiện PROMPT §6).
 
-## 4. No-Compromise Validation (phiên 3 — evidence `tests/evidence/2026-11-17-web-output.txt`)
+## 4. No-Compromise Validation (phiên 3 — evidence `journal/2026-11-17/evidence/web.txt`)
 
 - `make test` (isolation/escape): **16/16 PASS**
 - `make test-web`: **6/6 PASS** (suite mới)
@@ -198,7 +198,7 @@
   success — kiểm tra qua API check-runs
 - Merge: **không** — chờ maintainer review (PROMPT §6: không tự merge)
 - Self-audit cuối phiên: `make test` 16/16 + `make test-escape` 16/16 +
-  `make test-web` 6/6 PASS (evidence `tests/evidence/2026-11-17-self-audit.txt`)
+  `make test-web` 6/6 PASS (evidence `journal/2026-11-17/evidence/self-audit.txt`)
 - Định nghĩa Done của ngày: triage toàn bộ (0 issue mới ngoài vòng — 8 issue seeds
   tạo từ known gaps) ✓ | 1 PR, CI xanh ✓ | CVE check + watchlist cập nhật ✓ |
   escape test + host baseline + evidence ✓ | daily-log commit ✓ | 0 issue security
@@ -211,7 +211,7 @@
 # Phiên 4 (SDDA cycle) — SBG branch gate + seccomp-bpf (issue #2)
 
 > Hai nhiệm vụ theo chỉ lệnh maintainer: (1) SBG — kiểm tra và gộp nhánh theo
-> BRANCH_GATE_PROMPT.md; (2) đọc lại PROMPT.MD và thực hiện tiếp kế hoạch trong
+> prompts/BRANCH_GATE_PROMPT.md; (2) đọc lại PROMPT.MD và thực hiện tiếp kế hoạch trong
 > daily-log = mục 1 "Kế hoạch ngày mai" của phiên 1-2 (seccomp-bpf, issue #2).
 
 ## 0. SBG — Branch Gate (chạy trước, MODE=apply theo chỉ lệnh trực tiếp của owner)
@@ -235,7 +235,7 @@
 - **#2** — feat(seccomp): minimal seccomp-bpf blocklist — status: **done** (PR phiên 4)
 - Không làm thêm issue khác (giữ 1 issue/phiên dev; SBG là nhiệm vụ vận hành riêng).
 
-## 2. Research Summary (phiên 4 — `research/2026-11-17.md` mục Phiên 4)
+## 2. Research Summary (phiên 4 — `journal/2026-11-17/research.md` mục Phiên 4)
 
 - **Kernel docs seccomp_filter.rst + man7 seccomp(2):** PR_SET_SECCOMP cần NNP (đã có);
   RET_ERRNO = fail visible; filter không gỡ được → phù hợp "last lock".
@@ -265,7 +265,7 @@
   disk **2.02 MB** | A/B overhead seccomp **+0.2 ms p50** (1.38 ON vs 1.18 OFF, N=40
   interleaved) — cách ngưỡng 100 ms 70x.
 
-## 4. CVE Check Results (phiên 4 — evidence `tests/evidence/cve-2026-11-17-seccomp.md`)
+## 4. CVE Check Results (phiên 4 — evidence `journal/2026-11-17/cve/seccomp.md`)
 
 - Kernel `5.10.134-013.15.kangaroo.al8.x86_64`; watchlist 16 CVE + 1 header row,
   **0 lỗi parse**. Không CVE critical chưa-vá ảnh hưởng trực tiếp minict.
@@ -273,7 +273,7 @@
   AF_ALG (CVE-2026-31431 class), io_uring (class bypass), process_vm_*, keyring,
   open_by_handle_at, setns/unshare — defense-in-depth ghi vào cve-watchlist.
 
-## 5. No-Compromise Validation (phiên 4 — evidence `tests/evidence/2026-11-17-seccomp.txt`)
+## 5. No-Compromise Validation (phiên 4 — evidence `journal/2026-11-17/evidence/seccomp.txt`)
 
 - `make test` (isolation 16 + seccomp 17): **33/33 PASS**
 - `make test-web`: **6/6 PASS** — httpd chạy bình thường DƯỚI filter
@@ -308,7 +308,7 @@
   chờ gộp → không còn việc gộp nào trước phiên dev. Điều kiện dừng §0.6 không
   kích hoạt: 0 issue `type:security priority:p0` (#8 là p2), host baseline
   unchanged (`21d5de2d…d412bd`), CI main xanh (run 44016693725).
-- **PR #11** — `chore(branches): add BRANCH_GATE_PROMPT.md (SBG system prompt)`
+- **PR #11** — `chore(branches): add prompts/BRANCH_GATE_PROMPT.md (SBG system prompt)`
   (@23f7491e): docs-only, owner chỉ lệnh trực tiếp ("đưa file BRANCH_GATE_PROMPT.MD
   lên repo luôn nhé") = G7 human approval; build-test xanh trên đúng HEAD;
   squash qua API match-head-commit → `a5128241`; CI main xanh (run 44018921211);
@@ -360,7 +360,7 @@
   disk **2.03 MB**; A/B netns N=40 interleaved: **+0.28 ms** (ON 1.80 vs OFF
   1.52) — tổng cộng dồn từ v0.1 ≈ 1.7–1.9 ms, dưới target ≤ 5 ms.
 
-## 3. CVE Check Results (phiên 5 — evidence `tests/evidence/cve-2026-11-17-netns.{md,json}`)
+## 3. CVE Check Results (phiên 5 — evidence `journal/2026-11-17/cve/netns.{md,json}`)
 
 - Kernel `5.10.134-013.15.kangaroo.al8.x86_64`; watchlist 16 CVE (NVD) —
   **0 CVE mới**. Không CVE critical chưa-vá ảnh hưởng trực tiếp minict.
@@ -369,7 +369,7 @@
   netlink từ trong sandbox" (SC17 đo được EPERM) — defense-in-depth ghi vào
   cve-watchlist.
 
-## 4. No-Compromise Validation (phiên 5 — evidence `tests/evidence/2026-11-17-netns.txt`)
+## 4. No-Compromise Validation (phiên 5 — evidence `journal/2026-11-17/evidence/netns.txt`)
 
 - `make test` (isolation 17 + seccomp 20 + netns 7): **44/44 PASS**
 - `make test-web`: **6/6 PASS** — qua bridge unix-socket mới
@@ -391,7 +391,7 @@
 
 ## 6. PR (phiên 5)
 
-- **#11** — `chore(branches): add BRANCH_GATE_PROMPT.md (SBG system prompt)` —
+- **#11** — `chore(branches): add prompts/BRANCH_GATE_PROMPT.md (SBG system prompt)` —
   merged `a5128241`; CI main xanh (run 44018921211).
 - **#12** — `feat(netns): CLONE_NEWNET + loopback-only + unix-socket web bridge
   (Closes #3)` — merged `18cb41e5`; CI main xanh (run 44020968892).
@@ -448,14 +448,14 @@
 - **Perf (local, N=20)**: cold_start **1.79 ms** | rss **1108 kB** | disk **2.02 MB**
   — PASS mọi ngưỡng; docs-only/runtime-changed: không có thay đổi runtime.
 
-## 4. CVE Check Results (phiên 6 — evidence `tests/evidence/2026-11-17-ci-truth.txt` §6)
+## 4. CVE Check Results (phiên 6 — evidence `journal/2026-11-17/evidence/ci-truth.txt` §6)
 
 - NVD API TIMEOUT từ sandbox phiên này (2 lần: 120s, 45s) — không có kết quả check mới.
 - Watchlist 16 CVE giữ nguyên từ phiên 5 (0 CVE mới ảnh hưởng tại lần check thành công
   cuối). cve-daily cron trên runner là nguồn check độc lập; từ phiên này exit code
   của cve-daily cũng thật (pipefail).
 
-## 5. No-Compromise Validation (phiên 6 — evidence `tests/evidence/2026-11-17-ci-truth.txt`)
+## 5. No-Compromise Validation (phiên 6 — evidence `journal/2026-11-17/evidence/ci-truth.txt`)
 
 - `make test` local: **44/44 PASS** (isolation 17 + seccomp 20 + netns 7, rc=0,
   đủ 3 suite luôn chạy) + runner-sim busybox Ubuntu: **17/17**.
@@ -496,7 +496,7 @@
 - Lý do chọn: GĐ1 roadmap mục 1 (mục thấp nhất chưa xong của giai đoạn hiện
   tại, theo phân cấp PROMPT.MD §8); không có issue p0/p1 nào mở.
 
-## 2. Research Summary (phiên 7 — `research/2026-11-17.md` mục Phiên 7)
+## 2. Research Summary (phiên 7 — `journal/2026-11-17/research.md` mục Phiên 7)
 
 - pid_namespaces(7): init của pidns CHỈ nhận signal mà nó có handler;
   SIGKILL/SIGSTOP bị ép delivery từ ancestor namespace → nguyên nhân gốc #6
@@ -516,15 +516,15 @@
   SIG1 giữ nguyên (teardown fail-safe D4 không đổi).
 - Perf: cold_start **1.85 ms** | rss **1160 kB** | disk **2.02 MB** (N=40) —
   A/B với binary HEAD: 1.66 → 1.83 (**+0.17ms** = 1 fork), evidence
-  `tests/evidence/2026-11-17-sigterm-ab.txt`.
+  `journal/2026-11-17/evidence/sigterm-ab.txt`.
 
-## 4. CVE Check Results (phiên 7 — evidence `tests/evidence/cve-2026-11-17-sigterm.{md,json}`)
+## 4. CVE Check Results (phiên 7 — evidence `journal/2026-11-17/cve/sigterm.{md,json}`)
 
 - NVD API live OK trong phiên này (phiên 6 đã timeout): 16 CVE trên watchlist,
   0 CVE mới. Thay đổi chỉ chạm signal path (không mở syscall surface mới) —
   watchlist giữ nguyên, không cần dòng mới.
 
-## 5. No-Compromise Validation (phiên 7 — evidence `tests/evidence/2026-11-17-{test-output,web-output,sigterm-perf}.txt`)
+## 5. No-Compromise Validation (phiên 7 — evidence `journal/2026-11-17/evidence/{isolation,web,sigterm-perf}.txt`)
 
 - `make test`: **47/47 PASS** (isolation 20 + seccomp 20 + netns 7, rc=0).
 - `make test-web`: **6/6 PASS**; `make perf-check`: PASS (1.85/1160/2.02).

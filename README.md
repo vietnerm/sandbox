@@ -58,15 +58,16 @@ tests/test_netns.sh     netns + bridge tests (7 cases, có control NS2)
 tests/seccomp_probe.c   probe syscall dùng bởi test_seccomp.sh (build static)
 Makefile                entry points: build/test/test-escape/test-seccomp/test-netns/test-web/perf-check/cve-check
 .github/workflows/      ci, cve-daily, perf-guard, issue-triage, research-log
-benchmarks/             bench.sh + kết quả hàng ngày
-research/               research notes hàng ngày
-docs/decision-log/      quyết định + lý do
+benchmarks/             script benchmark (kết quả theo ngày nằm ở journal/)
+journal/YYYY-MM-DD/     MỌI tài liệu theo ngày: daily-log, research, bench, decisions/, evidence/, cve/ (quy tắc: journal/README.md)
+prompts/                prompt cho agent audit (SIA), retest (SCR), dọn nhánh (SBG); PROMPT.MD (SDDA) ở gốc repo
+idea/manifest.md        hướng dự án (đứng trên roadmap)
 docs/skills.md          pitfalls + lệnh hữu ích (cập nhật hàng ngày)
 docs/roadmap.md         đã xong / đang làm / tiếp theo
 tools/cve-check.py      CVE check hằng ngày (NVD API, watchlist trong file)
 docs/cve-watchlist.md   bảng CVE kernel/engine + trạng thái + mitigation
-docs/daily-log-*.md     nhật ký hằng ngày (Research/Develop/CVE/Validation)
-tests/evidence/         bằng chứng test + integrity check host
+docs/perf-baseline.md   ngưỡng + lịch sử perf
+docs/branch-ledger.md   sổ gộp/xoá nhánh (append-only)
 ```
 
 ## Giới hạn đã biết (ngày 1, cập nhật phiên 5)
@@ -84,7 +85,7 @@ tests/evidence/         bằng chứng test + integrity check host
   là semantics pidns-init của kernel (pid_namespaces(7)), không phải môi trường;
   shim pidns-1 cài handler + forward, `minict.sh down` giờ graceful (exit 128+sig).
   Teardown SIGKILL + PDEATHSIG + pidns teardown vẫn giữ làm fail-safe.
-  Chi tiết: docs/decision-log/2026-11-17-sigterm.md.
+  Chi tiết: journal/2026-11-17/decisions/sigterm.md.
 - Seccomp là blocklist (default ALLOW) chứ không allowlist — syscall không trong
   blocklist vẫn chạy; allowlist mode parked (D11). Rootfs test probe phải build
   `-static` (rootfs chỉ có busybox, không ld.so/libc).
@@ -94,5 +95,5 @@ A Research → B Develop → C CVE check → D No-Compromise Validation → dail
 Chi tiết: docs/roadmap.md (mục "Quy trình hằng ngày").
 
 ## Đang đọc
-- research/2026-11-17.md — cơ chế userns/mountns/pivot_root + kết quả đo thực nghiệm
+- journal/2026-11-17/research.md — cơ chế userns/mountns/pivot_root + kết quả đo thực nghiệm
 - docs/roadmap.md — kế hoạch seccomp-bpf → netns → full web stack

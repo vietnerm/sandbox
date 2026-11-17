@@ -28,7 +28,7 @@ môi trường.** Bằng chứng bổ sung trong phiên này:
 - SIG4 (control test mới): SIGTERM thẳng vào payload — **non-init** từ khi có
   shim — được delivery bình thường. Nếu host seccomp có chặn cross-userns
   signal thì control này cũng fail.
-- BEFORE-line trong `tests/evidence/2026-11-17-sigterm-ab.txt`: SIGINT gửi
+- BEFORE-line trong `journal/2026-11-17/evidence/sigterm-ab.txt`: SIGINT gửi
   cho payload có `trap` (handler đã cài) được delivery cả TRƯỚC fix — đúng
   luật "handler-installed → delivered".
 
@@ -75,7 +75,7 @@ phải dùng `trap INT` + bg `sleep & wait` (wait builtin là wait có thể ng�
 ### Hệ quả / trade-off
 
 - cold start **+0.17 ms** p50 (1 fork + waitpid): A/B N=40 trước 1.66 ms vs
-  sau 1.83 ms — `tests/evidence/2026-11-17-sigterm-ab.txt`; perf-check N=40
+  sau 1.83 ms — `journal/2026-11-17/evidence/sigterm-ab.txt`; perf-check N=40
   PASS (1.85/1160/2.02). Còn rất xa ngưỡng 100 ms.
 - PID1 test đổi语义: payload = PID 2 (shim = PID 1) — như `docker run --init`.
 - `minict.sh down` giờ graceful thật: TERM → forwarded → payload chết → shim

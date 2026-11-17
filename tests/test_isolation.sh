@@ -56,6 +56,9 @@ sig1_test() {
     # the no-orphan guarantee must not depend on it: SIGKILL to the wrapper
     # + PR_SET_PDEATHSIG + pidns-1-exit teardown still has to clean up the
     # whole tree (minict -> shim = pidns-1 -> payload) on its own.
+    # (Day-1 ENV FACT corrected by D19: the swallowed SIGTERM was pidns-init
+    # semantics per pid_namespaces(7), not host seccomp — see
+    # journal/2026-11-17/decisions/sigterm.md + SIG4 control below.)
     # sh -c has TWO commands so busybox ash does NOT exec-optimize away the
     # shell: the sh keeps the tag in its cmdline and owns the sleep child.
     # ENV FACT (CI run #20, issue #14): busybox-static on ubuntu-24.04

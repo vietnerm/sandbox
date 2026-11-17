@@ -6,24 +6,32 @@ permissions:
   contents: read
   issues: write
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   check:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: nudge when research/ goes stale (>= 2 days)
+      # Daily docs live in journal/YYYY-MM-DD/ (PROMPT.MD §10); the research
+      # note of a day is journal/YYYY-MM-DD/research.md. Use the newest such
+      # folder name as the date, not git history (squash merges shift dates).
+      - name: nudge when journal/*/research.md goes stale (>= 2 days)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          last="$(git log -1 --format=%cs -- research/ 2>/dev/null || echo 1970-01-01)"
-          today="$(date +%F)"
+          last="$(ls -d journal/????-??-??/research.md 2>/dev/null | sort | tail -1 | cut -d/ -f2)"
+          last="${last:-1970-01-01}"
+          today="$(date -u +%F)"
           days=$(( ( $(date -d "$today" +%s) - $(date -d "$last" +%s) ) / 86400 ))
-          echo "research/ last touch: $last (${days}d ago)"
+          echo "latest journal/<date>/research.md: $last (${days}d ago)"
           if [ "$days" -ge 2 ]; then
             gh issue create \
-              --title "chore: no research log for ${days} days" \
+              --title "chore: no research note for ${days} days" \
               --label "type:chore,priority:p2" \
-              --body "Last file touching \`research/\` is dated $last (${days} days ago). PROMPT.MD requires a daily research note (Bước 4). Write research/$(date +%F).md."
+              --body "Newest research note is journal/$last/research.md (${days} days ago). PROMPT.MD requires a daily research note (Bước 4). Write journal/$today/research.md."
           else
-            echo "research/ is fresh — no action"
+            echo "research is fresh — no action"
           fi
