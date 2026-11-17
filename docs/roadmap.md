@@ -1,5 +1,14 @@
 # Roadmap — sandbox-lab
 
+## Quy trình hằng ngày (từ 17-11, bắt buộc)
+1. A — Research kỹ thuật sandbox (Landlock+seccomp / bwrap / gVisor / Firecracker / Wasm)
+2. B — Develop prototype (web service trong sandbox, đo startup/RAM)
+3. C — CVE check: `python3 tools/cve-check.py --json evidence/cve-$(date +%F).json`
+   + cập nhật `docs/cve-watchlist.md`
+4. D — No-Compromise Validation: `bash tests/test_isolation.sh` + lưu evidence
+   vào `tests/evidence/` + integrity check host
+5. Ghi `docs/daily-log-YYYY-MM-DD.md` (format 5 mục)
+
 ## Đã xong
 - [x] 2026-11-17: **minict v0.1** — mini-container rootless (userns+mountns+pidns+utsns+ipcns,
   pivot_root, capdrop, NNP, PDEATHSIG, group-kill), busybox rootfs builder, lifecycle CLI

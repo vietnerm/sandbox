@@ -37,6 +37,13 @@ grep -E 'Cap|Seccomp' /proc/self/status
 python3 -c 'import subprocess,time; t=time.monotonic_ns(); subprocess.run([...]); print((time.monotonic_ns()-t)/1e6)'
 ```
 
+## CVE discipline
+- Luôn verify CVE ID qua NVD trước khi ghi — CVE-2022-0316 trên NVD là vuln theme
+  WordPress (CVSS 9.8), KHÔNG phải Firecracker như ghi nhớ sai.
+- Vendor kernel (al8/kangaroo): số phiên bản KHÔNG kết luận được patch status —
+  dùng version-inference khi fixed-in < stable point, mitigate-by-design khi ngược lại.
+- NVD anonymous API: ~5 req/30s → sleep 9s giữa các query.
+
 ## Env-specific (kernel 5.10.134 kangaroo.al8)
 - Seccomp host chặn: mount /proc (mọi nơi), mknod device, **SIGTERM cross-userns
   (rc=0, không delivery!)**. SIGKILL OK.

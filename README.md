@@ -47,6 +47,10 @@ research/               research notes hàng ngày
 docs/decision-log/      quyết định + lý do
 docs/skills.md          pitfalls + lệnh hữu ích (cập nhật hàng ngày)
 docs/roadmap.md         đã xong / đang làm / tiếp theo
+tools/cve-check.py      CVE check hằng ngày (NVD API, watchlist trong file)
+docs/cve-watchlist.md   bảng CVE kernel/engine + trạng thái + mitigation
+docs/daily-log-*.md     nhật ký hằng ngày (Research/Develop/CVE/Validation)
+tests/evidence/         bằng chứng test + integrity check host
 ```
 
 ## Giới hạn đã biết (ngày 1)
@@ -57,6 +61,10 @@ docs/roadmap.md         đã xong / đang làm / tiếp theo
   rootfs chứ không setns vào daemon (rootless không đủ caps để setns).
 - SIGTERM từ host vào process trong userns bị môi trường nuốt (rc=0, không delivery) —
   cleanup dựa SIGKILL + PDEATHSIG + pidns teardown. Chi tiết: docs/decision-log/2026-11-17.md.
+
+## Quy trình hằng ngày
+A Research → B Develop → C CVE check → D No-Compromise Validation → daily-log.
+Chi tiết: docs/roadmap.md (mục "Quy trình hằng ngày").
 
 ## Đang đọc
 - research/2026-11-17.md — cơ chế userns/mountns/pivot_root + kết quả đo thực nghiệm

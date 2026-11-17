@@ -1,0 +1,29 @@
+=== EVIDENCE: isolation tests — 2026-11-17 02:47:34 UTC
+kernel: 5.10.134-013.15.kangaroo.al8.x86_64
+user: uid=1001(z) gid=1001(z) groups=1001(z)
+
+=== minict isolation tests (2026-11-17 02:47:34) ===
+FS1   sandbox sees OUR /etc/passwd (marker)                    PASS
+FS2   host home dir /home/z unreachable                        PASS
+FS3   no /old-* escape path after pivot_root+umount            PASS
+FS4   mount --bind host / fails (no caps post-drop)            PASS
+FS5   post-capdrop tmpfs mount also fails                      PASS
+FS6   write to /home lands on-disk in rootfs (host view)       PASS
+PID1  shell is PID 1 in its own pid namespace                  PASS
+PID2  no host processes visible (ps lists none)                PASS
+UID1  uid=0 inside (mapped), no other uids                     PASS
+UID2  files created inside owned by real host uid              PASS
+NNP1  PR_SET_NO_NEW_PRIVS=1 verified via host /proc            PASS
+HOST1 hostname isolated ('minict')                             PASS
+SIG1  SIGKILL wrapper: PDEATHSIG+pidns teardown, no orphan     PASS
+NET1  netns NOT isolated (shared host net — known gap)       PASS(expected-fail)
+PROC1 /proc mount blocked by host seccomp (known gap)          PASS(expected-fail)
+CG1   no cgroup limits (cgroups v1 only — known gap)         PASS(expected-fail)
+=== summary: PASS=16 FAIL=0 ===
+
+=== host integrity after test run:
+leaked sandbox processes (expect none):
+(none)
+host /etc/passwd sha256 (unchanged during run):
+21d5de2dc39f2ceb19e33f8cc124b311b57a48aea6d7703a9a98b93079d412bd  /etc/passwd
+instances dir (expect empty):
