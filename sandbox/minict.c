@@ -1,11 +1,21 @@
 /*
  * minict — minimal rootless container (PoC day 2026-11-17)
  *
- * Stack: user ns + mount ns + pid ns + uts ns + ipc ns, self-written uid_map,
- *        pivot_root + MNT_DETACH of old root, bind-mounted /dev bits,
- *        capability drop + PR_SET_NO_NEW_PRIVS. No Docker, no root required.
+ * Stack: user ns + mount ns + pid ns + uts ns + ipc ns + NET ns (issue #3),
+ *        self-written uid_map, pivot_root + MNT_DETACH of old root,
+ *        bind-mounted /dev bits, capability drop + PR_SET_NO_NEW_PRIVS,
+ *        seccomp-bpf blocklist (incl. AF_NETLINK — D15). No Docker, no root.
  *
  * Usage: minict <rootfs-dir> <cmd> [args...]
+ *
+ * Env:
+ *   MINICT_NO_NETNS=1   opt out of CLONE_NEWNET (A/B control + hosts without
+ *                       netns); default is NETNS ON and FAIL-CLOSED (no
+ *                       silent fallback to the shared host net, D17)
+ *   MINICT_WEB_PORT=N   enable the in-sandbox web relay for this port (D16)
+ *   MINICT_PROXY_SOCK=P unix socket path INSIDE the new root (relay binds it;
+ *                       host webproxy.py reaches httpd through it because
+ *                       AF_UNIX is filesystem-scoped, not netns-scoped)
  *
  * Verified on kernel 5.10.134 (see research/2026-11-17.md):
  *  - pivot_root works inside unprivileged userns
@@ -13,24 +23,35 @@
  *    dirs inside our rootfs work
  *  - mount(2) of /proc is blocked by the host seccomp filter (warn, continue)
  *  - mknod is EPERM in userns -> bind-mount host /dev/null etc. before pivot
+ *  - CLONE_NEWNET in userns works; `lo` comes up DOWN — bring it up while we
+ *    still hold caps (AFTER the uid_map write: empty map = no caps at all,
+ *    measured 2026-11-17), see D18
  */
 #define _GNU_SOURCE
+#include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/audit.h>
 #include <linux/capability.h>
 #include <linux/filter.h>
 #include <linux/seccomp.h>
+#include <net/if.h>
+#include <netinet/in.h>
+#include <poll.h>
 #include <sched.h>
 #include <signal.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <sys/mount.h>
 #include <sys/prctl.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
+#include <sys/un.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -73,6 +94,43 @@ static void map_ids(uid_t ruid, gid_t rgid)
         write_proc_file("/proc/self/gid_map", buf);
 }
 
+/* ---------- netns (issue #3, D17/D18) ----------
+ *
+ * Default: CLONE_NEWNET — the sandbox gets its OWN network namespace with
+ * only the loopback device (a new netns has NO host interface: "a physical
+ * network device can live in exactly one network namespace",
+ * network_namespaces(7)). `lo` comes up DOWN and needs CAP_NET_ADMIN in the
+ * user namespace that OWNS the netns (user_namespaces(7): privileged ops on
+ * a nonuser namespace require the capability in the owning user namespace) —
+ * we hold full caps right after unshare + uid_map, so bring it up there,
+ * BEFORE capdrop. Fail-closed: if netns cannot be created the run aborts
+ * instead of silently sharing the host net (opt out explicitly with
+ * MINICT_NO_NETNS=1).
+ */
+
+static int want_netns(void)
+{
+        return getenv("MINICT_NO_NETNS") == NULL;
+}
+
+static void bring_lo_up(void)
+{
+        int fd = socket(AF_INET, SOCK_DGRAM, 0);
+        struct ifreq ifr;
+
+        if (fd < 0)
+                die("socket(AF_INET) for lo up");
+        memset(&ifr, 0, sizeof(ifr));
+        strncpy(ifr.ifr_name, "lo", IFNAMSIZ - 1);
+        ifr.ifr_name[IFNAMSIZ - 1] = '\0';
+        if (ioctl(fd, SIOCGIFFLAGS, &ifr) < 0)
+                die("ioctl(SIOCGIFFLAGS lo)");
+        ifr.ifr_flags |= (IFF_UP | IFF_RUNNING);
+        if (ioctl(fd, SIOCSIFFLAGS, &ifr) < 0)
+                die("ioctl(SIOCSIFFLAGS lo) — netns without usable loopback");
+        close(fd);
+}
+
 /* bind host device files into <rootfs>/dev BEFORE pivot_root (mknod is
  * EPERM inside userns on this kernel; bind mounts of existing nodes work) */
 static const char *g_devs[] = { "null", "zero", "urandom", "random" };
@@ -113,8 +171,188 @@ static void drop_all_caps(void)
          * See user_namespaces(7). */
 }
 
+/* ---------- in-sandbox web relay (issue #3, D16) ----------
+ *
+ * The sandbox now runs in its own netns (loopback-only), so nothing on the
+ * host can open a TCP connection into it (no veth to the host rootless —
+ * measured 2026-11-17, needs CAP_NET_ADMIN on the host netns).
+ * AF_UNIX sockets are filesystem-scoped (not netns-scoped): a socket bound
+ * INSIDE the sandbox on a path in the rootfs disk is reachable from the host
+ * via the instance rootfs dir. Bridge:
+ *
+ *   host:    tools/webproxy.py  TCP 127.0.0.1:<port> --> unix <rootfs>/<sock>
+ *   sandbox: relay (below)      unix <sock> --> TCP 127.0.0.1:<port> (httpd
+ *                               inside the netns)
+ *
+ * Precedent: RootlessKit --port-driver=builtin (parent proxies child-ns
+ * ports; slirp4netns/pasta are not available in this env). The relay is
+ * forked from the container child AFTER pivot (fs is the new root, socket
+ * lands on the instance rootfs disk) and BEFORE capdrop; it drops caps
+ * itself, never execs, deliberately does NOT get the seccomp filter (forked
+ * before install) — attack surface = dumb byte pump with no caps. Teardown:
+ * PDEATHSIG (parent = pidns-1) + pidns-1-exit + shared process group kill.
+ */
+
+static int g_web_port = 0;              /* MINICT_WEB_PORT, 0 = no relay */
+static const char *g_proxy_sock = NULL; /* MINICT_PROXY_SOCK (in new root) */
+
+static int write_all(int fd, const char *buf, size_t len)
+{
+        size_t off = 0;
+
+        while (off < len) {
+                ssize_t k = write(fd, buf + off, len - off);
+
+                if (k < 0) {
+                        if (errno == EINTR)
+                                continue;
+                        return -1;
+                }
+                off += (size_t)k;
+        }
+        return 0;
+}
+
+/* bidirectional byte pump between two established sockets */
+static void pump(int a, int b)
+{
+        char buf[16384];
+        struct pollfd pf[2];
+
+        pf[0].fd = a;
+        pf[0].events = POLLIN;
+        pf[0].revents = 0;
+        pf[1].fd = b;
+        pf[1].events = POLLIN;
+        pf[1].revents = 0;
+        for (;;) {
+                int n = poll(pf, 2, -1);
+
+                if (n < 0) {
+                        if (errno == EINTR)
+                                continue;
+                        return;
+                }
+                if (pf[0].revents & POLLIN) {
+                        ssize_t k = read(a, buf, sizeof(buf));
+
+                        if (k <= 0 || write_all(b, buf, (size_t)k) < 0)
+                                return;
+                }
+                if (pf[1].revents & POLLIN) {
+                        ssize_t k = read(b, buf, sizeof(buf));
+
+                        if (k <= 0 || write_all(a, buf, (size_t)k) < 0)
+                                return;
+                }
+                if ((pf[0].revents | pf[1].revents) & (POLLERR | POLLNVAL))
+                        return;
+        }
+}
+
+/* relay event loop: never returns */
+static void relay_main(int port, const char *sockpath)
+{
+        int sfd;
+        struct sockaddr_un sa;
+        struct sigaction ign;
+
+        if (strlen(sockpath) >= sizeof(sa.sun_path))
+                _exit(122);
+        sfd = socket(AF_UNIX, SOCK_STREAM, 0);
+        if (sfd < 0)
+                _exit(122);
+        unlink(sockpath); /* stale socket from a previous run */
+        memset(&sa, 0, sizeof(sa));
+        sa.sun_family = AF_UNIX;
+        strcpy(sa.sun_path, sockpath);
+        if (bind(sfd, (struct sockaddr *)&sa, sizeof(sa)) < 0)
+                _exit(122);
+        if (listen(sfd, 16) < 0)
+                _exit(122);
+
+        memset(&ign, 0, sizeof(ign));
+        ign.sa_handler = SIG_IGN;
+        sigaction(SIGCHLD, &ign, NULL); /* per-conn children auto-reaped */
+
+        drop_all_caps(); /* relay never needs caps */
+
+        for (;;) {
+                int cfd = accept(sfd, NULL, NULL);
+
+                if (cfd < 0) {
+                        if (errno == EINTR)
+                                continue;
+                        continue; /* transient error: keep serving */
+                }
+                {
+                        pid_t p = fork();
+
+                        if (p == 0) {
+                                /* conn child: dial httpd on the in-ns loopback */
+                                struct sockaddr_in a;
+
+                                close(sfd);
+                                int ufd = socket(AF_INET, SOCK_STREAM, 0);
+
+                                if (ufd < 0)
+                                        _exit(1);
+                                memset(&a, 0, sizeof(a));
+                                a.sin_family = AF_INET;
+                                a.sin_port = htons((uint16_t)port);
+                                a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+                                if (connect(ufd, (struct sockaddr *)&a,
+                                            sizeof(a)) < 0)
+                                        _exit(1);
+                                pump(cfd, ufd);
+                                _exit(0);
+                        }
+                }
+                close(cfd);
+        }
+}
+
+static void spawn_web_relay(void)
+{
+        pid_t p = fork();
+
+        if (p < 0)
+                die("fork (web relay)");
+        if (p == 0) {
+                if (prctl(PR_SET_PDEATHSIG, SIGKILL) < 0)
+                        warn("relay PDEATHSIG");
+                relay_main(g_web_port, g_proxy_sock); /* never returns */
+                _exit(123);
+        }
+        /* parent continues: capdrop -> seccomp -> exec payload */
+}
+
+static void load_web_relay_env(void)
+{
+        const char *ps = getenv("MINICT_WEB_PORT");
+
+        if (ps && *ps) {
+                char *end = NULL;
+                long v = strtol(ps, &end, 10);
+
+                if (!end || *end != '\0' || v < 1024 || v > 65535) {
+                        fprintf(stderr, "minict: bad MINICT_WEB_PORT '%s' "
+                                        "(need 1024..65535)\n", ps);
+                        exit(125);
+                }
+                g_web_port = (int)v;
+                g_proxy_sock = getenv("MINICT_PROXY_SOCK");
+                if (!g_proxy_sock || g_proxy_sock[0] != '/' ||
+                    strstr(g_proxy_sock, "..")) {
+                        fprintf(stderr, "minict: MINICT_PROXY_SOCK must be an "
+                                        "absolute path in the new root\n");
+                        exit(125);
+                }
+        }
+}
+
 /* ------------------------------------------------------------------ *
- * seccomp-bpf blocklist (issue #2, decision D11).
+ * seccomp-bpf blocklist (issue #2, decision D11; AF_NETLINK D15).
  *
  * Installed in the sandboxed child AFTER capdrop + NNP, BEFORE exec.
  * Strategy: blocklist of known-dangerous syscalls (default ALLOW) —
@@ -129,6 +367,8 @@ static void drop_all_caps(void)
  * acct, _sysctl, lookup_dcookie, remap_file_pages, iopl/ioperm.
  * Arg-checked: clone() with any CLONE_NEW* flag (no nested namespaces),
  * socket(AF_ALG) (userspace crypto interface — issue #8 mitigation),
+ * socket(AF_NETLINK) (netlink is the nftables/ebtables/audit config
+ * surface — netns without a netlink lock is half-done, D15),
  * clone3 -> ENOSYS (glibc-style fallbacks then use clone(), which IS
  * arg-checked above).
  *
@@ -249,6 +489,16 @@ static void install_seccomp(void)
         prog[n++] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K, SECCOMP_EPERM);
         prog[n++] = (struct sock_filter)BPF_STMT(BPF_LD | BPF_W | BPF_ABS, 0);
 
+        /* socket(2): deny AF_NETLINK (16) — nftables/ebtables/audit config
+         * surface; the netns stack stays read-only-by-design (D15) */
+        prog[n++] = (struct sock_filter)BPF_DT(BPF_JMP | BPF_JEQ | BPF_K,
+                                               0, 3, NR_socket);
+        prog[n++] = (struct sock_filter)BPF_STMT(BPF_LD | BPF_W | BPF_ABS, 16);
+        prog[n++] = (struct sock_filter)BPF_DT(BPF_JMP | BPF_JEQ | BPF_K,
+                                               0, 1, 16);
+        prog[n++] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K, SECCOMP_EPERM);
+        prog[n++] = (struct sock_filter)BPF_STMT(BPF_LD | BPF_W | BPF_ABS, 0);
+
         /* clone3: ENOSYS so libc-style fallbacks retry via clone(2), which
          * IS arg-checked above; everything else is allowed */
         prog[n++] = (struct sock_filter)BPF_DT(BPF_JMP | BPF_JEQ | BPF_K,
@@ -310,12 +560,22 @@ int main(int argc, char **argv)
         if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) < 0)
                 die("PR_SET_NO_NEW_PRIVS");
 
-        /* one-shot namespace creation */
+        load_web_relay_env();
+
+        /* one-shot namespace creation; netns ON by default (D17), fail-closed
+         * — no silent fallback to the shared host network namespace */
         if (unshare(CLONE_NEWUSER | CLONE_NEWNS | CLONE_NEWPID |
-                    CLONE_NEWUTS | CLONE_NEWIPC) < 0)
-                die("unshare(user|mount|pid|uts|ipc)");
+                    CLONE_NEWUTS | CLONE_NEWIPC |
+                    (want_netns() ? CLONE_NEWNET : 0)) < 0)
+                die("unshare(user|mount|pid|uts|ipc|net)");
 
         map_ids(ruid, rgid);
+
+        /* loopback comes up DOWN in a fresh netns; bring it up NOW — while we
+         * still hold caps in the userns that owns it (after uid_map: with an
+         * empty map we hold no caps at all, measured 2026-11-17 — D18) */
+        if (want_netns())
+                bring_lo_up();
 
         /* private propagation so nothing leaks to/from the host mount ns */
         if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL) < 0)
@@ -371,6 +631,11 @@ int main(int argc, char **argv)
                 if (mount("tmpfs", "/tmp", "tmpfs", MS_NOSUID | MS_NODEV,
                           NULL) < 0)
                         warn("mount /tmp (child)");
+
+                /* in-sandbox unix-socket relay BEFORE capdrop/seccomp so it
+                 * can bind the socket and (not) inherit the filter (D16) */
+                if (g_web_port > 0)
+                        spawn_web_relay();
 
                 drop_all_caps(); /* after ALL privileged-in-ns work is done */
 

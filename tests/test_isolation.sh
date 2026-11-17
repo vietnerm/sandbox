@@ -117,9 +117,12 @@ run_case HOST1 "hostname isolated ('minict')" pass \
     ic 'hostname | grep -qx minict'
 run_case SIG1 "SIGKILL wrapper: PDEATHSIG+pidns teardown, no orphan" pass sig1_test
 
-# ---------- known gaps (expected to fail here, by design/limitation) ----------
-run_case NET1 "netns NOT isolated (shared host net — known gap)" xfail \
-    ic 'busybox ip link show dev minict0'
+# ---------- network isolation (netns ON since issue #3) ----------
+run_case NET1 "netns isolated: only lo inside, no host iface" pass \
+    ic 'busybox ifconfig -a | grep -q "^lo " && busybox ifconfig -a \
+        | grep -Eq "^(eth|ens|enp|eno|wl|ww|bond|veth|dummy)" && exit 1 || exit 0'
+run_case NET2 "loopback is UP inside sandbox netns" pass \
+    ic 'busybox ifconfig lo | grep -q "UP LOOPBACK RUNNING"'
 run_case PROC1 "/proc mount blocked by host seccomp (known gap)" xfail \
     ic 'mount -t proc none /proc'
 run_case CG1 "no cgroup limits (cgroups v1 only — known gap)" xfail \

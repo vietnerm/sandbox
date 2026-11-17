@@ -70,3 +70,24 @@ python3 -c 'import subprocess,time; t=time.monotonic_ns(); subprocess.run([...])
 - Không có cgroups v2 unified, không có Landlock (cần ≥5.13), không có KVM.
 - Bất cứ gì "đáng lẽ hoạt động theo man page" phải **đo trước** — env này đã lệch
   man page ít nhất 3 lần trong ngày 1.
+
+## Netns pitfalls (phiên 5, issue #3)
+- **uid_map rỗng = KHÔNG có cap nào trong userns mới** — `unshare --user --net`
+  (util-linux, không --map-root-user) để lại uid_map rỗng → `ip link set lo up`
+  EPERM dù là "root" mới. Ghi uid_map xong mới bring-up `lo` (D18).
+- **`lo` trong netns mới luôn DOWN lúc sinh ra** — không bring-up thì wget/curl
+  127.0.0.1 chết oan ("Network unreachable" hoặc refuse tùy endpoint).
+- **AF_UNIX là filesystem-scoped, KHÔNG phải netns-scoped** — socket file nằm
+  trên rootfs disk host connect được xuyên netns: nền của bridge web (D16).
+  Ghi nhớ ngược lại: AF_INET/AF_INET6 mới là netns-scoped.
+- **fork relay TRƯỚC install_seccomp** — seccomp filter chỉ kế thừa cho con
+  sinh SAU khi cài; relay sinh trước → không dính filter (cần accept/connect).
+  Ngược lại muốn payload có filter: cài filter trước exec là đủ.
+- **rootfs là dir untracked sống xuyên session** — file cũ trong base rootfs
+  (vd. www/index.html của bài test cũ) sẽ ăn theo vào instance copy. Script
+  phải GHI ĐÈ chủ động, không dùng `[[ ! -f ]]` gate cho state quan trọng.
+- **`[[ ]]` là bashism** — chạy qua `sh -c` (dash) → `[: not found`. Dùng
+  POSIX `[ ]` trong test case.
+- **GNU Make 4.4+ từ chối recipe 8-spaces** ("missing separator"); runner cũ
+  (make 4.3) chấp nhận → bug trôi qua CI. Sau khi sửa Makefile, chạy
+  `make -n <target>` với make 4.4 để xác nhận thật.
