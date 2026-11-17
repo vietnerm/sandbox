@@ -1,7 +1,7 @@
 # Root Makefile — entry points required by PROMPT.MD / CI.
 # The binary build itself lives in sandbox/Makefile.
 
-.PHONY: all build rootfs test test-escape test-seccomp test-web perf-check cve-check bench clean help
+.PHONY: all build rootfs test test-escape test-seccomp test-netns test-web perf-check cve-check bench clean help
 
 all: build
 
@@ -11,17 +11,22 @@ build:
 rootfs:
 	bash sandbox/mkrootfs.sh rootfs
 
-# isolation + escape suite (16 cases) + seccomp blocklist suite (16 cases)
+# isolation + escape suite (17 cases) + seccomp blocklist suite (19 cases)
+# + netns suite (7 cases)
 # (the escape/isolation suites are currently flat scripts; splitting them
 # into one suite per area is roadmap work)
 test: build rootfs
 	bash tests/test_isolation.sh
 	bash tests/test_seccomp.sh
+	bash tests/test_netns.sh
 
 test-escape: test
 
 test-seccomp: build rootfs
 	bash tests/test_seccomp.sh
+
+test-netns: build rootfs
+	bash tests/test_netns.sh
 
 test-web: build rootfs
 	bash tests/test_web.sh
@@ -43,10 +48,11 @@ clean:
 help:
 	@echo "make build        - build minict binary"
 	@echo "make rootfs       - build busybox rootfs (rootless)"
-	@echo "make test         - isolation/escape (16) + seccomp (16) suites"
+	@echo "make test         - isolation/escape (17) + seccomp (19) + netns (7)"
 	@echo "make test-escape  - same suites (alias, CI requirement)"
 	@echo "make test-web     - web service suite (6 cases)"
-	@echo "make test-seccomp - seccomp blocklist suite (16 cases)"
+	@echo "make test-seccomp - seccomp blocklist suite (19 cases)"
+	@echo "make test-netns   - netns isolation suite (7 cases)"
 	@echo "make perf-check   - cold start / RSS / disk vs thresholds"
 	@echo "make cve-check    - NVD check of the CVE watchlist"
 	@echo "make bench        - full benchmark tables"

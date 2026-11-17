@@ -68,6 +68,9 @@ sc13() { expect_eperm "$(with_filter pvm)"; }
 sc14() { [[ "$(without_filter keyctl)" == *"errno=0"* ]]; }
 sc15() { "$MINICT" "$ROOTFS" /bin/sh -c 'mkdir -p /mnt3 && mount -t tmpfs none /mnt3'; }
 sc16() { expect_not_eperm "$(without_filter pvm)"; }
+sc17() { expect_eperm "$(with_filter netlink)"; }
+sc18() { [[ "$(without_filter netlink)" == *"errno=0"* ]]; }
+sc19() { [[ "$(with_filter tcp)" == *"errno=0"* ]]; }
 
 echo "=== minict seccomp tests ($(date '+%F %T')) ==="
 
@@ -97,6 +100,11 @@ run_case SC14 "control: keyctl works without filter" pass sc14
 # ---------- integration: mount blocked by seccomp too (defense in depth) ----------
 run_case SC15 "mount inside sandbox fails under filter (EPERM)" fail sc15
 run_case SC16 "control: process_vm NOT EPERM without filter" pass sc16
+
+# ---------- netns hardening (D15, issue #3): netlink socket family ----------
+run_case SC17 "socket(AF_NETLINK) blocked (EPERM)" pass sc17
+run_case SC18 "control: netlink socket works without filter" pass sc18
+run_case SC19 "control: socket(AF_INET) still allowed (httpd)" pass sc19
 
 echo "=== summary: PASS=$PASS FAIL=$FAIL ==="
 [[ $FAIL -eq 0 ]]

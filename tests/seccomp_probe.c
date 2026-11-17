@@ -48,6 +48,17 @@ static struct result try_syscall(const char *name)
         } else if (strcmp(name, "alg") == 0) {
                 /* socket(AF_ALG, SOCK_SEQPACKET, 0) — issue #8 mitigation */
                 r.rc = syscall(SYS_socket, 38 /*AF_ALG*/, 5 /*SOCK_SEQPACKET*/, 0);
+        } else if (strcmp(name, "netlink") == 0) {
+                /* socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE) — nftables/
+                 * ebtables/audit config surface (CVE-2024-1086 /
+                 * CVE-2026-53266 class, D15). Unprivileged creatable on the
+                 * host, so the A/B control discriminates. */
+                r.rc = syscall(SYS_socket, 16 /*AF_NETLINK*/, 3 /*SOCK_RAW*/,
+                               0 /*NETLINK_ROUTE*/);
+        } else if (strcmp(name, "tcp") == 0) {
+                /* socket(AF_INET, SOCK_STREAM) — control: ordinary sockets
+                 * MUST keep working under the filter (httpd needs them) */
+                r.rc = syscall(SYS_socket, 2 /*AF_INET*/, 1 /*SOCK_STREAM*/, 0);
         } else if (strcmp(name, "clone_userns") == 0) {
                 r.rc = syscall(SYS_clone, (unsigned long)(SIGCHLD | CLONE_NEWUSER),
                                (void *)0, (void *)0, (void *)0, (void *)0);
