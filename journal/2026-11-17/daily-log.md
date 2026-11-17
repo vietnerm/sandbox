@@ -715,7 +715,7 @@ mới, PR #25): sửa trên chính nhánh, rồi SCR/SIA lại trên SHA mới.
 
 - **#21** — merged `42f32732` (SBG Pha C-1, G1–G8 PASS); nhánh xoá DELETE_MERGED.
 - **#24** — merged `f344a4e7` (SBG Pha C-2 sau Pha B pass); nhánh xoá DELETE_MERGED.
-- **#26 (mới)** — `chore(branches): ledger 2026-11-17 (RUN 2)` — ledger + plan.md RUN 2 +
+- **#32** — `chore(branches): ledger 2026-11-17 (RUN 2)` — merged `299e748` — ledger + plan.md RUN 2 +
   branch-report.json + mục Phiên 9 này; miễn G3/G4/G6 (chỉ đụng ledger + journal/**);
   gộp khi CI xanh đúng HEAD.
 - Merge: #21 ✓ #24 ✓ — repo về trạng thái mục tiêu §11: chỉ còn `main`.
