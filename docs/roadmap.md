@@ -1,13 +1,13 @@
 # Roadmap — sandbox-lab
 
 > **Phân cấp nguồn sự thật** (issue #15): hướng tổng thể nằm ở `idea/manifest.md`
-> (4 giai đoạn + DoD từng giai đoạn). File này là **kế hoạch chi tiết** — SDDA chọn
+> (5 giai đoạn + DoD từng giai đoạn). File này là **kế hoạch chi tiết** — SDDA chọn
 > việc theo mục thấp nhất chưa xong của giai đoạn hiện tại. `PROMPT.MD` chỉ trỏ
 > vào file này, không giữ danh sách ưu tiên riêng.
 
 ## Nền tảng mục tiêu (từ manifest §5)
 
-- Linux kernel **≥ 6.1**, **cgroups v2**, uid ≥ 1000 không sudo; `/dev/kvm` cho GĐ3.
+- Linux kernel **≥ 6.1**, **cgroups v2**, uid ≥ 1000 không sudo; `/dev/kvm` cho GĐ4.
 - Runner CI (ubuntu-24.04) đã đạt mức này (kernel 6.x + cgroups v2); máy dev
   (kernel 5.10, cgroups v1, không KVM) chỉ dùng cho test nhanh/benchmark.
 - Quy ước label: mục chặn vì máy dev gán `blocked-on-dev-env` — vẫn nằm trong
@@ -65,58 +65,68 @@
 
 ## Giai đoạn 1 — minict runtime (HIỆN TẠI, theo thứ tự ưu tiên)
 
-1. **Sửa SIGTERM swallowed (issue #6) trước khi thêm lifecycle mới** — cleanup
-   SIGKILL+PDEATHSIG+pidns hiện đủ dùng nhưng control plane (GĐ2) cần stop có
-   graceful; môi trường nuốt SIGTERM cross-userns phải được xử lý ở tầng runtime
-   (chỉ báo bên trong, hoặc SIGINT forward bởi minict wrapper) chứ không phải ở
-   từng người dùng.
-2. **chroot-escape test sâu hơn** (issue #5) — fd-based escape, /proc/self/root
-   tricks, setuid binary trong rootfs (NNP phải chặn), core dump leak; thêm case
-   cho seccomp (SIGSYS mode) + case escape cho mặt netns mới (netlink đã chặn —
-   PoC socket(AF_NETLINK) trong sandbox phải EPERM, đã có SC17).
-3. **Stack web thật trong 1 instance** (DoD tổng thể): nginx/caddy + API + SQLite
-   bên trong 1 instance; `./sandbox up|down|bench` một lệnh; cold start stack < 5s
-   — bridge web D16 là phương án loopback-only cho từng service/port.
-4. **Connectivity qua pasta/slirp4netns thay vì tự làm proxy** (chốt theo owner
-   2026-11-17): `pasta`/`slirp4netns` cài được cả trên runner CI lẫn máy đích
-   (`apt-get install pasta` / `slirp4netns`, không cần root) — đánh giá A/B với
-   bridge D16 hiện có; D16 chỉ còn fallback loopback-only. Đây là điều kiện cho
-   stack web đa service và cho egress (cài package bên trong instance).
+> Hướng dự án (manifest, chốt 2026-11-17): **"Proxmox nhẹ", rootless tuyệt đối**.
+> GĐ1 là nền runtime; lõi "Proxmox" (API, template, snapshot, quota) là GĐ2–3.
 
-## Giai đoạn 2 — Control plane tối giản (KẾ TIẾP — chưa mở code)
+1. **Sửa SIGTERM swallowed (issue #6)**: control plane GĐ2 cần graceful stop;
+   xử lý ở tầng runtime (minict wrapper forward/chuyển tín hiệu), không phải ở người dùng.
+2. **Rootfs distro thật** (mới): Alpine minirootfs trước (nhỏ, musl), Debian sau.
+   Đo trên runner (kernel ≥ 6.1): mount `/proc` trong pidns, init tối thiểu
+   (tini/busybox init), `apk add nginx` / `apt-get install` dưới **single-uid
+   mapping** (manifest §5: không dùng `newuidmap` setuid). Ghi rõ gói nào hỏng
+   vì `chown` sang uid khác và phương án (bỏ qua / giả lập).
+3. **chroot-escape test sâu hơn** (issue #5): fd-based escape, /proc/self/root,
+   setuid binary trong rootfs (NNP chặn), core dump leak; case seccomp SIGSYS;
+   chạy lại cả suite trên rootfs distro thật (có `/proc`, nhiều mặt tấn công hơn busybox).
+4. **Connectivity qua pasta/slirp4netns** (thay proxy tự viết): A/B với bridge D16;
+   D16 chỉ còn fallback loopback-only. Điều kiện cho egress (cài gói trong instance)
+   và cho port-forward theo instance ở GĐ2.
+5. **Stack web thật trong 1 instance**: nginx/caddy + API + SQLite trên rootfs
+   distro; `./sandbox up|down|bench` một lệnh; cold start stack < 5 s.
 
-0. **GATE research (bắt buộc trước khi viết code):** exec vào instance đang chạy
-   rootless — daemon tạo instance giữ full caps trong userns nó tạo → setns được
-   từ phía daemon (mô hình RootlessKit/podman exec). Đo được trên runner rồi mới
-   mở GĐ2 (issue sẽ mở khi GĐ1 còn ≤ 1 mục).
-1. Daemon + API: up/down/ps/exec nhiều instance đồng thời; state machine
-   created/running/stopped; cleanup không rò rỉ process/mount/netns.
-2. cgroups v2 delegation (kernel ≥ 6.1 trên runner — mục này KHÔNG parked nữa;
-   máy dev cgroups v1 chỉ cảnh báo khi đo).
-3. Landlock LSM cho chroot/fs-policing (kernel ≥ 5.13 — runner đạt; KHÔNG parked nữa).
-4. overlayfs rootless + idmapped mounts (kernel ≥ 5.15 + CVE-2023-0386 vá — runner
-   đạt; thay private copy 2MB/instance, giảm disk/instance).
+## Giai đoạn 2 — Control plane + storage (KẾ TIẾP, chưa mở code)
 
-## Giai đoạn 3 — Đa backend microVM (chưa mở code)
+0. **GATE research:** exec vào instance đang chạy rootless (daemon giữ caps trong
+   userns nó tạo → setns từ phía daemon, mô hình RootlessKit/podman exec). Đo
+   trên runner rồi mới mở GĐ2 (issue mở khi GĐ1 còn ≤ 1 mục).
+1. Daemon user-level (systemd `--user`) + REST API + CLI `sandbox`:
+   create/start/stop/destroy/list/exec; state machine; instance tồn tại qua reboot.
+2. Template: instance từ template; lưu instance thành template.
+3. Storage: overlayfs rootless + idmapped mounts (thay private copy 2 MB/instance);
+   snapshot/backup/restore (overlay layer + tar.zst).
+4. Port-forward theo instance qua pasta, khai báo trong config instance.
+5. Quota CPU/RAM/pid qua cgroups v2 delegation; disk quota dạng cảnh báo.
+6. Landlock LSM cho fs-policing (kernel ≥ 5.13, runner đạt).
+7. Đo: control plane idle ≤ 30 MB RSS; destroy không rò rỉ process/mount/netns.
 
-0. **KIỂM TRA TRƯỚC:** `/dev/kvm` trên runner GitHub (`ls /dev/kvm` trong 1 workflow
-   probe) và trên máy đích. Có → mở kế hoạch chi tiết Firecracker; không có →
-   research-only và ghi rõ.
-1. Firecracker backend cùng API với minict (`--backend minict|firecracker`).
-2. Benchmark microVM vs container cho workload web nhỏ (startup < 1s target).
+## Giai đoạn 3 — Web UI + console (chưa mở code)
 
-## Giai đoạn 4 — Appliance OS (xa hơn)
+1. UI tĩnh single-user (không framework nặng), bind 127.0.0.1 + token: danh sách,
+   tạo từ template, start/stop, snapshot/restore, port-forward, quota.
+2. Web terminal vào instance qua `exec` của GĐ2.
+3. Biểu đồ CPU/RAM/IO theo instance từ thống kê cgroup.
+4. Test bảo mật UI: CSRF/token, không bind 0.0.0.0 mặc định, path traversal API.
 
-1. Image HĐH tối giản (NixOS/distro nhẹ) đóng gói runtime + control plane.
-2. Boot máy sạch + health + update tối thiểu. (Chi tiết khi GĐ3 xong.)
+## Giai đoạn 4 — Backend microVM Firecracker (chưa mở code)
+
+0. **KIỂM TRA TRƯỚC:** `/dev/kvm` trên runner GitHub (workflow probe `ls -l /dev/kvm`)
+   và máy đích. Có → mở kế hoạch chi tiết; không có → research-only, ghi rõ.
+1. Firecracker dưới user thường, cùng API/UI (`--backend minict|firecracker`).
+2. Benchmark microVM vs container cho workload web nhỏ (startup < 1 s).
+
+## Giai đoạn 5 — Appliance OS (xa hơn)
+
+1. Image tối giản (NixOS/distro nhẹ) ≤ 300 MB, boot vào user thường đã có điều
+   kiện tiên quyết (pasta, cgroup delegation, quyền /dev/kvm); control plane chạy dưới user đó.
+2. Health + update tối thiểu; tài liệu từ máy trắng. (Chi tiết khi GĐ4 xong.)
 
 ## Parked thật (lý do thiết kế, KHÔNG phải môi trường)
 - seccomp **allowlist mode** — chỉ làm khi có matrix workload httpd được audit đầy
   đủ; blocklist + capdrop + NNP đủ cho DoD hiện tại (D11).
 - gVisor runsc — overhead cao cho use-case dev/CI; model isolation của nó trùng
-  nhu cầu với microVM GĐ3.
+  nhu cầu với microVM GĐ4.
 
-## Definition of Done tổng thể (đích của dự án — đếm ĐÚNG theo danh sách)
+## Mốc web stack (DoD tổng thể cũ, nay là một phần của GĐ1; đích dự án xem manifest §1, §7)
 - [ ] nginx/caddy + API (Node/Python/Go) + SQLite/Postgres + Redis trong sandbox
 - [x] không Docker, không root (bất biến từ PoC — mọi test chạy uid 1001)
 - [ ] cold start toàn stack < 5s; RAM idle < 300MB
@@ -125,4 +135,4 @@
 - **Tiến độ: 2/5** (mục 2 và 4).
 - Lưu ý sửa sai đếm cũ ("5/5 mục phụ đã có nền"): web tĩnh busybox + seccomp +
   netns KHÔNG nằm trong 5 mục này — chúng là điều kiện nền của GĐ1, không được
-  đếm vào DoD tổng thể. Cột mốc thật của chúng xem ở "Đã xong" và manifest §6 GĐ1.
+  đếm vào DoD tổng thể. Cột mốc thật của chúng xem ở "Đã xong" và manifest §7 GĐ1.

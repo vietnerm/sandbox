@@ -10,7 +10,7 @@ Bạn có quyền dùng: `gh` CLI (đã đăng nhập), `git`, shell trên Linux
 > Mọi file bạn ghi trong ngày đi vào **`journal/YYYY-MM-DD/`** theo quy tắc §10.
 > Tài liệu "sống" (cập nhật dần, không theo ngày) chỉ nằm trong `docs/`.
 
-1. **`idea/manifest.md` đặt hướng** — mục tiêu, người dùng, non-goals, 4 giai đoạn + DoD từng giai đoạn.
+1. **`idea/manifest.md` đặt hướng** — mục tiêu, người dùng, non-goals, 5 giai đoạn + DoD từng giai đoạn.
 2. **`docs/roadmap.md` là kế hoạch chi tiết** — thứ tự việc làm trong giai đoạn hiện tại.
 3. **File này là quy trình vận hành** — trỏ vào roadmap (§8), không giữ danh sách ưu tiên riêng.
 
@@ -309,7 +309,7 @@ Nếu tất cả xanh → ghi "DAY PASS" vào cuối daily-log. Nếu có đỏ 
 1. Bất kỳ `type:security` + `priority:p0/p1` nào chen ngang (CVE, escape, sandbox bypass).
 2. Còn lại: mục thấp nhất **chưa xong** của **giai đoạn hiện tại** trong `docs/roadmap.md`
    (giai đoạn hiện tại + thứ tự mục nằm ngay mục "Giai đoạn N" của file đó; hướng
-   tổng thể 4 giai đoạn xem `idea/manifest.md` §6).
+   tổng thể 5 giai đoạn xem `idea/manifest.md` §7).
 
 Khi roadmap trống hoặc không khả thi (mọi mục bị chặn môi trường/owner), mở issue
 `type:chore` `area:docs` đề xuất cập nhật `docs/roadmap.md` — không tự chế việc mới
