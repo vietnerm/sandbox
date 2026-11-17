@@ -1,0 +1,55 @@
+{
+  "date": "2026-11-17",
+  "mode": "apply",
+  "halted": false,
+  "halt_reason": "",
+  "branches": [
+    {
+      "name": "docs/journal-layout",
+      "head_sha": "5e5387fcb25511269feeb904d105f2f44df2eab8",
+      "decision": "DELETE_MERGED",
+      "reason": "ancestor của main (0 ahead/3 behind), git cherry = 0 '+', PR #19 MERGED với headRefOid khớp HEAD nhánh; xoá không cần tag",
+      "pr": 19,
+      "issue": 0,
+      "gates": {},
+      "archive_tag": "",
+      "done": true,
+      "error": ""
+    },
+    {
+      "name": "docs/proxmox-lite-manifest",
+      "head_sha": "930f44d76afda8e9bdaf7ecddd0995ff3b8de58d",
+      "decision": "DELETE_MERGED",
+      "reason": "ancestor của main (0 ahead/2 behind), git cherry = 0 '+', PR #20 MERGED với headRefOid khớp HEAD nhánh; xoá không cần tag",
+      "pr": 20,
+      "issue": 0,
+      "gates": {},
+      "archive_tag": "",
+      "done": true,
+      "error": ""
+    },
+    {
+      "name": "fix/6-sigterm-shim",
+      "head_sha": "2d82c95be1eaa3931e7d7b59e2096a02d83d3098",
+      "decision": "KEEP",
+      "reason": "§0.4: commit mới nhất 06:56:20Z < 2 giờ trước gate (07:03Z), có thể agent khác đang ghi; G3/G4 chưa có artifact retest-report.json / audit-report.json. G1/G2/G5/G6/G7/G8 PASS. Ngày xem lại: 2026-11-18",
+      "pr": 21,
+      "issue": 6,
+      "gates": {
+        "G1": true,
+        "G2": true,
+        "G3": false,
+        "G4": false,
+        "G5": true,
+        "G6": true,
+        "G7": true,
+        "G8": true
+      },
+      "archive_tag": "",
+      "done": true,
+      "error": ""
+    }
+  ],
+  "remaining_branches": ["main", "fix/6-sigterm-shim"],
+  "main_ci_after": "success"
+}

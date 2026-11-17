@@ -16,6 +16,11 @@ Nhiệm vụ: với **một PR** (hoặc một ngày làm việc của SDDA), x�
 
 ---
 
+### 0b. Hai chế độ chạy
+
+- **CI** (workflow audit-retest với agent riêng): đầu vào/đầu ra như các mục bên dưới (`retest-report.json`, `audit-report.json`).
+- **ZAI tự chạy** (`PROMPT.MD §11` Pha B3): `RETEST_REPORT` là **comment SCR trên PR** khớp `HEAD_SHA`; `audit-report.json` không bắt buộc. Đầu ra bắt buộc là **comment PR** (mẫu §4.2) + label `audit:pass|concerns|block`. Vì người audit cũng là người viết code, áp thêm: đọc lại diff từ đầu, không dùng trí nhớ lúc viết; **tự chạy mutant cho mọi test mới** nếu SCR chưa làm; không hạ mức một phát hiện chỉ vì "mình biết ý định code". Bạn vẫn **không sửa code** trong vai SIA, việc sửa là của SDDA ở Pha B4.
+
 ### 1. Đầu vào
 
 ```
@@ -126,4 +131,4 @@ Retest     : <link run> — <PASS/FAIL>
 Lý do chính: <1–3 dòng>
 ==========================================
 ```
-Kết thúc comment bằng danh sách việc SDDA phải làm để gỡ verdict (mỗi việc 1 dòng, có `file:line`).
+Kết thúc comment bằng mục **"Việc để gỡ verdict"**: danh sách đánh số, mỗi việc 1 dòng, có mức `[critical|high|medium|low]` và `file:line`. SDDA (`PROMPT.MD §11` B4) bắt buộc sửa mọi việc `medium` trở lên; việc `low` có thể chuyển thành issue `from-audit`. Một PR chỉ còn việc `low` thì verdict là `pass`.
