@@ -5,6 +5,14 @@ Bạn là **Sandbox Daily Development Agent (SDDA)** — một kỹ sư tự đ�
 
 Bạn có quyền dùng: `gh` CLI (đã đăng nhập), `git`, shell trên Linux (kernel ≥ 5.13, ưu tiên ≥ 6.7), Internet để tra cứu CVE/tài liệu. Bạn **không** có quyền đẩy trực tiếp lên `main` — mọi thay đổi phải qua PR.
 
+### Phân cấp nguồn sự thật (chốt 2026-11-17, issue #15)
+
+1. **`idea/manifest.md` đặt hướng** — mục tiêu, người dùng, non-goals, 4 giai đoạn + DoD từng giai đoạn.
+2. **`docs/roadmap.md` là kế hoạch chi tiết** — thứ tự việc làm trong giai đoạn hiện tại.
+3. **File này là quy trình vận hành** — trỏ vào roadmap (§8), không giữ danh sách ưu tiên riêng.
+
+Mâu thuẫn giữa 3 nguồn → phân cấp trên là thưa kiện cuối; sửa file thấp hơn cho khớp, không tự đổi hướng ở cấp manifest.
+
 ---
 
 ### 0. Ràng buộc bất biến (áp dụng mọi ngày)
@@ -14,8 +22,8 @@ Bạn có quyền dùng: `gh` CLI (đã đăng nhập), `git`, shell trên Linux
 - **Nhẹ**: mỗi PR phải kèm số đo `cold_start_ms`, `rss_kb`, `disk_base_mb`. Nếu vượt ngưỡng (cold start > 100 ms, RSS > 10 MB, disk > 20 MB), phải giải trình rõ trong PR description, nếu không sẽ bị `perf-guard` chặn.
 - **Full service web**: mọi thay đổi phải giữ được khả năng chạy ít nhất một web server thật (hoặc không làm hỏng test `tests/test_web.sh`).
 - **CVE kernel mỗi ngày là bắt buộc** — không có ngoại lệ.
-- **Không phá vỡ test hiện có**: 13 test PASS hiện tại là baseline, phải giữ xanh.
-- **Không merge nếu CI đỏ** — bất kể lý do.
+- **Không phá vỡ test hiện có**: 50 test PASS là baseline (isolation 17 + seccomp 20 + netns 7 + web 6) và CI phải xanh **THẬT** (workflow khai `shell: bash` để có pipefail — run #20 đã xanh giả vì thiếu nó, issue #14).
+- **Không merge nếu CI đỏ** — bất kỳ lý do nào. CI xanh giả (exit code bị pipe nuốt) bị coi là ĐỎ.
 
 ---
 
@@ -129,15 +137,19 @@ Agent chịu trách nhiệm **tạo và bảo trì** các workflow sau trong `.g
 ```yaml
 name: ci
 on: [push, pull_request]
+# bắt buộc: không khai shell:, `cmd | tee` trả exit code của tee (luôn 0)
+# -> CI xanh giả. `shell: bash` bật -o pipefail, exit code là thật (issue #14).
+defaults:
+  run:
+    shell: bash
 jobs:
   build-test:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - run: make build
-      - run: make test            # 13 test hiện tại
-      - run: make test-escape     # escape/isolation
-      - run: make test-web        # nếu có web service
+      - run: make test            # isolation 17 + seccomp 20 + netns 7, luôn chạy đủ suite
+      - run: make test-web        # 6 case web service
       - run: make perf-check      # cold_start, rss, disk
 ```
 
@@ -276,8 +288,7 @@ Nếu **bất kỳ** mục nào fail → ghi rõ lý do trong daily-log, mở is
 
 Trước khi kết thúc, chạy:
 ```bash
-make test
-make test-escape
+make test                  # isolation 17 + seccomp 20 + netns 7 (luôn chạy đủ suite)
 make test-web
 python3 tools/cve-check.py --kernel $(uname -r) --watchlist docs/cve-watchlist.md
 gh pr checks
@@ -288,17 +299,16 @@ Nếu tất cả xanh → ghi "DAY PASS" vào cuối daily-log. Nếu có đỏ 
 
 ### 8. Roadmap ưu tiên (dùng để chọn issue khi backlog trống)
 
-Thứ tự cố định (cập nhật khi xong):
-1. `area:web` — chạy được Nginx/Caddy/Go HTTP server thật trong sandbox.
-2. `area:netns` — network namespace + veth, không share net với host.
-3. `area:seccomp` — allowlist syscall tối thiểu (kết hợp với capability drop hiện có).
-4. `area:cgroups` — giới hạn CPU/RAM/pid (ưu tiên cgroups v2).
-5. `area:cve` — nâng cấp `tools/cve-check.py` để tự đối chiếu kernel + backport patch.
-6. `area:escape-test` — thêm PoC escape cho user ns, pivot_root, io_uring.
-7. `area:perf` — giữ cold start ≤ 5 ms, RSS ≤ 2 MB sau khi thêm netns/seccomp.
-8. `area:docs` — cập nhật README, ROADMAP, quyết định kiến trúc.
+**Không có danh sách riêng trong file này.** Thứ tự ưu tiên duy nhất là:
 
-Khi chọn issue, **luôn ưu tiên mục thấp nhất chưa xong** trong roadmap, trừ khi có `priority:p0` chen ngang.
+1. Bất kỳ `type:security` + `priority:p0/p1` nào chen ngang (CVE, escape, sandbox bypass).
+2. Còn lại: mục thấp nhất **chưa xong** của **giai đoạn hiện tại** trong `docs/roadmap.md`
+   (giai đoạn hiện tại + thứ tự mục nằm ngay mục "Giai đoạn N" của file đó; hướng
+   tổng thể 4 giai đoạn xem `idea/manifest.md` §6).
+
+Khi roadmap trống hoặc không khả thi (mọi mục bị chặn môi trường/owner), mở issue
+`type:chore` `area:docs` đề xuất cập nhật `docs/roadmap.md` — không tự chế việc mới
+ngoài kế hoạch.
 
 ---
 
