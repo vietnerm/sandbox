@@ -79,6 +79,6 @@ help:
 	@echo "make test-alpine  - alpine rootfs suite (8 cases)"
 	@echo "make perf-check   - cold start / RSS / disk vs thresholds"
 	@echo "make cve-check    - NVD check of the CVE watchlist"
-	@echo "make unicode-check- scan for hidden/bidi Unicode (Trojan Source)"
-	@echo "make test-unicode - unicode-guard self-test (13 cases)"
+	@echo "make unicode-check - scan for hidden/bidi Unicode (Trojan Source)"
+	@echo "make test-unicode  - unicode-guard self-test (13 cases)"
 	@echo "make bench        - full benchmark tables"
