@@ -114,3 +114,64 @@
   nếu owner muốn.
 - GĐ1: S1 webproxy-symlink (security, được chen ngang) + issue #38 (suite hardening).
 - cve-daily improvement: chỉ mở issue khi CVE ngoài watchlist (chore CI).
+
+## Phiên 3 — Orchestrator §11 (ZAI): PR #36 loop delta + S1 webproxy security fix
+
+> Chu trình: pull (main ff 69a94d0) → Pha A plan → Pha B PR #36 (B1 resync + SCR
+> ×2 + SIA delta) → Pha C (không gộp — G7) → Pha D issue #41 (S1 webproxy) →
+> PR #42 qua B→C, merge 9560cfe → Pha E SBG apply + PR ledger.
+
+### Pha A — Sync + SBG plan
+- main 69a94d0 ff; PR mở: #36 (KEEP G7); issue mở: #39/#38/#37/#34/#31/#30/#29/#28/#27/#26/#8/#5/#4.
+- SBG plan Phiên 3 cập nhật `branch/plan.md`.
+
+### Pha B — PR #36 (ci/unicode-guard)
+- B1 resync main 69a94d0 → `d50bc22`: 3 conflict add/add journal (plan/decisions/
+  research) giải theo luật B1 — **trùng số decision**: main `D28` canonical (qua
+  PR #40) vs PR side `D28`+`D29` khác nghĩa → PR side renumber **D29/D30**, tham
+  chiếu research sửa theo; 0 mất nội dung.
+- CI @ d50bc22 xanh (scan/build-test×2/perf). B2 SCR ×2: 56/56 + web 6/6 +
+  unicode 13/13; minictd 20/20 từ CI; perf 1.95/1188/2.04; host unchanged.
+- B3 SIA delta (delta chỉ journal/docs): concerns B1/B5/B6 xác minh đã fix →
+  **PASS**, label `audit:pass`; `needs-human` GIỮ (G7). B4: không tự gộp.
+
+### Pha D — Issue #41: S1 webproxy symlink (type:security p1 — chen ngang đúng luật)
+- Triage: S1 (GAPS, có từ D16) = CWE-59 trên host bridge; mở #41, assign, in-progress.
+- Research 4 nguồn → `research.md` (CWE-59; CVE-2018-15664 cyphar; pattern
+  O_PATH + connect `/proc/self/fd` kernel thread; CVE-2026-7374 OpenShift NVD).
+- Develop `sec/s1-webproxy-symlink`: webproxy.py resolver fail-closed per-connection
+  (openat O_NOFOLLOW từng thành phần + O_PATH/S_ISSOCK final + connect /proc/self/fd
+  — TOCTOU-free); `minict.sh` + minictd `spawnProxies` `--root/--sock`; WEB7–WEB9
+  (suite web 6→9); D31 `decisions/s1-webproxy-symlink.md`; GAPS S1 FIXED.
+- Sự cố + bài học: (1) CI đỏ lần 1 @ 5e80c60 — caller thứ hai (spawnProxies) còn
+  `--unix` → MD14; fix 4104330. (2) Edit tool chuẩn hoá TAB→spaces TOÀN file
+  store.go (970 dòng) — khôi phục từ main, vá bằng python giữ byte; bài học
+  Makefile-tab mở rộng sang Go → `docs/skills.md`. (3) WEB9 fail ảo dưới mutant M2:
+  dải port test đụng nhau (p9 22000–22999 vs PORT3 ≤22499) → EADDRINUSE chết im
+  lặng; fix dải 23000+ + check listener + fail-loud (D31).
+- CVE check: `cve/s1-webproxy-symlink.md|.json` — 19 CVE watchlist, 0 mới ảnh
+  hưởng (NVD live lần này rc=0 trong 280s, khác Phiên 2 timeout).
+- Validation: `make test` 56/56 ×2; `make test-web` 9/9 ×2; perf 1.80/1204/2.04
+  PASS; host baseline unchanged; listeners không lạ → `evidence/s1-webproxy-symlink.txt`.
+- PR #42 (draft→ready): B2 SCR @ 4104330 PASS ×2; B3 SIA PASS 11/11 (mutant matrix
+  M1/M2/M3 bắt đúng; phát hiện LOW payload-rebind-same-path — không escape, residual
+  GĐ2) → `audit:pass`; B4 pass.
+
+### Pha C — Gộp
+- **PR #42 squash → main `9560cfe`** (G1–G8 đủ, không G7, match-head-commit).
+- CI main xanh trên 9560cfe sau merge. #41 auto-close → **mở lại theo §6**
+  (`status:needs-review`, chờ owner `verified`).
+
+### Pha E — SBG apply + đóng ngày
+- DELETE_MERGED: `sec/s1-webproxy-symlink` (remote + local, squash-match
+  4104330 == PR #42 headRefOid), `chore/ledger-2026-11-18` (local, squash-match #40).
+- KEEP: `ci/unicode-guard` (#36 G7). Repo còn `main` + 1 nhánh KEEP.
+- Ledger 2 dòng (`docs/branch-ledger.md`); skills Go-tab; roadmap "Đã xong" S1.
+- PR `chore(branches): ledger 2026-11-18 Phiên 3 + daily-log` (docs/journal-only —
+  miễn G3/G4/G6).
+
+### Đánh giá "ngày thành công" (§5) — DAY PASS
+- Triage: #41 tạo+gán cùng ngày ✓; #34 giữ mở theo §6 (đã triage Phiên 2) ✓.
+- Đúng 1 PR mới (sec/s1 #42) CI xanh + merge ✓ (PR #36 là PR cũ, loop §11).
+- CVE check ✓; escape/host baseline bằng chứng ✓; daily-log commit ✓ (PR này);
+  không security-p0 bỏ quên >24h ✓.

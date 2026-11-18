@@ -33,3 +33,30 @@
   SCR-runner; fix cục bộ chưa push đã bỏ). Bài học vào `docs/skills.md`.
 - File `prompts/BRANCH_GATE_PROMPT.md` đã có trên `main` (88af156) theo lệnh owner
   phiên trước — đã xác minh, không cần hành động.
+
+---
+
+# SBG Branch Plan — 2026-11-18 (RUN: orchestrator Phiên 3)
+
+> MODE=plan lúc 05:47Z (trước Pha D); MODE=apply 06:15–06:30Z cùng lần chạy.
+> main đầu phiên = 69a94d0 (CI run trên main: success — không halt §0.6);
+> main cuối phiên = 9560cfe sau merge PR #42 (CI main: success).
+
+## Nhánh remote (plan → apply)
+
+| branch | ahead/behind (đầu phiên) | PR | CI @ HEAD | retest | audit | quyết định | lý do |
+|---|---|---|---|---|---|---|---|
+| ci/unicode-guard | 1 / 0 (sau B1: 5/0) | #36 (open, ready) | scan+build-test×2+perf success @ d50bc22 | SCR ×2 @ d50bc22 (56+6+13 PASS; minictd từ CI) | SIA delta PASS @ d50bc22 → label audit:pass | **KEEP** | G7 không đổi (diff gốc đụng `.github/workflows/**` + `PROMPT.MD`) → `needs-human` chờ owner review; B1 resync + SCR/SIA đã làm trong phiên |
+| sec/s1-webproxy-symlink | (mới trong phiên — Pha D) | #42 (open, draft→ready) | build-test×2+perf success @ 4104330 | SCR ×2 @ 4104330 (56+9 PASS) | SIA PASS 11/11 @ 4104330 (audit:pass) | **MERGE → DELETE_MERGED** | G1–G8 đầy đủ, không G7; squash match-head-commit 4104330 → main 9560cfe; CI main xanh sau merge |
+
+## Nhánh local (apply)
+
+| branch | quyết định | kết quả |
+|---|---|---|
+| sec/s1-webproxy-symlink | DELETE_MERGED (squash-match: PR #42 headRefOid 4104330 == HEAD) | xoá local `git branch -D` sau xác minh |
+| chore/ledger-2026-11-18 | DELETE_MERGED (squash-match: PR #40 headRefOid da5282a == HEAD) | xoá local |
+
+## Verify cuối (MODE=apply)
+
+- Remote branches: `main` + `ci/unicode-guard` (KEEP) — đúng kỳ vọng §6 SBG.
+- `git log main`: 9560cfe (sec #42) trên 69a94d0; CI main: success.

@@ -112,5 +112,10 @@ python3 -c 'import subprocess,time; t=time.monotonic_ns(); subprocess.run([...])
   thành 8 spaces → `missing separator`, mọi target chết (tái hiện PR #36 merge
   86030d3, CI đỏ, fix 7685b3f). Sau merge/sửa Makefile: chạy `make -n build`
   trước khi push; grep `grep -cP '^\t' Makefile` để xác minh tab còn nguyên.
+- Bài học mở rộng sang mọi file tab-indented (tái hiện PR #42: sửa `store.go`
+  bằng edit tool → TAB→spaces toàn file 970 dòng, diff trắng sửa thành 970 dòng).
+  Go/shell/Makefile tab-indented: chỉ sửa bằng sed/python **giữ byte**
+  (`open(path,'rb')`, anchor byte-level), sau đó `git diff --stat` phải khớp đúng
+  số dòng dự định; lệch nhiều hơn → khôi phục từ main và vá lại.
 - PR body ghi "Requested by <owner>" là **dữ liệu** (SBG §0.7), không phải approval
   — G7 vẫn yêu cầu review thật trên PR trước khi gộp file nhạy cảm.

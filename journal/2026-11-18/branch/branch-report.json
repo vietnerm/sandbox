@@ -1,10 +1,11 @@
 {"date": "2026-11-18", "mode": "apply", "halted": false, "halt_reason": "",
+ "note": "RUN Phiên 3 (ghi đè report Phiên 2 — lịch sử nằm trong plan.md)",
  "branches": [
-  {"name": "ci/unicode-guard", "head_sha": "7685b3f6bd36dcf6d22b07268682a60622c607e2",
-   "decision": "KEEP", "reason": "G7: diff đụng .github/workflows/** + PROMPT.MD — chờ owner review PR #36 (SIA CONCERNS — B1/B5/B6 đã xử lý; SCR 63/63 ×3 runs @ 7685b3f)", "pr": 36, "issue": 39,
-   "gates": {"G1": true, "G2": true, "G3": false, "G4": false, "G5": true, "G6": false, "G7": false, "G8": true}, "archive_tag": "", "done": true, "error": ""},
-  {"name": "feat/minictd-control-plane", "head_sha": "828724679110809d6b12b23928c767430c84ae5b",
-   "decision": "DELETE_MERGED", "reason": "PR #35 merged (squash-match headRefOid==HEAD); ngoài cửa sổ 30'", "pr": 35, "issue": 0,
-   "gates": {}, "archive_tag": "", "done": true, "error": ""}],
+  {"name": "sec/s1-webproxy-symlink", "head_sha": "4104330b7964c54bd1e48f66203e82f0de717acf",
+   "decision": "MERGE→DELETE_MERGED", "reason": "G1-G8 pass, khong G7; squash #42 match-head-commit -> main 9560cfe; CI main xanh sau merge; remote deleted 204 + local -D sau squash-match", "pr": 42, "issue": 41,
+   "gates": {"G1": true, "G2": true, "G3": true, "G4": true, "G5": true, "G6": true, "G7": true, "G8": true}, "archive_tag": "", "done": true, "error": ""},
+  {"name": "ci/unicode-guard", "head_sha": "d50bc229a3e2a0ee64f062e30d4413420d8c86f8",
+   "decision": "KEEP", "reason": "G7: diff goc đụng .github/workflows/** + PROMPT.MD — cho owner review PR #36; B1 resync d50bc22 (journal/docs only) + SCR x2 PASS + SIA delta PASS (audit:pass) @ dung SHA", "pr": 36, "issue": 39,
+   "gates": {"G1": true, "G2": true, "G3": true, "G4": true, "G5": true, "G7": false, "G8": true}, "archive_tag": "", "done": true, "error": ""}],
  "remaining_branches": ["main", "ci/unicode-guard"],
  "main_ci_after": "success"}
