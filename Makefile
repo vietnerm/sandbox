@@ -1,12 +1,16 @@
 # Root Makefile — entry points required by PROMPT.MD / CI.
 # The binary build itself lives in sandbox/Makefile.
 
-.PHONY: all build rootfs rootfs-alpine test test-escape test-seccomp test-netns test-alpine test-web perf-check cve-check bench clean help
+.PHONY: all build minictd rootfs rootfs-alpine test test-escape test-seccomp test-netns test-alpine test-web test-minictd perf-check cve-check bench clean help
 
 all: build
 
 build:
 	$(MAKE) -C sandbox
+
+# GĐ2 control plane: minictd daemon (Go, stdlib only) + minict-exec (setns)
+minictd:
+	$(MAKE) -C minictd all
 
 rootfs:
 	bash sandbox/mkrootfs.sh rootfs
@@ -35,6 +39,10 @@ test-alpine: build rootfs-alpine
 test-web: build rootfs
 	bash tests/test_web.sh
 
+# minictd e2e (19 cases): real daemon -> patched minict -> minict-exec
+test-minictd: build rootfs minictd
+	bash tests/test_minictd.sh
+
 # perf-guard gate: cold start <= 100 ms, RSS <= 10240 kB, disk <= 20 MB
 # (thresholds + measured baseline live in docs/perf-baseline.md)
 perf-check: build rootfs
@@ -48,6 +56,7 @@ bench: build rootfs
 
 clean:
 	$(MAKE) -C sandbox clean
+	$(MAKE) -C minictd clean
 
 help:
 	@echo "make build        - build minict binary"
@@ -56,6 +65,8 @@ help:
 	@echo "make test         - isolation (17) + seccomp (20) + netns (7) + alpine (8), all suites always run"
 	@echo "make test-escape  - same suites (alias, CI requirement)"
 	@echo "make test-web     - web service suite (6 cases)"
+	@echo "make minictd      - build minictd daemon + minict-exec (needs Go >= 1.23)"
+	@echo "make test-minictd - minictd e2e suite (19 cases)"
 	@echo "make test-seccomp - seccomp blocklist suite (20 cases)"
 	@echo "make test-netns   - netns isolation suite (7 cases)"
 	@echo "make test-alpine  - alpine rootfs suite (8 cases)"

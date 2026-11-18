@@ -20,6 +20,11 @@
  *   MINICT_PROXY_SOCK=P unix socket path INSIDE the new root (relay binds it;
  *                       host webproxy.py reaches httpd through it because
  *                       AF_UNIX is filesystem-scoped, not netns-scoped)
+ *   MINICT_SPEC=F       line-based spec file augmenting the setup (D23):
+ *                       hostname/env/bind/webport/tmpfs/shm/ulimit lines;
+ *                       '#' comments and blank lines ignored; unknown
+ *                       directives warn+skip (forward compatible), parse
+ *                       errors abort the run (fail-closed)
  *
  * Verified on kernel 5.10.134 (see journal/2026-11-17/research.md):
  *  - pivot_root works inside unprivileged userns
@@ -33,8 +38,10 @@
  */
 #define _GNU_SOURCE
 #include <arpa/inet.h>
+#include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <linux/audit.h>
 #include <linux/capability.h>
 #include <linux/filter.h>
@@ -51,6 +58,7 @@
 #include <sys/ioctl.h>
 #include <sys/mount.h>
 #include <sys/prctl.h>
+#include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
@@ -200,6 +208,54 @@ static void drop_all_caps(void)
 static int g_web_port = 0;              /* MINICT_WEB_PORT, 0 = no relay */
 static const char *g_proxy_sock = NULL; /* MINICT_PROXY_SOCK (in new root) */
 
+/* ---------- MINICT_SPEC state (D23) ----------
+ *
+ * Parsed once, host-side, into these globals BEFORE any namespace work.
+ * Hard caps everywhere (64 entries per list, 1024B per line, 64KB per
+ * file): a spec file is operator config, not a data format — unbounded
+ * growth would be a DoS against our own parser (fail-closed, D17 style).
+ */
+#define SPEC_MAX_ENTRIES 64
+#define SPEC_MAX_LINE 1024
+#define SPEC_MAX_FILE (64 * 1024)
+
+static char g_hostname[HOST_NAME_MAX + 1] = "minict";
+
+struct spec_bind {              /* host src bind-mounted into the rootfs */
+        char src[512];
+        char dst[512];          /* path INSIDE the rootfs (absolute) */
+        int ro;                 /* ":ro" suffix -> MS_RDONLY remount */
+};
+static struct spec_bind g_spec_bind[SPEC_MAX_ENTRIES];
+static int g_spec_bind_n;
+
+static char g_spec_env[SPEC_MAX_ENTRIES][SPEC_MAX_LINE]; /* raw "K=V" */
+static int g_spec_env_n;
+
+struct spec_relay {             /* D24: one unix-socket relay per entry */
+        int port;
+        char sock[108];         /* sockaddr_un sun_path */
+};
+static struct spec_relay g_spec_web[SPEC_MAX_ENTRIES];
+static int g_spec_web_n;
+
+struct spec_tmpfs {             /* extra tmpfs like /tmp; size 0 = default */
+        char path[512];
+        unsigned long long size;
+};
+static struct spec_tmpfs g_spec_tmpfs[SPEC_MAX_ENTRIES];
+static int g_spec_tmpfs_n;
+
+static unsigned long long g_spec_shm_size; /* 0 = no shm directive */
+
+struct spec_rlimit {            /* setrlimit in payload BEFORE capdrop */
+        int res;
+        rlim_t soft;
+        rlim_t hard;
+};
+static struct spec_rlimit g_spec_rlimit[SPEC_MAX_ENTRIES];
+static int g_spec_rlimit_n;
+
 static int write_all(int fd, const char *buf, size_t len)
 {
         size_t off = 0;
@@ -316,7 +372,7 @@ static void relay_main(int port, const char *sockpath)
         }
 }
 
-static void spawn_web_relay(void)
+static void fork_one_relay(int port, const char *sock)
 {
         pid_t p = fork();
 
@@ -325,10 +381,23 @@ static void spawn_web_relay(void)
         if (p == 0) {
                 if (prctl(PR_SET_PDEATHSIG, SIGKILL) < 0)
                         warn("relay PDEATHSIG");
-                relay_main(g_web_port, g_proxy_sock); /* never returns */
+                relay_main(port, sock); /* never returns */
                 _exit(123);
         }
         /* parent continues: capdrop -> seccomp -> exec payload */
+}
+
+static void spawn_web_relay(void)
+{
+        int i;
+
+        /* D16 env-var relay stays: single port via MINICT_WEB_PORT */
+        if (g_web_port > 0)
+                fork_one_relay(g_web_port, g_proxy_sock);
+        /* D24: spec-file webports — one relay child per entry, same
+         * PDEATHSIG + pidns-1-exit + group-kill teardown as above */
+        for (i = 0; i < g_spec_web_n; i++)
+                fork_one_relay(g_spec_web[i].port, g_spec_web[i].sock);
 }
 
 static void load_web_relay_env(void)
@@ -352,6 +421,570 @@ static void load_web_relay_env(void)
                                         "absolute path in the new root\n");
                         exit(125);
                 }
+        }
+}
+
+/* ---------- MINICT_SPEC parsing (D23) ----------
+ *
+ * Read host-side BEFORE unshare (DAC checked against the REAL uid).
+ * Every directive is validated at parse time: a bad value aborts the run
+ * (exit 125, same class as the MINICT_WEB_PORT checks) instead of
+ * half-applying config the operator believes is active. Exception:
+ * unknown directives warn+skip, so a newer daemon can talk to an older
+ * binary (forward compatible by design).
+ */
+
+static void spec_die(int lineno, const char *what)
+{
+        fprintf(stderr, "minict-spec: line %d: %s\n", lineno, what);
+        exit(125);
+}
+
+/* bare bytes or one K/M/G suffix (case-insensitive, "512m"); -1 on error */
+static int spec_parse_size(const char *s, unsigned long long *out)
+{
+        char *end = NULL;
+        unsigned long long v, mul = 0, max = (unsigned long long)-1;
+
+        errno = 0;
+        v = strtoull(s, &end, 10);
+        if (end == s || *s == '\0' || errno == ERANGE)
+                return -1;
+        if (*end) {
+                if (end[1] != '\0')
+                        return -1;
+                switch (*end) {
+                case 'K': case 'k':
+                        mul = 1024ULL;
+                        break;
+                case 'M': case 'm':
+                        mul = 1024ULL * 1024ULL;
+                        break;
+                case 'G': case 'g':
+                        mul = 1024ULL * 1024ULL * 1024ULL;
+                        break;
+                default:
+                        return -1;
+                }
+                if (v > max / mul)
+                        return -1; /* would overflow */
+                v *= mul;
+        }
+        *out = v;
+        return 0;
+}
+
+/* numeric or "unlimited" (RLIM_INFINITY) */
+static int spec_parse_rlim(const char *s, rlim_t *out)
+{
+        char *end = NULL;
+        unsigned long long v;
+
+        if (!strcmp(s, "unlimited")) {
+                *out = RLIM_INFINITY;
+                return 0;
+        }
+        errno = 0;
+        v = strtoull(s, &end, 10);
+        if (end == s || *end != '\0' || errno == ERANGE ||
+            v > (unsigned long long)RLIM_INFINITY)
+                return -1;
+        *out = (rlim_t)v;
+        return 0;
+}
+
+static void spec_copy_field(int lineno, char *dst, size_t cap,
+                            const char *src)
+{
+        if (strlen(src) >= cap)
+                spec_die(lineno, "value too long for field");
+        strcpy(dst, src);
+}
+
+/* container-side paths: absolute, no ".." — bind dst and tmpfs paths are
+ * resolved under the rootfs BEFORE pivot_root, so ".." would reach
+ * OUTSIDE the rootfs and place a mount on a HOST path. Reject, don't
+ * sanitize (same fail-closed spirit as D17). */
+static void spec_check_ct_path(int lineno, const char *p)
+{
+        if (p[0] != '/')
+                spec_die(lineno, "container path must be absolute");
+        if (strstr(p, ".."))
+                spec_die(lineno, "container path must not contain '..'");
+}
+
+static void spec_no_more_args(int lineno, const char *arg)
+{
+        if (strchr(arg, ' ') || strchr(arg, '\t'))
+                spec_die(lineno, "unexpected extra argument");
+}
+
+static void spec_hostname(char *arg, int lineno)
+{
+        size_t i;
+
+        spec_no_more_args(lineno, arg);
+        if (*arg == '\0' || strlen(arg) > HOST_NAME_MAX)
+                spec_die(lineno, "hostname: need 1..64 chars");
+        for (i = 0; i < strlen(arg); i++) {
+                if (!isalnum((unsigned char)arg[i]) && arg[i] != '-' &&
+                    arg[i] != '.' && arg[i] != '_')
+                        spec_die(lineno, "hostname: invalid character "
+                                         "(use [A-Za-z0-9._-])");
+        }
+        strcpy(g_hostname, arg);
+}
+
+static void spec_env(char *arg, int lineno)
+{
+        const char *eq;
+        size_t k;
+
+        if (*arg == '\0')
+                spec_die(lineno, "env: need KEY=VALUE");
+        eq = strchr(arg, '=');
+        if (!eq || eq == arg)
+                spec_die(lineno, "env: need KEY=VALUE");
+        for (k = 0; &arg[k] < eq; k++) {
+                unsigned char c = (unsigned char)arg[k];
+
+                if (k == 0 ? (!isalpha(c) && c != '_')
+                           : (!isalnum(c) && c != '_'))
+                        spec_die(lineno, "env: KEY must match "
+                                         "[A-Za-z_][A-Za-z0-9_]*");
+        }
+        if (g_spec_env_n >= SPEC_MAX_ENTRIES)
+                spec_die(lineno, "too many env entries (cap 64)");
+        spec_copy_field(lineno, g_spec_env[g_spec_env_n], SPEC_MAX_LINE,
+                        arg);
+        g_spec_env_n++;
+}
+
+static void spec_bind(char *arg, int lineno)
+{
+        struct spec_bind *b;
+        char *sp;
+
+        spec_no_more_args(lineno, arg);
+        if (g_spec_bind_n >= SPEC_MAX_ENTRIES)
+                spec_die(lineno, "too many bind entries (cap 64)");
+        sp = strchr(arg, ':');
+        if (!sp)
+                spec_die(lineno, "bind: need <host-src>:<ct-dst>");
+        *sp = '\0';
+        b = &g_spec_bind[g_spec_bind_n];
+        b->ro = 0;
+        spec_copy_field(lineno, b->src, sizeof(b->src), arg);
+        arg = sp + 1;
+        sp = strchr(arg, ':');
+        if (sp) {
+                *sp = '\0';
+                if (strcmp(sp + 1, "ro"))
+                        spec_die(lineno, "bind: only ':ro' suffix supported");
+                b->ro = 1;
+        }
+        spec_copy_field(lineno, b->dst, sizeof(b->dst), arg);
+        if (b->src[0] != '/')
+                spec_die(lineno, "bind: host src must be absolute");
+        spec_check_ct_path(lineno, b->dst);
+        g_spec_bind_n++;
+}
+
+static void spec_webport(char *arg, int lineno)
+{
+        struct spec_relay *r;
+        char *sock = arg, *end = NULL;
+        char msg[SPEC_MAX_LINE + 64];
+        long v;
+
+        if (g_spec_web_n >= SPEC_MAX_ENTRIES)
+                spec_die(lineno, "too many webport entries (cap 64)");
+        while (*sock && *sock != ' ' && *sock != '\t')
+                sock++;
+        if (!*sock)
+                spec_die(lineno, "webport: need <port> <sockpath>");
+        *sock++ = '\0';
+        while (*sock == ' ' || *sock == '\t')
+                sock++;
+        if (strchr(sock, ' ') || strchr(sock, '\t'))
+                spec_die(lineno, "webport: unexpected extra argument");
+        v = strtol(arg, &end, 10);
+        if (!end || *end != '\0' || v < 1024 || v > 65535) {
+                snprintf(msg, sizeof(msg), "webport: bad port '%s' "
+                         "(need 1024..65535)", arg);
+                spec_die(lineno, msg);
+        }
+        if (sock[0] != '/')
+                spec_die(lineno, "webport: sockpath must be absolute in "
+                                 "the new root");
+        if (strstr(sock, ".."))
+                spec_die(lineno, "webport: sockpath must not contain '..'");
+        r = &g_spec_web[g_spec_web_n];
+        r->port = (int)v;
+        if (strlen(sock) >= sizeof(r->sock))
+                spec_die(lineno, "webport: sockpath too long for AF_UNIX");
+        strcpy(r->sock, sock);
+        g_spec_web_n++;
+}
+
+static void spec_tmpfs(char *arg, int lineno)
+{
+        struct spec_tmpfs *t;
+        char *sp;
+
+        spec_no_more_args(lineno, arg);
+        if (g_spec_tmpfs_n >= SPEC_MAX_ENTRIES)
+                spec_die(lineno, "too many tmpfs entries (cap 64)");
+        t = &g_spec_tmpfs[g_spec_tmpfs_n];
+        t->size = 0;
+        sp = strchr(arg, ':');
+        if (sp) {
+                *sp = '\0';
+                if (strncmp(sp + 1, "size=", 5))
+                        spec_die(lineno, "tmpfs: only ':size=N' option "
+                                         "supported");
+                if (spec_parse_size(sp + 6, &t->size) < 0 || t->size == 0) {
+                        char msg[96];
+
+                        snprintf(msg, sizeof(msg), "tmpfs: bad size '%s' "
+                                 "(bytes or K/M/G)", sp + 5);
+                        spec_die(lineno, msg);
+                }
+        }
+        spec_copy_field(lineno, t->path, sizeof(t->path), arg);
+        spec_check_ct_path(lineno, t->path);
+        g_spec_tmpfs_n++;
+}
+
+static void spec_shm(char *arg, int lineno)
+{
+        char msg[SPEC_MAX_LINE + 32];
+
+        spec_no_more_args(lineno, arg);
+        if (spec_parse_size(arg, &g_spec_shm_size) < 0 ||
+            g_spec_shm_size == 0) {
+                snprintf(msg, sizeof(msg), "shm: bad size '%s' "
+                         "(bytes or K/M/G)", arg);
+                spec_die(lineno, msg);
+        }
+}
+
+static void spec_ulimit(char *arg, int lineno)
+{
+        struct spec_rlimit *r;
+        char *eq, *colon;
+        int res;
+
+        spec_no_more_args(lineno, arg);
+        if (g_spec_rlimit_n >= SPEC_MAX_ENTRIES)
+                spec_die(lineno, "too many ulimit entries (cap 64)");
+        eq = strchr(arg, '=');
+        if (!eq || eq == arg)
+                spec_die(lineno, "ulimit: need <name>=<soft>[:<hard>]");
+        *eq = '\0';
+        if (!strcmp(arg, "nofile"))
+                res = RLIMIT_NOFILE;
+        else if (!strcmp(arg, "nproc"))
+                res = RLIMIT_NPROC;
+        else
+                spec_die(lineno, "ulimit: unknown resource (nofile, nproc)");
+        colon = strchr(eq + 1, ':');
+        if (colon)
+                *colon = '\0';
+        r = &g_spec_rlimit[g_spec_rlimit_n];
+        if (spec_parse_rlim(eq + 1, &r->soft) < 0)
+                spec_die(lineno, "ulimit: bad soft value");
+        r->hard = r->soft;
+        if (colon && spec_parse_rlim(colon + 1, &r->hard) < 0)
+                spec_die(lineno, "ulimit: bad hard value");
+        if (r->hard != RLIM_INFINITY && r->soft > r->hard)
+                spec_die(lineno, "ulimit: soft > hard");
+        r->res = res;
+        g_spec_rlimit_n++;
+}
+
+/* one line, in-place (we own g_spec_text) */
+static void spec_parse_line(char *line, int lineno)
+{
+        char *dir, *arg, *end;
+
+        /* leading whitespace off; '#' comments and blank lines are ignored */
+        while (*line == ' ' || *line == '\t')
+                line++;
+        if (*line == '\0' || *line == '#')
+                return;
+        /* trailing whitespace off (incl. CR from daemon-written files) */
+        end = line + strlen(line);
+        while (end > line && (end[-1] == '\n' || end[-1] == '\r' ||
+                              end[-1] == ' ' || end[-1] == '\t'))
+                *--end = '\0';
+
+        dir = line;
+        arg = line + strcspn(line, " \t");
+        if (*arg) {
+                *arg = '\0';
+                arg++;
+                while (*arg == ' ' || *arg == '\t')
+                        arg++;
+        }
+
+        if (!strcmp(dir, "hostname"))
+                spec_hostname(arg, lineno);
+        else if (!strcmp(dir, "env"))
+                spec_env(arg, lineno);
+        else if (!strcmp(dir, "bind"))
+                spec_bind(arg, lineno);
+        else if (!strcmp(dir, "webport"))
+                spec_webport(arg, lineno);
+        else if (!strcmp(dir, "tmpfs"))
+                spec_tmpfs(arg, lineno);
+        else if (!strcmp(dir, "shm"))
+                spec_shm(arg, lineno);
+        else if (!strcmp(dir, "ulimit"))
+                spec_ulimit(arg, lineno);
+        else
+                fprintf(stderr, "minict-spec: line %d: unknown directive "
+                                "'%s' — skipped\n", lineno, dir);
+}
+
+static char g_spec_text[SPEC_MAX_FILE + 1];
+
+static void load_spec_file(void)
+{
+        const char *spec = getenv("MINICT_SPEC");
+        char *p;
+        size_t off = 0;
+        int fd, lineno = 0;
+        struct stat st;
+
+        if (!spec || !*spec)
+                return; /* no spec: defaults stay (hostname "minict") */
+
+        /* host-side open: DAC is checked against the REAL uid (pre-unshare) */
+        fd = open(spec, O_RDONLY);
+        if (fd < 0)
+                die("open(MINICT_SPEC)");
+        if (fstat(fd, &st) < 0) {
+                close(fd);
+                die("fstat(MINICT_SPEC)");
+        }
+        if (!S_ISREG(st.st_mode)) {
+                close(fd);
+                fprintf(stderr, "minict-spec: %s: not a regular file\n",
+                        spec);
+                exit(125);
+        }
+        if (st.st_size > SPEC_MAX_FILE) {
+                close(fd);
+                fprintf(stderr, "minict-spec: %s: larger than 64KB cap\n",
+                        spec);
+                exit(125);
+        }
+        for (;;) {
+                ssize_t r = read(fd, g_spec_text + off,
+                                 sizeof(g_spec_text) - 1 - off);
+
+                if (r < 0) {
+                        if (errno == EINTR)
+                                continue;
+                        close(fd);
+                        die("read(MINICT_SPEC)");
+                }
+                if (r == 0)
+                        break;
+                off += (size_t)r;
+        }
+        close(fd);
+        g_spec_text[off] = '\0';
+        if (memchr(g_spec_text, '\0', off)) {
+                fprintf(stderr, "minict-spec: %s: NUL byte in spec\n", spec);
+                exit(125);
+        }
+
+        p = g_spec_text;
+        while (p) {
+                char *eol = strchr(p, '\n');
+                char *line = p;
+
+                if (eol) {
+                        *eol = '\0';
+                        p = eol + 1;
+                } else {
+                        p = NULL;
+                }
+                lineno++;
+                spec_parse_line(line, lineno);
+        }
+}
+
+/* Create <rootfs><rel> component by component WITHOUT following symlinks
+ * (R7, integration review 2026-11-18). The rootfs is a private copy the
+ * payload can write to and it PERSISTS across stop/start, so a payload can
+ * plant `ln -s /home/u/.ssh /data`; before pivot_root an absolute symlink
+ * resolves against the HOST root, and the old mkdir -p + open(O_CREAT) +
+ * mount() then created files/dirs on the host and mounted outside the
+ * rootfs. Every existing component must be a real directory (the last one
+ * a dir or regular file matching the bind source); symlinks die(). No
+ * TOCTOU: nothing runs inside this rootfs while the shim is being set up
+ * (the previous payload's pidns is gone, a new one does not exist yet). */
+static void spec_make_target(const char *rootfs, const char *rel,
+                             int want_dir)
+{
+        char path[1024];
+        size_t i, len = strlen(rootfs);
+        struct stat st;
+
+        if ((size_t)snprintf(path, sizeof(path), "%s%s", rootfs, rel) >=
+            sizeof(path))
+                die("spec path too long (build bug)");
+        for (i = len + 1;; i++) {
+                int last = (path[i] == '\0');
+
+                if (path[i] != '/' && !last)
+                        continue;
+                path[i] = '\0';
+                if (lstat(path, &st) == 0) {
+                        if (S_ISLNK(st.st_mode)) {
+                                fprintf(stderr, "minict-spec: refusing bind "
+                                        "target with symlink component: "
+                                        "%s\n", path);
+                                exit(125);
+                        }
+                        if (!last && !S_ISDIR(st.st_mode)) {
+                                fprintf(stderr, "minict-spec: bind target "
+                                        "parent is not a directory: %s\n",
+                                        path);
+                                exit(125);
+                        }
+                } else if (errno == ENOENT) {
+                        if (!last || want_dir) {
+                                if (mkdir(path, 0755) < 0)
+                                        die(path);
+                        } else {
+                                int fd = open(path, O_CREAT | O_EXCL |
+                                              O_WRONLY | O_NOFOLLOW, 0644);
+
+                                if (fd < 0)
+                                        die(path);
+                                close(fd);
+                        }
+                } else {
+                        die(path);
+                }
+                if (last)
+                        break;
+                path[i] = '/';
+        }
+}
+
+/* mkdir -p for paths INSIDE the new root (after pivot_root: the host is
+ * unreachable, so following symlinks can only land inside the instance) */
+static void spec_mkdir_p(const char *base, const char *rel)
+{
+        char path[1024];
+        size_t i, len = strlen(base);
+
+        if ((size_t)snprintf(path, sizeof(path), "%s%s", base, rel) >=
+            sizeof(path))
+                die("spec path too long (build bug)");
+        for (i = len + 1; path[i]; i++) {
+                if (path[i] == '/') {
+                        path[i] = '\0';
+                        mkdir(path, 0755);
+                        path[i] = '/';
+                }
+        }
+        mkdir(path, 0755);
+}
+
+/* Host paths are only visible between setup_dev_binds() and pivot_root —
+ * the ONLY window where a bind into the rootfs can be established (same
+ * reason the /dev binds happen there). A bind that fails to establish
+ * means the container is silently NOT what the operator asked for, so
+ * die() — unlike the tmpfs mounts below, which are additive service. */
+static void apply_spec_binds(const char *rootfs)
+{
+        int i;
+
+        for (i = 0; i < g_spec_bind_n; i++) {
+                struct spec_bind *b = &g_spec_bind[i];
+                char dst[1024], why[1280];
+                struct stat sst;
+
+                if ((size_t)snprintf(dst, sizeof(dst), "%s%s", rootfs,
+                                     b->dst) >= sizeof(dst))
+                        die("spec bind dst too long (build bug)");
+                snprintf(why, sizeof(why), "spec bind %s -> %s%s", b->src,
+                         b->dst, b->ro ? " (:ro)" : "");
+                if (stat(b->src, &sst) < 0)
+                        die(why);
+                /* dir source -> dir target, anything else -> file target */
+                spec_make_target(rootfs, b->dst, S_ISDIR(sst.st_mode));
+                if (mount(b->src, dst, NULL, MS_BIND | MS_REC, NULL) < 0)
+                        die(why);
+                /* one mount() with MS_BIND|MS_RDONLY is NOT read-only: the
+                 * kernel ignores MS_RDONLY on the bind step itself — a
+                 * second bind-remount applies it (mount(2) semantics).
+                 * NOTE: only the top mount becomes ro; submounts of a
+                 * recursive bind keep their flags (open gap, GAPS.md). */
+                if (b->ro &&
+                    mount(NULL, dst, NULL,
+                          MS_BIND | MS_REC | MS_REMOUNT | MS_RDONLY,
+                          NULL) < 0)
+                        die(why);
+        }
+}
+
+/* extra tmpfs + /dev/shm (D23): same posture as the /tmp mount above —
+ * warn, don't die, because mount(2) can be blocked by the HOST seccomp
+ * filter in this environment (measured 2026-11-17). A missing tmpfs is
+ * degraded service, not a silently-wrong container; binds above differ
+ * because a missing bind IS one. Runs in the shim BEFORE relay spawn so
+ * the relays see the same fs the payload will. */
+static void apply_spec_tmpfs(void)
+{
+        int i;
+
+        for (i = 0; i < g_spec_tmpfs_n; i++) {
+                struct spec_tmpfs *t = &g_spec_tmpfs[i];
+                char data[64];
+                const char *dp = NULL;
+
+                spec_mkdir_p("", t->path);
+                if (t->size > 0) {
+                        snprintf(data, sizeof(data), "size=%llu", t->size);
+                        dp = data;
+                }
+                if (mount("tmpfs", t->path, "tmpfs", MS_NOSUID | MS_NODEV,
+                          dp) < 0)
+                        warn(t->path); /* context = the path + errno */
+        }
+        if (g_spec_shm_size > 0) {
+                char data[64];
+
+                mkdir("/dev/shm", 0755); /* new root may lack it */
+                snprintf(data, sizeof(data), "size=%llu", g_spec_shm_size);
+                if (mount("tmpfs", "/dev/shm", "tmpfs",
+                          MS_NOSUID | MS_NODEV, data) < 0)
+                        warn("spec mount /dev/shm");
+        }
+}
+
+/* setrlimit BEFORE drop_all_caps(): raising the hard limit needs
+ * CAP_SYS_RESOURCE and we hold the full set in our own userns until
+ * capdrop — after it, limits can only be lowered. die() on failure: an
+ * ulimit that silently didn't apply is a config lie. */
+static void apply_spec_rlimits(void)
+{
+        int i;
+
+        for (i = 0; i < g_spec_rlimit_n; i++) {
+                struct rlimit rl;
+
+                rl.rlim_cur = g_spec_rlimit[i].soft;
+                rl.rlim_max = g_spec_rlimit[i].hard;
+                if (setrlimit(g_spec_rlimit[i].res, &rl) < 0)
+                        die("setrlimit (spec ulimit)");
         }
 }
 
@@ -664,6 +1297,9 @@ int main(int argc, char **argv)
                 die("PR_SET_NO_NEW_PRIVS");
 
         load_web_relay_env();
+        /* MINICT_SPEC (D23): read+parse host-side BEFORE unshare — DAC
+         * against the real uid, and parse errors abort before any ns work */
+        load_spec_file();
 
         /* one-shot namespace creation; netns ON by default (D17), fail-closed
          * — no silent fallback to the shared host network namespace */
@@ -691,6 +1327,11 @@ int main(int argc, char **argv)
                 die("rootfs MS_REC|MS_PRIVATE");
 
         setup_dev_binds(rootfs);
+
+        /* spec binds (D23): host paths are still visible here, and the
+         * mounts must exist BEFORE pivot_root — this window is the only
+         * chance (same reasoning as setup_dev_binds above) */
+        apply_spec_binds(rootfs);
 
         /* unique put_old dir per invocation => safe concurrent instances */
         snprintf(olddir, sizeof(olddir), "%s/old-%d", rootfs, (int)getpid());
@@ -741,7 +1382,7 @@ int main(int argc, char **argv)
                 setpgid(0, 0); /* own process group for tree-wide signals */
                 if (prctl(PR_SET_PDEATHSIG, SIGKILL) < 0)
                         warn("PR_SET_PDEATHSIG");
-                if (sethostname("minict", 6) < 0)
+                if (sethostname(g_hostname, strlen(g_hostname)) < 0)
                         warn("sethostname");
                 /* /proc is blocked by the HOST seccomp filter in this env;
                  * on a normal kernel this succeeds and gives pidns proc */
@@ -750,11 +1391,12 @@ int main(int argc, char **argv)
                 if (mount("tmpfs", "/tmp", "tmpfs", MS_NOSUID | MS_NODEV,
                           NULL) < 0)
                         warn("mount /tmp (child)");
+                apply_spec_tmpfs(); /* spec tmpfs + /dev/shm (D23) */
 
-                /* in-sandbox unix-socket relay BEFORE capdrop/seccomp so it
-                 * can bind the socket and (not) inherit the filter (D16) */
-                if (g_web_port > 0)
-                        spawn_web_relay();
+                /* in-sandbox unix-socket relays BEFORE capdrop/seccomp so
+                 * they can bind the sockets and (not) inherit the filter
+                 * (D16 env pair + D24 spec webports) */
+                spawn_web_relay();
 
                 /* block the forwardable signals around the payload fork so
                  * one racing fork->g_payload_pid is QUEUED, not lost; they
@@ -805,6 +1447,8 @@ int main(int argc, char **argv)
                                         signal(rst[k], SIG_DFL);
                         }
 
+                        apply_spec_rlimits(); /* setrlimit BEFORE capdrop (D23) */
+
                         drop_all_caps(); /* after ALL privileged work is done */
 
                         install_seccomp(); /* last lock: blocklist, before exec */
@@ -813,6 +1457,21 @@ int main(int argc, char **argv)
                         setenv("HOME", "/", 1);
                         setenv("PS1", "minict> ", 1);
                         setenv("MINICT", "1", 1);
+
+                        {
+                                int e;
+
+                                /* spec env LAST with overwrite=1: the
+                                 * operator's spec wins over the defaults
+                                 * above (D23) */
+                                for (e = 0; e < g_spec_env_n; e++) {
+                                        char *eq = strchr(g_spec_env[e], '=');
+
+                                        *eq = '\0'; /* parser guarantees '=' */
+                                        setenv(g_spec_env[e], eq + 1, 1);
+                                        *eq = '=';
+                                }
+                        }
 
                         execvp(cmd[0], cmd);
                         fprintf(stderr, "minict: exec %s: %s\n", cmd[0],
