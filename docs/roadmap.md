@@ -26,6 +26,17 @@
 5. Ghi `journal/YYYY-MM-DD/daily-log.md` (quy tắc thư mục: PROMPT.MD §10)
 
 ## Đã xong
+- [x] 2026-11-18 (phiên 3, SDDA): **S1 — webproxy host bridge kháng symlink**
+  (issue #41, type:security p1): `tools/webproxy.py` resolve relay socket
+  fail-closed per-connection — openat `O_NOFOLLOW` từng thành phần + `O_PATH`/
+  `S_ISSOCK` thành phần cuối + connect qua `/proc/self/fd/<n>` pin inode
+  (TOCTOU-free; pattern CVE-2018-15664/CWE-59; 4 nguồn verified, D31); callers
+  `minict.sh` + minictd `spawnProxies` đổi `--root/--sock`; test WEB7–WEB9
+  (suite web 6→9) + mutant matrix M1/M2/M3 — mỗi mutant bị đúng test nó bắt;
+  regression 4 suite 56/56 ×2; perf 1.80 ms / 1204 kB / 2.04 MB PASS (host-side,
+  cold path không đổi); `minictd/docs/GAPS.md` S1 FIXED (residual: Go bridge
+  dùng pattern tương tự khi GĐ2; payload-rebind same-path = low, không escape).
+  (#41/#42)
 - [x] 2026-11-18 (owner bàn giao, tích hợp + review): **minictd — GĐ2 seed gộp sớm**
   (ngoại lệ manifest §8, owner chốt D27: **GĐ1 vẫn là giai đoạn hiện tại**,
   minictd chỉ sửa bảo mật + giữ xanh). Gồm: `MINICT_SPEC` trong `sandbox/minict.c`
