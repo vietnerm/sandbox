@@ -19,12 +19,25 @@
 2. B — Develop prototype (web service trong sandbox, đo startup/RAM)
 3. C — CVE check: `python3 tools/cve-check.py --json journal/$(date +%F)/cve/<slug>.json`
    + cập nhật `docs/cve-watchlist.md`
-4. D — No-Compromise Validation: `make test` (isolation 20 + seccomp 20 + netns 7,
-   pipefail thật — issue #14) + `make test-web` + lưu evidence vào `journal/YYYY-MM-DD/evidence/`
+4. D — No-Compromise Validation: `make test` (isolation 21 + seccomp 20 + netns 7 +
+   alpine 8, pipefail thật — issue #14) + `make test-web` + `make test-minictd`
+   (20, từ 2026-11-18) + lưu evidence vào `journal/YYYY-MM-DD/evidence/`
    + integrity check host
 5. Ghi `journal/YYYY-MM-DD/daily-log.md` (quy tắc thư mục: PROMPT.MD §10)
 
 ## Đã xong
+- [x] 2026-11-18 (owner bàn giao, tích hợp + review): **minictd — GĐ2 seed gộp sớm**
+  (ngoại lệ manifest §8, owner chốt D27: **GĐ1 vẫn là giai đoạn hiện tại**,
+  minictd chỉ sửa bảo mật + giữ xanh). Gồm: `MINICT_SPEC` trong `sandbox/minict.c`
+  (D23: hostname/env/bind[:ro]/tmpfs/shm/ulimit, fail-closed) + multi-webport (D24);
+  `minict-exec` exec bằng **setns** vào instance đang chạy + cài lại seccomp (D25 —
+  gate GĐ2 đo được trên kernel 6.18 uid 1001); daemon Go `minictd/` (14 op contract
+  sandboxd, state machine, flock, HTTP API + client). Review tích hợp sửa 7 lỗi
+  R1–R7 (path traversal tên, rò env daemon vào sandbox, auth mặc định tắt, bind
+  theo symlink ra host…, D26). Suite mới `tests/test_minictd.sh` 20 case
+  (`make test-minictd`, có trong CI); cùng suite trên gói gốc → 6 đỏ (negative
+  control). Regression: 4 suite cũ 56/56 + web 6/6, cold start +0.1 ms (nhiễu).
+  Còn mở: CG1, G3, A2, S1–S6 (`minictd/docs/GAPS.md`).
 - [x] 2026-11-17 (phiên 8, SDDA): **rootfs Alpine minirootfs 3.22.8** — distro thật
   boot được trong minict giữ nguyên isolation (D20): `sandbox/mkrootfs-alpine.sh`
   (pin version + sha256 verify CDN, tar non-root `--no-same-owner` = fakeroot tự
@@ -113,13 +126,26 @@
    distro; `./sandbox up|down|bench` một lệnh; cold start stack < 5 s;
    signal lifecycle graceful đã có từ phiên 7 (D19).
 
-## Giai đoạn 2 — Control plane + storage (KẾ TIẾP, chưa mở code)
+## Giai đoạn 2 — Control plane + storage (KẾ TIẾP; có "seed" minictd, chưa mở việc mới)
 
-0. **GATE research:** exec vào instance đang chạy rootless (daemon giữ caps trong
-   userns nó tạo → setns từ phía daemon, mô hình RootlessKit/podman exec). Đo
-   trên runner rồi mới mở GĐ2 (issue mở khi GĐ1 còn ≤ 1 mục).
-1. Daemon user-level (systemd `--user`) + REST API + CLI `sandbox`:
-   create/start/stop/destroy/list/exec; state machine; instance tồn tại qua reboot.
+> **Luật D27 (owner, 2026-11-18):** SDDA **không chọn** mục GĐ2 nào dưới đây khi GĐ1
+> còn mục mở. Với `minictd/` chỉ được: sửa lỗi bảo mật (S1–S6, issue `type:security`),
+> giữ `make test-minictd` xanh, và cập nhật khi thay đổi GĐ1 làm vỡ nó.
+
+0. **GATE research:** exec vào instance đang chạy rootless — **đo được 2026-11-18**
+   (D25, `minict-exec` setns, MD5–MD13; container kernel 6.18). Còn: xác nhận trên
+   runner CI (job `test-minictd`).
+1. Daemon user-level + REST API: **seed có** (`minictd`, state machine
+   creating/running/stopped, flock, liveness chống pid-reuse). Còn thiếu cho DoD:
+   systemd `--user` unit, CLI `sandbox`, instance tồn tại qua reboot (autostart),
+   reconcile loop định kỳ (A3). API hiện theo contract sandboxd (docker-shaped).
+   - **CG1** quota qua cgroups v2 (Memory/CPUs/pids — hiện chỉ Notes + rlimit nproc
+     theo uid, S2) → gộp với mục 5.
+   - **G3** preview: Traefik file provider `s-<id>.<domain>` → `127.0.0.1:<port>` +
+     wake probe theo port host (BridgeIP luôn rỗng) → gộp với mục 4.
+   - **A2** image `oci:` (crane) đã code, **chưa test**.
+   - **S1** webproxy đi theo socket bị thay bằng symlink trong rootfs (có từ D16) —
+     sửa được ngay cả trong GĐ1 vì là bảo mật.
 2. Template: instance từ template; lưu instance thành template.
 3. Storage: overlayfs rootless + idmapped mounts (thay private copy 2 MB/instance);
    snapshot/backup/restore (overlay layer + tar.zst).
@@ -159,8 +185,8 @@
 - [ ] nginx/caddy + API (Node/Python/Go) + SQLite/Postgres + Redis trong sandbox
 - [x] không Docker, không root (bất biến từ PoC — mọi test chạy uid 1001)
 - [ ] cold start toàn stack < 5s; RAM idle < 300MB
-- [x] escape test cơ bản pass (isolation 20/20 + seccomp 20/20 + netns 7/7, pipefail thật;
-  signal lifecycle graceful từ phiên 7)
+- [x] escape test cơ bản pass (isolation 21/21 + seccomp 20/20 + netns 7/7 + alpine 8/8,
+  pipefail thật; signal lifecycle graceful từ phiên 7; đếm lại 2026-11-18)
 - [ ] `./sandbox up|down|bench` một lệnh
 - **Tiến độ: 2/5** (mục 2 và 4).
 - Lưu ý sửa sai đếm cũ ("5/5 mục phụ đã có nền"): web tĩnh busybox + seccomp +

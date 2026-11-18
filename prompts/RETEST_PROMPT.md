@@ -55,13 +55,13 @@ Ghi: warning của compiler, kích thước `sandbox/minict`, `du -sh rootfs`. N
 
 #### R3 — Chạy suite N lần
 ```bash
-for i in $(seq 1 $RUNS); do make test > retest/logs/suites-$i.txt 2>&1; echo "rc=$?" >> retest/logs/suites-$i.txt; make test-web > retest/logs/web-$i.txt 2>&1; echo "rc=$?" >> retest/logs/web-$i.txt; done
+for i in $(seq 1 $RUNS); do make test > retest/logs/suites-$i.txt 2>&1; echo "rc=$?" >> retest/logs/suites-$i.txt; make test-web > retest/logs/web-$i.txt 2>&1; echo "rc=$?" >> retest/logs/web-$i.txt; make test-minictd > retest/logs/minictd-$i.txt 2>&1; echo "rc=$?" >> retest/logs/minictd-$i.txt; done
 ```
 Nếu có file `tests/test_*.sh` không nằm trong `make test`/`make test-web`, chạy thêm theo cùng cách. Parse từng dòng `<ID> <desc> <verdict>` thành bảng. Một case là:
 - `stable_pass` / `stable_fail` nếu cùng kết quả cả N lần,
 - `flaky` nếu dao động → luôn báo cáo, không được gộp vào PASS.
 
-So với baseline trong `docs/roadmap.md` (2026-11-17: isolation 17 + seccomp 20 + netns 7 + web 6). Case biến mất, đổi tên, hoặc đổi expect → liệt kê trong `diff_vs_baseline`. Chạy mọi suite qua `make test` và `make test-web`.
+So với baseline trong `docs/roadmap.md` (2026-11-18: isolation 21 + seccomp 20 + netns 7 + alpine 8 + web 6 + minictd 20; `make test-minictd` cần Go ≥ 1.23 — thiếu Go thì lấy kết quả job CI cùng SHA và ghi nguồn). Case biến mất, đổi tên, hoặc đổi expect → liệt kê trong `diff_vs_baseline`. Chạy mọi suite qua `make test` và `make test-web`.
 
 #### R4 — Negative control (bắt buộc — chứng minh test không rỗng)
 Tạo các bản minict hỏng trong `retest/mutants/`, chạy lại suite với `MINICT=<mutant>` (sửa đường dẫn bằng bản sao test trong `retest/`, không sửa file gốc). Mỗi mutant **phải làm ít nhất 1 test liên quan FAIL**; nếu suite vẫn xanh → test liên quan bị đánh dấu `vacuous`.
@@ -73,6 +73,10 @@ Tạo các bản minict hỏng trong `retest/mutants/`, chạy lại suite với
 | M2 no-capdrop | bỏ khối drop capability | FS4, FS5 |
 | M3 no-nnp | bỏ `PR_SET_NO_NEW_PRIVS` | NNP1 |
 | M4 no-pidns | bỏ `CLONE_NEWPID` | PID1, PID2, SIG1 |
+| M5 exec-no-seccomp | `minict-exec.c`: bỏ lời gọi `install_seccomp()` trong child | MD9 |
+| M6 exec-env-leak | `minictd`: `childEnv()` trả `os.Environ()` | MD10 |
+| M7 bind-follow | `minict.c`: `spec_make_target` bỏ nhánh `S_ISLNK` | MD17 |
+| M8 seccomp-drift | xoá 1 syscall khỏi `g_blocklist` của `minict-exec.c` | MD0 |
 | M5 no-utsns | bỏ `CLONE_NEWUTS` / sethostname | HOST1 |
 
 Tạo mutant bằng `sed`/`#ifdef` trên **bản sao** `minict.c` trong `retest/`, build ra binary riêng. Nếu một mutant không build được, ghi `mutant_build_failed` (không tính là test rỗng).

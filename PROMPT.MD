@@ -29,7 +29,7 @@ Bạn (ZAI) **tự chạy trọn chu trình** mà không chờ người: dọn P
 - **Nhẹ**: mỗi PR phải kèm số đo `cold_start_ms`, `rss_kb`, `disk_base_mb`. Nếu vượt ngưỡng (cold start > 100 ms, RSS > 10 MB, disk > 20 MB), phải giải trình rõ trong PR description, nếu không sẽ bị `perf-guard` chặn.
 - **Full service web**: mọi thay đổi phải giữ được khả năng chạy ít nhất một web server thật (hoặc không làm hỏng test `tests/test_web.sh`).
 - **CVE kernel mỗi ngày là bắt buộc** — không có ngoại lệ.
-- **Không phá vỡ test hiện có**: 50 test PASS là baseline (isolation 17 + seccomp 20 + netns 7 + web 6) và CI phải xanh **THẬT** (workflow khai `shell: bash` để có pipefail — run #20 đã xanh giả vì thiếu nó, issue #14).
+- **Không phá vỡ test hiện có**: 82 test PASS là baseline (đếm lại 2026-11-18: isolation 21 + seccomp 20 + netns 7 + alpine 8 + web 6 + minictd 20) và CI phải xanh **THẬT** (workflow khai `shell: bash` để có pipefail — run #20 đã xanh giả vì thiếu nó, issue #14).
 - **Không merge nếu CI đỏ** — bất kỳ lý do nào. CI xanh giả (exit code bị pipe nuốt) bị coi là ĐỎ.
 
 ---
@@ -100,7 +100,8 @@ docs(roadmap): update priority after netns landed
 **Yêu cầu bắt buộc cho mỗi PR:**
 - Có ít nhất **1 test mới** trong `tests/` (unit hoặc integration), chạy được bằng `make test`.
 - Ghi quyết định vào `journal/YYYY-MM-DD/decisions/<slug>.md` (`<slug>` = slug của nhánh; lý do chọn giải pháp, mã quyết định `D<n>` tiếp nối số lớn nhất đã có trong toàn bộ `journal/`).
-- Nếu thay đổi ảnh hưởng bảo mật → thêm test vào suite liên quan trong `tests/` (`test_isolation.sh`, `test_seccomp.sh`, `test_netns.sh`, ...).
+- Nếu thay đổi ảnh hưởng bảo mật → thêm test vào suite liên quan trong `tests/` (`test_isolation.sh`, `test_seccomp.sh`, `test_netns.sh`, `test_minictd.sh` cho control-plane, ...).
+- Đụng tới `install_seccomp()`/blocklist trong `sandbox/minict.c` → sửa **cùng lúc** bản sao trong `minictd/cmd/minict-exec/minict-exec.c` (filter không đi qua setns, D25); test MD0 đỏ nếu hai bản lệch.
 - Nếu thay đổi hiệu năng → cập nhật số đo trong `docs/perf-baseline.md`.
 
 #### Bước 6 — CVE Check (30 phút, bắt buộc kể cả khi không làm gì khác)
@@ -118,6 +119,7 @@ python3 tools/cve-check.py --kernel $(uname -r) --watchlist docs/cve-watchlist.m
 ```bash
 make test-escape 2>&1 | tee journal/$(date +%F)/evidence/<slug>.txt   # mọi suite + test mới
 make test-web             # nếu đã có web service
+make test-minictd         # control-plane minictd (20 case, cần Go ≥ 1.23)
 sha256sum /etc/passwd /etc/shadow /bin/bash /usr/bin/sudo > /tmp/host-baseline.txt  # so với hôm qua
 ss -tlnp | grep -v '^State'   # kiểm tra listener lạ
 ```
@@ -157,8 +159,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: make build
-      - run: make test            # isolation 17 + seccomp 20 + netns 7, luôn chạy đủ suite
+      - run: make test            # isolation 21 + seccomp 20 + netns 7 + alpine 8, luôn chạy đủ suite
       - run: make test-web        # 6 case web service
+      - uses: actions/setup-go@v5 # go-version: stable (stdlib vá mới nhất)
+      - run: make test-minictd    # 20 case control-plane (D25/D26)
       - run: make perf-check      # cold_start, rss, disk
 ```
 
@@ -302,8 +306,9 @@ Nếu **bất kỳ** mục nào fail → ghi rõ lý do trong daily-log, mở is
 
 Trước khi kết thúc, chạy:
 ```bash
-make test                  # isolation 17 + seccomp 20 + netns 7 (luôn chạy đủ suite)
+make test                  # isolation 21 + seccomp 20 + netns 7 + alpine 8 (luôn chạy đủ suite)
 make test-web
+make test-minictd
 python3 tools/cve-check.py --kernel $(uname -r) --watchlist docs/cve-watchlist.md
 gh pr checks
 ```
@@ -319,6 +324,9 @@ Nếu tất cả xanh → ghi "DAY PASS" vào cuối daily-log. Nếu có đỏ 
 2. Còn lại: mục thấp nhất **chưa xong** của **giai đoạn hiện tại** trong `docs/roadmap.md`
    (giai đoạn hiện tại + thứ tự mục nằm ngay mục "Giai đoạn N" của file đó; hướng
    tổng thể 5 giai đoạn xem `idea/manifest.md` §7).
+
+**minictd (GĐ2 seed, D27):** không chọn việc GĐ2 trên `minictd/` khi GĐ1 còn mục
+mở — chỉ sửa bảo mật (S1–S6 trong `minictd/docs/GAPS.md`) và giữ `make test-minictd` xanh.
 
 Khi roadmap trống hoặc không khả thi (mọi mục bị chặn môi trường/owner), mở issue
 `type:chore` `area:docs` đề xuất cập nhật `docs/roadmap.md` — không tự chế việc mới
@@ -381,7 +389,7 @@ Thứ tự PR: `sec/*` → `fix/*` → `feat/*` → `perf/*` → `test/*` → `d
   - `journal/**/daily-log.md`, `journal/**/research.md`: giữ **cả hai** phần, xếp theo thứ tự phiên/thời gian.
   - `docs/roadmap.md` mục "Đã xong", `docs/perf-baseline.md` bảng lịch sử, `docs/cve-watchlist.md`: giữ **cả hai** dòng/mục; số tổng (vd. số test) lấy theo trạng thái sau khi gộp cả hai.
   - `journal/**/evidence/*`, `journal/**/cve/*`: không bao giờ sửa nội dung; nếu trùng tên → đổi tên file của PR (thêm hậu tố `-2`).
-  - Xung đột trong **code** (`sandbox/`, `tests/`, `tools/`, `Makefile`, workflow): giải nếu hiểu chắc cả hai phía, chạy lại `make test`; không chắc → PR này KEEP `conflict_code`, mở issue `type:chore`, sang PR khác.
+  - Xung đột trong **code** (`sandbox/`, `minictd/`, `tests/`, `tools/`, `Makefile`, workflow): giải nếu hiểu chắc cả hai phía, chạy lại `make test`; không chắc → PR này KEEP `conflict_code`, mở issue `type:chore`, sang PR khác.
   - Commit: `chore(merge): sync main into <branch>`. Push, chờ CI xong trên head mới.
 - **B2 — Đóng vai SCR** (`prompts/RETEST_PROMPT.md`) trên head SHA hiện tại. Đăng kết quả thành **một comment trên PR** mở đầu đúng dòng `=== SCR RETEST — <sha7> on <kernel> ===`. Suite nào môi trường của bạn không chạy được (mạng chặn, thiếu quyền) → lấy kết quả từ log CI của đúng SHA đó và ghi rõ nguồn.
 - **B3 — Đóng vai SIA** (`prompts/AUDIT_PROMPT.md`) trên cùng SHA. Luật độc lập khi tự audit việc của mình:

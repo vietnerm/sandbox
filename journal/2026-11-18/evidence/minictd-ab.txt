@@ -1,0 +1,60 @@
+# minictd A/B — same suite (tests/test_minictd.sh) against the handoff as delivered
+# (minict.c + minict-spec.patch, minictd + minict-exec unmodified), kernel 6.18.44-fc-v595, uid 1001
+# expected: the cases guarding R1-R7 go red on the handoff code (negative control)
+=== minictd e2e tests (2026-11-18 04:31:54) — api :17844, web :19817 ===
+MD0   seccomp blocklist identical: minict.c vs minict-exec.c       PASS
+MD3   daemon refuses to start without a token                      FAIL
+      output:  
+MD1   /healthz with token -> 200                                   PASS
+MD2   request without token -> 401                                 FAIL
+      output:  
+MD4   Run + Inspect -> running                                     PASS
+MD5   exec via setns sees spec hostname                            PASS
+MD6   exec shares payload mount ns (/tmp marker visible)           PASS
+MD7   spec env -> payload, request env -> exec                     PASS
+MD8   bind :ro visible and not writable                            PASS
+MD9   seccomp in exec: unshare -U -> EPERM                         PASS
+MD10  daemon env/token NOT leaked into payload or exec             FAIL
+      output:  
+MD11  exec timeout -> 124 + timed_out                              PASS
+MD12  exec stdin passthrough                                       PASS
+MD13  execstream NDJSON stdout + single exit frame                 PASS
+MD14  preview webport: host curl -> httpd in netns                 PASS
+MD15  path-traversal name -> 400, outside untouched                FAIL
+      output:  
+MD16  Stop -> Start keeps rootfs changes                           PASS
+MD17  symlinked bind target -> Start refused, host untouched       FAIL
+      output:  
+MD18  exec on stopped -> 409, unknown -> 404                       FAIL
+      output:  
+MD19  Remove -> dir gone, no instance processes                    PASS
+=== summary: PASS=14 FAIL=6 ===
+--- daemon log (tail) ---
+time=2026-11-18T04:31:57.957Z level=INFO msg=http method=GET path=/v1/sandboxes/md-a dur_ms=0
+time=2026-11-18T04:31:58.081Z level=INFO msg="minictd start" name=md-a pid=8208
+time=2026-11-18T04:31:58.081Z level=INFO msg=http method=POST path=/v1/sandboxes/md-a/start dur_ms=101
+time=2026-11-18T04:31:58.592Z level=INFO msg=http method=POST path=/v1/sandboxes/md-a/execv2 dur_ms=3
+time=2026-11-18T04:31:58.620Z level=INFO msg="minictd run" name=md-b pid=8229 image=base ports=[]
+time=2026-11-18T04:31:58.620Z level=INFO msg=http method=POST path=/v1/run dur_ms=1
+time=2026-11-18T04:31:58.929Z level=WARN msg="payload exited" name=md-b pid=8229 err="exit status 143"
+time=2026-11-18T04:31:58.978Z level=INFO msg="minictd stop" name=md-b timeout_sec=1
+time=2026-11-18T04:31:58.978Z level=INFO msg=http method=POST path=/v1/sandboxes/md-b/stop dur_ms=50
+time=2026-11-18T04:31:58.988Z level=INFO msg="minictd start" name=md-b pid=8240
+time=2026-11-18T04:31:58.988Z level=INFO msg=http method=POST path=/v1/sandboxes/md-b/start dur_ms=0
+time=2026-11-18T04:31:59.495Z level=INFO msg=http method=GET path=/v1/sandboxes/md-b dur_ms=0
+time=2026-11-18T04:31:59.525Z level=INFO msg=http method=POST path=/v1/sandboxes/md-b/execv2 dur_ms=3
+time=2026-11-18T04:31:59.536Z level=WARN msg="payload exited" name=md-a pid=8208 err="exit status 143"
+time=2026-11-18T04:31:59.585Z level=WARN msg="webproxy exited" name=md-a port=19817 pid=8209 err="signal: terminated"
+time=2026-11-18T04:31:59.635Z level=INFO msg="minictd remove" name=md-a
+time=2026-11-18T04:31:59.635Z level=INFO msg=http method=POST path=/v1/sandboxes/md-a/remove dur_ms=101
+time=2026-11-18T04:31:59.642Z level=WARN msg="payload exited" name=md-b pid=8240 err="exit status 143"
+time=2026-11-18T04:31:59.692Z level=INFO msg="minictd remove" name=md-b
+time=2026-11-18T04:31:59.692Z level=INFO msg=http method=POST path=/v1/sandboxes/md-b/remove dur_ms=50
+
+# manual probe on the handoff code (R7): bind dst /evil/x, rootfs/evil swapped for a symlink
+# to a host dir while stopped, then Start:
+host target after Start:
+drwxr-xr-x 2 tester tester 4096 Nov 18 04:29 x     <- created OUTSIDE the instance rootfs
+# manual probe on the handoff code (R2): daemon started with LEAKME=secret-xyz,
+# execv2 /bin/env -> stdout began 'LEAKME=secret-xyz\n...' followed by the daemon's whole
+# environment (proxy settings, session ids — redacted here)

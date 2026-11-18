@@ -1,0 +1,24 @@
+# minictd e2e — AFTER integration fixes (branch feat/minictd-control-plane)
+# host: kernel 6.18.44-fc-v595, uid 1001 (unprivileged), busybox 1.36.1 rootfs, go go1.24.7
+=== minictd e2e tests (2026-11-18 04:31:48) — api :17611, web :19463 ===
+MD0   seccomp blocklist identical: minict.c vs minict-exec.c       PASS
+MD3   daemon refuses to start without a token                      PASS
+MD1   /healthz with token -> 200                                   PASS
+MD2   request without token -> 401                                 PASS
+MD4   Run + Inspect -> running                                     PASS
+MD5   exec via setns sees spec hostname                            PASS
+MD6   exec shares payload mount ns (/tmp marker visible)           PASS
+MD7   spec env -> payload, request env -> exec                     PASS
+MD8   bind :ro visible and not writable                            PASS
+MD9   seccomp in exec: unshare -U -> EPERM                         PASS
+MD10  daemon env/token NOT leaked into payload or exec             PASS
+MD11  exec timeout -> 124 + timed_out                              PASS
+MD12  exec stdin passthrough                                       PASS
+MD13  execstream NDJSON stdout + single exit frame                 PASS
+MD14  preview webport: host curl -> httpd in netns                 PASS
+MD15  path-traversal name -> 400, outside untouched                PASS
+MD16  Stop -> Start keeps rootfs changes                           PASS
+MD17  symlinked bind target -> Start refused, host untouched       PASS
+MD18  exec on stopped -> 409, unknown -> 404                       PASS
+MD19  Remove -> dir gone, no instance processes                    PASS
+=== summary: PASS=20 FAIL=0 ===
