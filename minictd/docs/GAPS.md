@@ -113,7 +113,7 @@ same suite is red on the handoff as delivered (negative control).
 
 | ID | Gap | Why it matters | Plan |
 |---|---|---|---|
-| S1 | host `webproxy.py` connects to `<rootfs>/.minict-proxy-<port>.sock`, a path the payload can replace with a symlink to any host unix socket of the same uid (dbus, ssh-agent…) | preview clients could reach host-side sockets | pre-existing D16 design; move relay sockets to a daemon-owned dir bind-mounted into the instance, or `lstat`+`SO_PEERCRED` check before connect |
+| S1 | host `webproxy.py` connects to `<rootfs>/.minict-proxy-<port>.sock`, a path the payload can replace with a symlink to any host unix socket of the same uid (dbus, ssh-agent…) | preview clients could reach host-side sockets | **FIXED 2026-11-18 (issue #41, D31, PR `sec/s1-webproxy-symlink`)**: host bridge resolves the socket symlink-proof — openat chain `O_NOFOLLOW` per component + final `O_PATH`+`S_ISSOCK` + `connect("/proc/self/fd/<n>")` (TOCTOU-free), per connection, fail-closed; WEB7–WEB9 + mutant matrix. Residual: the minictd Go bridge must reuse the same pattern when GĐ2 opens |
 | S2 | `ulimit nproc` / `PidsLimit` is per **host uid**, shared by all instances and the user's own processes | small limits break unrelated instances; large ones bound nothing | CG1 (`pids.max` via cgroup delegation) |
 | S3 | `bind …:ro` remounts only the top mount; submounts of a recursive bind stay rw | ro bind of a tree with mounts inside is partially writable | iterate submounts or `mount_setattr(AT_RECURSIVE)` (kernel ≥ 5.12) |
 | S4 | API is plain HTTP; bearer token in clear on anything but loopback | multi-node (VPS cluster goal) needs transport security | unix-socket listener or TLS before any non-loopback use |

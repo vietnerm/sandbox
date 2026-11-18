@@ -11,6 +11,12 @@
 #   WEB5  HTTP error path answers (404 for missing file), not a crash
 #   WEB6  down -> port closed, no leaked processes, pid file cleaned
 #
+# S1 block (issue #41, D31 — CWE-59 link following on the host bridge):
+#   WEB7  relay socket replaced by symlink -> proxy refuses (fail-closed)
+#   WEB8  relay socket symlinked to an ATTACKER host socket -> zero leak
+#   WEB9  resolver standalone: ancestor-dir symlink blocked, positive
+#         control proves openat-chain + /proc/self/fd connect works
+#
 # Exit code: 0 if all expected results hold, 1 otherwise.
 set -u
 
@@ -93,6 +99,163 @@ run_case WEB5 "missing file -> 404, server stays alive" pass \
     sh -c "[ \"\$(curl -s -m 5 -o /dev/null -w '%{http_code}' \
              http://127.0.0.1:$PORT/no-such-file.html)\" = 404 ] \
              && curl -s -m 5 http://127.0.0.1:$PORT/ | grep -q minict-web"
+
+# ---------- S1: webproxy socket symlink hardening (issue #41, D31) ----------
+# Each e2e tamper case destroys the relay socket (the relay binds it once),
+# so WEB8 and WEB7 each get a FRESH instance; order matters and both must
+# run before WEB6-style teardowns. Symlinks are made with python os.symlink
+# so the suite never depends on shell quirks around ln.
+NAME2="webs1-$$"
+NAME3="webs2-$$"
+PORT2=$(( 20000 + RANDOM % 2000 ))
+PORT3=$(( PORT2 + 500 ))
+ATKDIR="$(mktemp -d "$REPO/instances/s1atk-XXXXXX")"
+
+cleanup() {
+    bash "$REPO/sandbox/minict.sh" down "$NAME" >/dev/null 2>&1 || true
+    bash "$REPO/sandbox/minict.sh" down "$NAME2" >/dev/null 2>&1 || true
+    bash "$REPO/sandbox/minict.sh" down "$NAME3" >/dev/null 2>&1 || true
+    rm -rf "$ATKDIR" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+bash "$REPO/sandbox/minict.sh" web "$NAME2" "$PORT2" >/dev/null 2>&1
+bash "$REPO/sandbox/minict.sh" web "$NAME3" "$PORT3" >/dev/null 2>&1
+
+s1_sock() { echo "$REPO/instances/$1/rootfs/.minict-proxy.sock"; }
+s1_serving() { # <name> <port> — positive control on a fresh bridge
+    curl -s -m 3 "http://127.0.0.1:$2/" 2>/dev/null | grep -q minict-web
+}
+
+web8_test() {
+    # attacker-controlled HOST unix socket OUTSIDE the rootfs; symlink the
+    # relay socket to it. The proxy must neither connect nor leak one byte.
+    local sock atk marker atkpid
+    sock="$(s1_sock "$NAME2")"
+    s1_serving "$NAME2" "$PORT2" || { echo "precondition: bridge not serving"; return 1; }
+    [[ -S "$sock" ]] || { echo "precondition: relay socket missing"; return 1; }
+    atk="$ATKDIR/atk.sock"; marker="$ATKDIR/atk.hit"
+    rm -f "$marker" "$atk"
+    python3 - "$atk" "$marker" <<'PY' &
+import socket, sys
+s = socket.socket(socket.AF_UNIX)
+s.bind(sys.argv[1]); s.listen(1)
+try:
+    c, _ = s.accept()
+    open(sys.argv[2], "w").write("LEAK")
+    c.close()
+except OSError:
+    pass
+PY
+    atkpid=$!
+    sleep 0.2
+    rm -f "$sock" 2>/dev/null
+    python3 -c "import os,sys; os.symlink(sys.argv[1], sys.argv[2])" \
+        "$atk" "$sock" 2>/dev/null || { echo "cannot symlink"; kill $atkpid 2>/dev/null; return 1; }
+    sleep 0.2
+    curl -s -m 3 -o /dev/null "http://127.0.0.1:$PORT2/" 2>/dev/null || true
+    sleep 0.4
+    kill $atkpid 2>/dev/null; wait $atkpid 2>/dev/null
+    if [[ -f "$marker" ]]; then
+        echo "LEAK: attacker socket received a connection"
+        return 1
+    fi
+    return 0
+}
+
+web7_test() {
+    # payload POV: unlink the relay socket, put a symlink to a NON-socket
+    # host file in its place. The proxy must refuse, not follow.
+    local sock
+    sock="$(s1_sock "$NAME3")"
+    s1_serving "$NAME3" "$PORT3" || { echo "precondition: bridge not serving"; return 1; }
+    [[ -S "$sock" ]] || { echo "precondition: relay socket missing"; return 1; }
+    rm -f "$sock" 2>/dev/null || return 1
+    python3 -c "import os,sys; os.symlink('/etc/hostname', sys.argv[1])" \
+        "$sock" 2>/dev/null || { echo "cannot symlink"; return 1; }
+    sleep 0.2
+    ! curl -s -m 3 -o /dev/null "http://127.0.0.1:$PORT3/"
+}
+
+web9_test() {
+    # resolver standalone (no minict): proves BOTH directions —
+    # (a) positive control: legit socket in a subdir works through the
+    #     openat chain + /proc/self/fd connect on this kernel;
+    # (b) ancestor-dir symlink -> refused, zero leak to attacker socket.
+    local t p9 p9b ok=1 resp=""
+    p9="$(( 23000 + RANDOM % 1000 ))"   # clear of PORT2/PORT3 (max 22499)
+    p9b=$((p9 + 1))
+    t="$(mktemp -d "$REPO/instances/s1t-XXXXXX")" || return 1
+    mkdir -p "$t/root/sub" "$t/outside"
+
+    python3 - "$t/root/sub/real.sock" <<'PY' &
+import socket, sys
+s = socket.socket(socket.AF_UNIX)
+s.bind(sys.argv[1]); s.listen(8)
+while True:
+    try:
+        c, _ = s.accept()
+        c.sendall(b"HTTP/1.0 200 OK\r\nContent-Length: 11\r\n\r\nreal-marker")
+        c.close()
+    except OSError:
+        break
+PY
+    local vpid=$!
+    python3 - "$t/outside/real.sock" "$t/atk.hit" <<'PY' &
+import socket, sys
+# binds the SAME basename as the legit socket (real.sock): a resolver that
+# follows the ancestor symlink would land HERE — a name-collision socket the
+# attacker owns — making the leak observable, not just a refusal.
+s = socket.socket(socket.AF_UNIX)
+s.bind(sys.argv[1]); s.listen(1)
+try:
+    c, _ = s.accept()
+    open(sys.argv[2], "w").write("LEAK")
+    c.close()
+except OSError:
+    pass
+PY
+    local apid=$!
+    python3 "$REPO/tools/webproxy.py" --root "$t/root" --sock /sub/real.sock \
+        --port "$p9" >/dev/null 2>&1 &
+    local ppid=$!
+    sleep 0.5
+    # (a) positive control through the whole new resolution path
+    for _ in $(seq 1 15); do
+        resp="$(curl -s -m 2 "http://127.0.0.1:$p9/" 2>/dev/null)"
+        echo "$resp" | grep -q real-marker && break
+        sleep 0.1
+    done
+    echo "$resp" | grep -q real-marker || { echo "positive control failed"; ok=0; }
+    # tamper: the ANCESTOR dir becomes a symlink to the attacker's dir
+    kill $ppid 2>/dev/null; wait $ppid 2>/dev/null
+    python3 -c "import os,sys; t=sys.argv[1]; os.rename(t+'/root/sub', t+'/root/sub.bak'); os.symlink(t+'/outside', t+'/root/sub')" "$t" \
+        || { echo "tamper failed"; ok=0; }
+    python3 "$REPO/tools/webproxy.py" --root "$t/root" --sock /sub/real.sock \
+        --port "$p9b" >/dev/null 2>&1 &
+    local ppid2=$!
+    sleep 0.5
+    # the hardened proxy must be LISTENING before we assert refusal —
+    # otherwise a dead proxy would make (b) pass for the wrong reason
+    local listening=0
+    for _ in $(seq 1 15); do
+        ss -tln 2>/dev/null | grep -q "127.0.0.1:$p9b" && { listening=1; break; }
+        sleep 0.1
+    done
+    [[ $listening -eq 1 ]] || { echo "hardened proxy never listened"; ok=0; }
+    # (b) through the symlinked ancestor the proxy must refuse
+    curl -s -m 3 -o /dev/null "http://127.0.0.1:$p9b/" 2>/dev/null && ok=0
+    sleep 0.3
+    [[ -f "$t/atk.hit" ]] && { echo "LEAK: ancestor symlink reached attacker socket"; ok=0; }
+    kill $vpid $apid $ppid2 2>/dev/null
+    wait $vpid $apid $ppid2 2>/dev/null
+    rm -rf "$t"
+    [[ $ok -eq 1 ]]
+}
+
+run_case WEB8 "symlink to ATTACKER host socket -> zero leak" pass web8_test
+run_case WEB7 "symlink at socket path -> proxy refuses (no follow)" pass web7_test
+run_case WEB9 "resolver: ancestor symlink blocked, positive control" pass web9_test
 
 # ---------- teardown ----------
 run_case WEB6 "down closes port and leaves no processes" pass \

@@ -101,8 +101,10 @@ HTML
         </dev/null >"$INST/$name/log" 2>&1 &
     echo $! > "$INST/$name/pid"
     # host: webproxy.py relays 127.0.0.1:<port> -> the unix socket above
+    # S1 (issue #41): --root/--sock so the proxy resolves the socket
+    # symlink-proof (O_NOFOLLOW per component + connect via /proc/self/fd)
     nohup python3 "$REPO/tools/webproxy.py" \
-        --unix "$INST/$name/rootfs$PROXY_SOCK_IN_ROOT" --port "$port" \
+        --root "$INST/$name/rootfs" --sock "$PROXY_SOCK_IN_ROOT" --port "$port" \
         </dev/null >"$INST/$name/proxy.log" 2>&1 &
     echo $! > "$INST/$name/proxy-pid"
     # wait until the bridge answers from the host side (max ~2.5s)
