@@ -62,3 +62,21 @@
 
 - Remote branches: `main` + `ci/unicode-guard` (KEEP) — đúng kỳ vọng §6 SBG.
 - `git log main`: 9560cfe (sec #42) trên 69a94d0; CI main: success.
+
+---
+
+# SBG — Phiên 4 (2026-11-18): apply sau merge #45
+
+## Pha A — plan
+- Pull: main 69a94d0 → **09ae8f8** (owner đã review + merge PR #36 squash — KEEP-G7 hết hiệu lực; nhánh `ci/unicode-guard` chuyển DELETE_MERGED).
+- PR mở: 0 → Pha B/C rỗng. Issue #38 (from-audit, có repro) chọn làm việc mới.
+- Local rác: stash `.github/*` (mode-change cũ) — drop; nhánh local `ci/unicode-guard` xoá (d50bc22, đã squash vào main qua #36/#40/#43).
+
+## Pha D — PR mới (issue #38)
+- `test/38-capdrop-pidns` @ 3b5fe45: CAPD1 + PID3 (D32) — qua B2 SCR clean-room PASS + B3 SIA PASS (audit:pass) + B4 pass, không G7 → Pha C gộp ngay.
+
+## Verify cuối (MODE=apply)
+- **PR #45 squash → main `a7ef9c7`** (match-head-commit 3b5fe45); CI main xanh (scan + build-test + ci + unicode-guard: success).
+- DELETE_MERGED remote (HTTP 204 ×2): `test/38-capdrop-pidns`, `ci/unicode-guard`. Local: xoá cả hai, fetch --prune.
+- Repo còn: **`main` duy nhất** (local + remote) — đạt mục tiêu §11.
+- Ledger: 2 dòng mới (DELETE_MERGED ×2) qua PR `chore(branches): ledger 2026-11-18 Phiên 4 + daily-log`.

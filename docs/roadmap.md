@@ -26,6 +26,12 @@
 5. Ghi `journal/YYYY-MM-DD/daily-log.md` (quy tắc thư mục: PROMPT.MD §10)
 
 ## Đã xong
+- [x] 2026-11-18 (phiên 4, SDDA): **suite hardening #38 — assertion cơ chế
+  capdrop/pidns** (issue #38, type:chore from-audit): CAPD1 (CapEff=0 shim+payload
+  qua host /proc) + PID3 (NSpid lồng shim=1/payload=2) — bắt mutant M2 (trước
+  đây vacuous 21/21) và M4 (phát hiện PID1-only → PID1+PID3); FS4/FS5/PID2/SIG1
+  giữ nguyên + comment dẫn D32; từ chối MINICT_NO_SECCOMP (mở mặt tấn công);
+  isolation 21→23, tổng repo 87; SCR clean-room ×2 + SIA PASS; squash `a7ef9c7`.
 - [x] 2026-11-18 (phiên 3, SDDA): **S1 — webproxy host bridge kháng symlink**
   (issue #41, type:security p1): `tools/webproxy.py` resolve relay socket
   fail-closed per-connection — openat `O_NOFOLLOW` từng thành phần + `O_PATH`/
