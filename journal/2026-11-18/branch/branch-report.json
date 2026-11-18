@@ -1,0 +1,10 @@
+{"date": "2026-11-18", "mode": "apply", "halted": false, "halt_reason": "",
+ "branches": [
+  {"name": "ci/unicode-guard", "head_sha": "7685b3f6bd36dcf6d22b07268682a60622c607e2",
+   "decision": "KEEP", "reason": "G7: diff đụng .github/workflows/** + PROMPT.MD — chờ owner review PR #36 (SIA CONCERNS — B1/B5/B6 đã xử lý; SCR 63/63 ×3 runs @ 7685b3f)", "pr": 36, "issue": 39,
+   "gates": {"G1": true, "G2": true, "G3": false, "G4": false, "G5": true, "G6": false, "G7": false, "G8": true}, "archive_tag": "", "done": true, "error": ""},
+  {"name": "feat/minictd-control-plane", "head_sha": "828724679110809d6b12b23928c767430c84ae5b",
+   "decision": "DELETE_MERGED", "reason": "PR #35 merged (squash-match headRefOid==HEAD); ngoài cửa sổ 30'", "pr": 35, "issue": 0,
+   "gates": {}, "archive_tag": "", "done": true, "error": ""}],
+ "remaining_branches": ["main", "ci/unicode-guard"],
+ "main_ci_after": "success"}
