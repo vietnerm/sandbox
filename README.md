@@ -56,8 +56,8 @@ tests/test_isolation.sh escape/isolation tests (20 cases)
 tests/test_seccomp.sh   seccomp blocklist tests (20 cases, có control A/B)
 tests/test_netns.sh     netns + bridge tests (7 cases, có control NS2)
 tests/seccomp_probe.c   probe syscall dùng bởi test_seccomp.sh (build static)
-Makefile                entry points: build/test/test-escape/test-seccomp/test-netns/test-web/perf-check/cve-check
-.github/workflows/      ci, cve-daily, perf-guard, issue-triage, research-log
+Makefile                entry points: build/test/test-escape/test-seccomp/test-netns/test-web/perf-check/cve-check/unicode-check
+.github/workflows/      ci, cve-daily, perf-guard, issue-triage, research-log, unicode-guard (PR gate), unicode-clean-daily
 benchmarks/             script benchmark (kết quả theo ngày nằm ở journal/)
 journal/YYYY-MM-DD/     MỌI tài liệu theo ngày: daily-log, research, bench, decisions/, evidence/, cve/ (quy tắc: journal/README.md)
 prompts/                prompt cho agent audit (SIA), retest (SCR), dọn nhánh (SBG); PROMPT.MD (SDDA) ở gốc repo
@@ -65,6 +65,7 @@ idea/manifest.md        hướng dự án (đứng trên roadmap)
 docs/skills.md          pitfalls + lệnh hữu ích (cập nhật hàng ngày)
 docs/roadmap.md         đã xong / đang làm / tiếp theo
 tools/cve-check.py      CVE check hằng ngày (NVD API, watchlist trong file)
+tools/unicode-guard.py  quét/dọn Unicode ẩn + bidi (Trojan Source); hook local: tools/hooks/pre-commit
 docs/cve-watchlist.md   bảng CVE kernel/engine + trạng thái + mitigation
 docs/perf-baseline.md   ngưỡng + lịch sử perf
 docs/branch-ledger.md   sổ gộp/xoá nhánh (append-only)

@@ -1,0 +1,83 @@
+name: unicode-clean-daily
+# Daily full-tree scan for hidden/bidi Unicode. If anything is found, strip it
+# with `unicode-guard.py --fix`, push a new branch bot/unicode-clean-YYYY-MM-DD
+# and open a cleanup PR (one at a time). Never pushes to main, never
+# force-pushes; a human reviews and merges the PR.
+# Warnings (NBSP, homoglyphs) are listed in the PR/issue but never auto-fixed.
+on:
+  schedule: [{cron: "0 1 * * *"}]   # 01:00 UTC = 08:00 ICT
+  workflow_dispatch:
+permissions:
+  contents: write        # push bot/unicode-clean-YYYY-MM-DD
+  pull-requests: write   # open the cleanup PR
+  issues: write          # fallback when Actions may not open PRs
+defaults:
+  run:
+    shell: bash
+concurrency:
+  group: unicode-clean
+  cancel-in-progress: false
+
+jobs:
+  clean:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          ref: main
+      - name: scan
+        id: scan
+        run: |
+          set +e
+          python3 tools/unicode-guard.py > report.txt 2> summary.txt
+          echo "rc=$?" >> "$GITHUB_OUTPUT"
+          cat report.txt summary.txt
+          { echo '### unicode-guard (daily)'; echo '```'; cat summary.txt report.txt | head -200; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: fix + open cleanup PR
+        if: steps.scan.outputs.rc != '0'
+        run: |
+          python3 tools/unicode-guard.py --fix > fix.txt 2>&1 || true
+          if git diff --quiet; then
+            echo "findings but nothing fixable"; exit 1
+          fi
+          python3 tools/unicode-guard.py   # must be clean now (errors only)
+
+          # One cleanup PR at a time: if one is still open, just report on it.
+          open=$(gh pr list --state open --json number,headRefName \
+                   --jq '[.[] | select(.headRefName | startswith("bot/unicode-clean-"))][0].number // empty')
+          if [[ -n "$open" ]]; then
+            gh pr comment "$open" --body "unicode-clean-daily $(date -u +%F): main still has findings, see run ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            exit 0
+          fi
+
+          branch="bot/unicode-clean-$(date -u +%F)"
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git commit -qam "chore(security): strip hidden/bidi Unicode ($(date -u +%F))"
+          git push origin "$branch"     # new branch, never force, never main
+
+          body=$(printf '%s\n\n```\n%s\n```\n\n%s\n' \
+            "Auto-opened by unicode-clean-daily: \`tools/unicode-guard.py --fix\` removed bidi / invisible / tag / control characters (Trojan Source class). Review each hunk: a hidden char inside a string literal may be intentional, or the sign of an attack. Check who added it (\`git log -S\`)." \
+            "$(head -150 report.txt)" \
+            "> Byte deletions only; warnings (NBSP, homoglyphs) are listed above but left untouched. PRs opened with GITHUB_TOKEN do not trigger other workflows: close/reopen this PR or push a commit to run the checks.")
+
+          if ! gh pr create --base main --head "$branch" \
+                 --title "security: strip hidden/bidi Unicode $(date -u +%F)" --body "$body"; then
+            # Settings > Actions > General > "Allow GitHub Actions to create and approve pull requests" is off
+            gh issue create --title "security: hidden/bidi Unicode found $(date -u +%F)" \
+              --body "$body
+
+          Fix is pushed to branch \`$branch\`; open a PR from it manually."
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        if: always()
+        with:
+          name: unicode-report
+          path: |
+            report.txt
+            summary.txt
+          if-no-files-found: ignore

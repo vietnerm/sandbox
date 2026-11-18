@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Local layer of the hidden-Unicode defence. Install once:
+#   ln -sf ../../tools/hooks/pre-commit .git/hooks/pre-commit
+# Scans the staged files (working-tree copy) and blocks the commit on
+# bidi / invisible / tag / control characters. Fix with:
+#   python3 tools/unicode-guard.py --fix <file>
+set -euo pipefail
+mapfile -d '' files < <(git diff --cached --name-only --diff-filter=ACMR -z)
+(( ${#files[@]} )) || exit 0
+exec python3 tools/unicode-guard.py "${files[@]}"
