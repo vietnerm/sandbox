@@ -175,3 +175,57 @@
 - Đúng 1 PR mới (sec/s1 #42) CI xanh + merge ✓ (PR #36 là PR cũ, loop §11).
 - CVE check ✓; escape/host baseline bằng chứng ✓; daily-log commit ✓ (PR này);
   không security-p0 bỏ quên >24h ✓.
+
+## Phiên 4 — Orchestrator §11 (ZAI): issue #38 — assertion cơ chế capdrop/pidns (D32)
+
+> Chu trình: pull (main 69a94d0→09ae8f8 — owner merge PR #36) → Pha A plan →
+> Pha B/C rỗng (0 PR mở) → Pha D issue #38 → PR #45 qua B→C, merge a7ef9c7 →
+> Pha E SBG apply (xoá 2 nhánh, repo còn main duy nhất) + ledger PR.
+
+### Pha A — Sync + SBG plan
+- Main mới 09ae8f8 (#36 unicode-guard đã vào main — KEEP-G7 hết hiệu lực);
+  stash rác `.github/*` drop; nhánh KEEP cũ chuyển DELETE_MERGED.
+- Issue mở: #39/#38/#37/#34/#31/#30/#29/#28/#27/#26/#8/#5/#4. PR mở: 0.
+
+### Pha D — Issue #38 (type:chore, area:escape-test, from-audit)
+- Triage: gán self, `status:in-progress`, gỡ `needs-repro` (repro có sẵn từ
+  negative control SCR Phiên 2: M2 → 21/21 xanh).
+- Research 2 nguồn → `research.md`: capabilities(7) (CapEff = tập kernel dùng
+  permission check; capset tự-xả không cần đặc quyền — hợp lệ rootless);
+  pid_namespaces(7) (một pid mỗi tầng ns — nền cho NSpid); probe live xác nhận
+  format `NSpid: <host> <inner>` và CapEff launcher giữ / shim+payload = 0.
+- Develop `test/38-capdrop-pidns` @ 3b5fe45 (D32 `decisions/capdrop-tests.md`):
+  **CAPD1** — CapEff=0000000000000000 cho shim (relay posture D16/D19) + payload
+  (drop trước install_seccomp) qua host /proc, phân loại cây launcher→shim→payload
+  bằng ancestry; **PID3** — NSpid shim "2 1" + payload "2 2". FS4/FS5/PID2 giữ
+  nguyên + comment dẫn D32. Bỏ phương án `MINICT_NO_SECCOMP` (mở mặt tấn công).
+- Negative control (nghiệm thu #38): **M2 → CAPD1 FAIL** (trước: 21/21 vacuous);
+  **M4 → PID1 + PID3 FAIL** (trước: chỉ PID1). Mutant chạy cả ở máy dev
+  (`mutant38.sh`) và clean-room SCR (binary đặt tên `minict` đúng comm).
+- Phát hiện phụ: (1) harness mutant đổi tên binary → SIG2–5 đỏ giả (comm
+  matching) — quirk harness, không phải sản phẩm; (2) cve-check.py KeyError
+  'cvss' khi NVD row lỗi → issue **#44** (type:chore, area:ci); (3) drift
+  AUDIT_PROMPT §F (tool có sẵn --kernel/--watchlist/--format) — low, ghi trong SIA.
+- CVE check: `cve/capdrop-tests.md|.json` — 19 rows rc=0, 0 mới ngoài watchlist,
+  criticals đã biết host-side. Validation: make test 58/58 ×2 + web 9/9 ×2 +
+  minictd 20/20 (CI job 134687196483); perf 1.89/1244/2.04 PASS; host baseline
+  unchanged; listeners khớp nền → `evidence/capdrop-tests.txt`.
+- PR #45 (draft→ready): CI scan/build-test×2/perf xanh @ 3b5fe45; SCR PASS
+  clean-room ×2 (0 flaky, mutants đúng kỳ vọng); SIA PASS 11/11 (`audit:pass`);
+  không G7 (tests/ + journal/ only).
+
+### Pha C — Gộp
+- **PR #45 squash → main `a7ef9c7`** (match-head-commit). CI main xanh.
+- #38 auto-close (type:chore — §6 không cản; security issue khác vẫn giữ luật).
+
+### Pha E — SBG apply + đóng ngày
+- DELETE_MERGED (HTTP 204 ×2): `test/38-capdrop-pidns` (squash-match #45),
+  `ci/unicode-guard` (squash-match #36 bởi owner). Local + remote prune.
+- **Repo còn `main` duy nhất** — mục tiêu §11 đạt.
+- Ledger 2 dòng mới; roadmap "Đã xong" thêm #38; ledger qua PR
+  `chore(branches): ledger 2026-11-18 Phiên 4 + daily-log` (docs/journal-only).
+
+### Đánh giá "ngày thành công" (§5) — lần này
+- Triage #38 cùng phiên + #44 mở khi phát hiện ✓; 1 PR mới CI xanh + merge ✓;
+  CVE check ✓; escape/host bằng chứng ✓; daily-log commit qua ledger PR ✓;
+  không security-p0 bỏ quên ✓ (#34 đã triage Phiên 2, giữ mở theo §6).
