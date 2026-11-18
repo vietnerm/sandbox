@@ -1,0 +1,60 @@
+# Evidence — S1 webproxy symlink hardening (issue #41, D31)
+# Date: 2026-11-18 | machine: container kernel 5.10.134-013.15.kangaroo.al8.x86_64, uid 1001
+# branch: sec/s1-webproxy-symlink (validation run at commit time)
+
+## make test (4 suites — regression check)
+### suite: test_isolation.sh
+=== summary: PASS=21 FAIL=0 ===
+### suite: test_isolation.sh — OK
+### suite: test_seccomp.sh
+=== summary: PASS=20 FAIL=0 ===
+### suite: test_seccomp.sh — OK
+### suite: test_netns.sh
+=== summary: PASS=7 FAIL=0 ===
+### suite: test_netns.sh — OK
+### suite: test_alpine.sh
+=== summary: PASS=8 FAIL=0 ===
+### suite: test_alpine.sh — OK
+=== run-suites summary: 4 suites, failed: none ===
+
+## make test-web (9 cases incl. WEB7-9 S1 block) — run 1
+WEB1  httpd inside sandbox answers 200 with marker             PASS
+WEB2  listener is loopback-only (no 0.0.0.0 bind)              PASS
+WEB3  path traversal cannot read host /etc/passwd              PASS
+WEB4  probe in instance rootfs served; host cwd is not         PASS
+WEB5  missing file -> 404, server stays alive                  PASS
+WEB8  symlink to ATTACKER host socket -> zero leak             PASS
+WEB7  symlink at socket path -> proxy refuses (no follow)      PASS
+WEB9  resolver: ancestor symlink blocked, positive control     PASS
+WEB6  down closes port and leaves no processes                 PASS
+=== summary: PASS=9 FAIL=0 ===
+
+## make test-web — run 2 (stability)
+=== summary: PASS=9 FAIL=0 ===
+
+## perf-check (webproxy is host-side; cold path unchanged)
+== perf-check 2026-11-18 06:03:09 — kernel 5.10.134-013.15.kangaroo.al8.x86_64, N=20 ==
+cold_start_ms  :     1.90  (threshold 100)
+rss_kb         :     1196  (threshold 10240)
+disk_base_mb   :     2.04  (threshold 20)
+perf-check: PASS
+
+## host baseline (vs journal/2026-11-18/evidence/host-baseline.txt)
+21d5de2dc39f2ceb19e33f8cc124b311b57a48aea6d7703a9a98b93079d412bd  /etc/passwd
+223fe8564b60636bc738b6178d3ba9a50ef7d791266b0efae6363bb716e4c47f  /bin/bash
+a59f393bad5037644b89de64fe558ae6d5d1473c25c63022241e7c7019ad2f0c  /usr/bin/sudo
+(note: /etc/shadow absent in this container — 3 lines recorded both times)
+
+## listeners (ss -tlnp, no unexpected test listeners left)
+LISTEN 0      2048       127.0.0.1:12600      0.0.0.0:*   
+LISTEN 0      128        127.0.0.1:19001      0.0.0.0:*   
+LISTEN 0      511        127.0.0.1:12700      0.0.0.0:*   
+LISTEN 0      1024         0.0.0.0:19005      0.0.0.0:*   
+LISTEN 0      128          0.0.0.0:19006      0.0.0.0:*   
+LISTEN 0      4096               *:81               *:*   
+
+## negative control matrix (mutant_s1.sh, run ~05:57Z, 3 mutants x full test-web)
+M1 bypass resolver/connect(path): WEB8 FAIL + WEB9 FAIL (caught); WEB1-6+7 PASS
+M2 final O_NOFOLLOW dropped:      WEB8 FAIL (caught); WEB9 PASS; others PASS
+M3 ancestor O_NOFOLLOW dropped:   WEB9 FAIL (caught); WEB8 PASS; others PASS
+clean restore: 9/9 PASS x2
