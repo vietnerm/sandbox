@@ -191,6 +191,68 @@ sig5_test() {
     [[ "$z" -eq 0 ]]
 }
 
+# ---- direct host-side assertions for capdrop + pidns (issue #38, D32) ----
+# FS4/FS5 are vacuous w.r.t. capdrop: the default seccomp blocklist has
+# NR_mount, so mount(2) is EPERM with OR without drop_all_caps() — SCR
+# mutant M2 (capset removed) slipped the whole suite 21/21. PID2 is
+# vacuous w.r.t. pidns: busybox `ps` reads /proc and the rootfs has no
+# /proc (AL4), so "ps lists none" holds with OR without CLONE_NEWPID —
+# SCR mutant M4 only turned PID1 red. CAPD1 + PID3 below assert the
+# MECHANISM directly from the host instead:
+#   CAPD1: /proc/<pid>/status CapEff of shim AND payload == 0
+#   PID3:  /proc/<pid>/status NSpid nested, shim innermost 1, payload 2
+# (pid_namespaces(7): a process has one pid per namespace level it is
+# visible in; verified live 2026-11-18: shim "NSpid: <host> 1", payload
+# "<host> 2", launcher single-field — launcher keeps its userns caps,
+# shim drops for relay posture D16/D19, payload drops before
+# install_seccomp(), minict.c drop_all_caps call sites).
+_find_sandbox_tree() { # <tag> — classify launcher/shim/payload, host view.
+    # All three carry <tag> in their cmdline (shim is a fork of the
+    # launcher pre-exec, payload sh gets the -c string). Classify by
+    # ancestry: launcher = tag-bearing whose PPid is NOT tag-bearing;
+    # shim = its child; payload = child of the shim.
+    local tag="$1" p pp pids l="" s="" pl=""
+    sleep 0.4
+    pids=$(pgrep -f "$tag" 2>/dev/null)
+    [[ -z "$pids" ]] && return 1
+    for p in $pids; do
+        pp=$(awk '/^PPid:/{print $2}' "/proc/$p/status" 2>/dev/null)
+        if ! printf '%s\n' "$pids" | grep -qx "$pp"; then l=$p; break; fi
+    done
+    [[ -z "$l" ]] && return 1
+    s=$(pgrep -P "$l" 2>/dev/null | head -1)
+    pl=$(pgrep -P "$s" 2>/dev/null | head -1)
+    [[ -z "$s" || -z "$pl" ]] && return 1
+    SBX_LAUNCH="$l"; SBX_SHIM="$s"; SBX_PAYLOAD="$pl"
+    return 0
+}
+capd1_test() {
+    local tag="mk-capdrop-$$" rc=1
+    SBX_LAUNCH=""; SBX_SHIM=""; SBX_PAYLOAD=""
+    "$MINICT" "$ROOTFS" /bin/sh -c "sleep 61; true # $tag" >/dev/null 2>&1 & local w=$!
+    if _find_sandbox_tree "$tag"; then
+        [[ "$(awk '/^CapEff:/{print $2}' "/proc/$SBX_SHIM/status" 2>/dev/null)" == "0000000000000000" ]] \
+            && [[ "$(awk '/^CapEff:/{print $2}' "/proc/$SBX_PAYLOAD/status" 2>/dev/null)" == "0000000000000000" ]] && rc=0
+    fi
+    kill -9 "$w" "$SBX_LAUNCH" "$SBX_SHIM" "$SBX_PAYLOAD" 2>/dev/null
+    wait "$w" 2>/dev/null
+    return $rc
+}
+pid3_test() {
+    local tag="mk-pidns-$$" rc=1 ns_shim ns_pl
+    SBX_LAUNCH=""; SBX_SHIM=""; SBX_PAYLOAD=""
+    "$MINICT" "$ROOTFS" /bin/sh -c "sleep 61; true # $tag" >/dev/null 2>&1 & local w=$!
+    if _find_sandbox_tree "$tag"; then
+        ns_shim=$(awk '/^NSpid:/{print NF - 1, $NF}' "/proc/$SBX_SHIM/status" 2>/dev/null)
+        ns_pl=$(awk '/^NSpid:/{print NF - 1, $NF}' "/proc/$SBX_PAYLOAD/status" 2>/dev/null)
+        # exactly one inner pidns (D19 tree): 2 levels, shim=1, payload=2
+        [[ "$ns_shim" == "2 1" ]] && [[ "$ns_pl" == "2 2" ]] && rc=0
+    fi
+    kill -9 "$w" "$SBX_LAUNCH" "$SBX_SHIM" "$SBX_PAYLOAD" 2>/dev/null
+    wait "$w" 2>/dev/null
+    return $rc
+}
+
 uid1_test() {
     # issue #14: `id -G` shows supplementary groups of the HOST user as
     # overflowgid 65534 inside the sandbox: map_ids() maps exactly one gid
@@ -234,6 +296,8 @@ run_case FS2 "host home dir /home/z unreachable" pass \
     ic '[ ! -e /home/z ]'
 run_case FS3 "no /old-* escape path after pivot_root+umount" pass \
     ic 'ls -d /old-* >/dev/null 2>&1 && exit 1 || exit 0'
+# NOTE(#38/D32): FS4/FS5 alone are vacuous w.r.t. capdrop — seccomp NR_mount
+# makes mount EPERM regardless. Direct capdrop assertion = CAPD1 below.
 run_case FS4 "mount --bind host / fails (no caps post-drop)" fail \
     ic 'mkdir -p /host && mount --bind / /host'
 run_case FS5 "post-capdrop tmpfs mount also fails" fail \
@@ -245,11 +309,16 @@ run_case PID1 "payload is PID 2 behind pidns-1 signal shim" pass \
     ic '[ $$ -eq 2 ]'
 run_case PID2 "no host processes visible (ps lists none)" pass \
     ic 'ps | tail -n +2 | grep -q . && exit 1 || exit 0'
+# NOTE(#38/D32): PID2 is vacuous w.r.t. pidns (rootfs has no /proc, so `ps`
+# lists none regardless). Direct pidns assertion = PID3 below.
+run_case PID3 "pidns live: shim is pidns-1, payload pidns-2 (host NSpid)" pass \
+    pid3_test
 run_case UID1 "uid=0 inside, no foreign gid visible (0/overflow only)" pass uid1_test
 run_case UID2 "files created inside owned by real host uid" pass uid2_test
 
 # ---------- privilege state ----------
 run_case NNP1 "PR_SET_NO_NEW_PRIVS=1 verified via host /proc" pass nnp1_test
+run_case CAPD1 "capdrop real: shim+payload CapEff=0 (host /proc)" pass capd1_test
 run_case HOST1 "hostname isolated ('minict')" pass \
     ic 'hostname | grep -qx minict'
 run_case SIG1 "SIGKILL wrapper: PDEATHSIG+pidns teardown, no orphan" pass sig1_test

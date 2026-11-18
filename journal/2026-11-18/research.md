@@ -130,3 +130,40 @@ viết) trước khi dùng cho PR #36. Kết luận dùng ở `decisions/unicode
   không fix: payload trong sandbox → cầu host proxy → socket host tuỳ ý cùng uid.
 - Áp dụng minict: xác nhận mức độ đe dọa là thực tế và hiện đại (CVSS cao, 2026),
   không phải threat-model lý thuyết; củng cố việc chọn priority:p1 cho S1.
+
+---
+
+# Research — 2026-11-18 (phiên #38: test vacuous w.r.t. capdrop / pidns masking)
+
+## Vấn đề
+FS4/FS5 chỉ chứng minh mount(2) trả EPERM — nhưng NR_mount nằm trong seccomp
+blocklist bật mặc định (minict.c:1065), nên EPERM đến từ FILTER chứ không
+chứng minh đến từ THIẾU CAP: mutant M2 (bỏ capset trong drop_all_caps()) lách
+qua cả suite 21/21 (SCR, PR #36). PID2 phụ thuộc `ps` → đọc /proc, mà rootfs
+không có /proc (AL4) → vacuous w.r.t. pidns; M4 (bỏ CLONE_NEWPID) chỉ làm PID1
+đỏ. Cần assertion trực tiếp cơ chế, không phụ thuộc seccomp/không /proc.
+
+## Nguồn 1 — capabilities(7): CapEff là tập kernel dùng permission check
+- Link: https://man7.org/linux/man-pages/man7/capabilities.7.html
+- Tóm tắt: /proc/<pid>/status có 5 tập cap; **CapEff là tập kernel kiểm tra khi
+  quyết định quyền** — assert CapEff==0 là assertion đúng nghĩa "không còn
+  đặc quyền". capset(2) tự xả cap của chính mình KHÔNG cần đặc quyền nào
+  ("a thread may manipulate its own capability sets") → capdrop rootless là
+  hợp lệ và đo được. Trong userns, uid 0 mapped → trước drop CapEff là tập đủ
+  trong ns (probe live 2026-11-18: 000001ffffffffff cho launcher giữ cap).
+- Trade-off: đọc host /proc/<pid> đòi biết pid host của shim/payload — chính là
+  cấu trúc cây D19 (launcher → shim → payload), có sẵn.
+- Áp dụng minict: **CAPD1** — tìm cây 3 process qua tag cmdline + phân loại theo
+  ancestry, assert CapEff shim == CapEff payload == 0000000000000000.
+
+## Nguồn 2 — pid_namespaces(7): một process có một pid mỗi tầng ns nhìn thấy
+- Link: https://man7.org/linux/man-pages/man7/pid_namespaces.7.html
+- Tóm tắt: "A process has one process ID in each layer of the PID namespace
+  hierarchy in which it is visible"; /proc/status ghi NSpid từng tầng
+  (proc(5); kiểm chứng live trên máy: shim `NSpid: <host> 1`, payload
+  `<host> 2`, launcher 1 trường). NSpid nhiều trường ⇔ process thuộc pidns lồng.
+- Trade-off: NSpid chỉ nhìn từ ancestor ns — cần assert host-side, không assert
+  được từ trong sandbox (không /proc) — nhưng mục tiêu là cơ chế pidns nên
+  host-side là đúng vị trí quan sát.
+- Áp dụng minict: **PID3** — assert NSpid shim == "2 tầng, innermost 1" và
+  payload == "2 tầng, innermost 2"; M4 (mất CLONE_NEWPID) → NSpid 1 trường → đỏ.

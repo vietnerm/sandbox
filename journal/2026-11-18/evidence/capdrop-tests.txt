@@ -1,0 +1,47 @@
+=== evidence capdrop-tests (issue #38, D32) — 2026-11-18 08:45 UTC+8 ===
+kernel 5.10.134-013.15.kangaroo.al8.x86_64 | uid 1001 (rootless) | main@09ae8f8 + test/38-capdrop-pidns
+
+--- 0) Probe thiết kế (trước patch): CapEff/NSpid live ---
+pid=1748 comm=minict  (launcher)  CapEff=000001ffffffffff NSpid=1748      (1 trường)
+pid=1749 comm=minict  (shim)      CapEff=0000000000000000 NSpid=1749 1
+pid=1750 comm=sh      (payload)   CapEff=0000000000000000 NSpid=1750 2
+
+--- 1) make test sau patch (isolation 21 -> 23) ---
+### suite: test_isolation.sh  — summary: PASS=23 FAIL=0 — OK
+### suite: test_seccomp.sh    — summary: PASS=20 FAIL=0 — OK
+### suite: test_netns.sh      — summary: PASS=7  FAIL=0 — OK
+### suite: test_alpine.sh     — summary: PASS=8  FAIL=0 — OK
+=== run-suites summary: 4 suites, failed: none ===
+2 case mới: CAPD1 "capdrop real: shim+payload CapEff=0 (host /proc)" PASS;
+            PID3  "pidns live: shim is pidns-1, payload pidns-2" PASS
+
+--- 2) make test-web --- 9/9 PASS (WEB1-9, gồm WEB7-9 symlink-resolver S1)
+
+--- 3) NEGATIVE CONTROL — bash scripts/mutant38.sh (kỹ thuật SCR: patch minict.c, rebuild, restore) ===
+===== MUTANT M2 (no capset in drop_all_caps) =====
+PID3 PASS | CAPD1 FAIL | FS4/FS5/PID2 PASS | summary: PASS=22 FAIL=1
+  -> kỳ vọng đạt: M2 giờ bị BẮT (trước patch: 21/21 xanh — vacuous)
+===== MUTANT M4 (no CLONE_NEWPID) =====
+PID1 FAIL | PID3 FAIL | CAPD1 PASS | FS4/FS5/PID2 PASS | summary: PASS=21 FAIL=2
+  -> kỳ vọng đạt: phát hiện pidns-mất tăng từ 1 test (PID1) lên 2 test (PID1+PID3)
+===== RESTORED — sanity run =====
+summary: PASS=23 FAIL=0 (binary gốc sạch sau restore)
+
+--- 4) make perf-check (test-only change, đối chiếu ngưỡng §0) ---
+cold_start_ms  :     1.89  (threshold 100)   [Phiên 3: 1.80]
+rss_kb         :     1244  (threshold 10240) [Phiên 3: 1204]
+disk_base_mb   :     2.04  (threshold 20)    [Phiên 3: 2.04]
+perf-check: PASS
+
+--- 5) Host baseline (sha256, so với journal/2026-11-18/evidence/host-baseline.txt) ---
+/etc/passwd  21d5de2d...79d412bd  MATCH
+/bin/bash    223fe856...bb716e4c47f MATCH
+/usr/bin/sudo a59f393b...9ad2f0c    MATCH
+(/etc/shadow: Permission denied — rootless, giống mọi lần trước)
+=> HOST BASELINE: UNCHANGED
+
+--- 6) Listeners sau khi test tắt sạch (ss -tlnp) — khớp tập bằng chứng Phiên 3 ---
+127.0.0.1:12600 | 127.0.0.1:19001 | 127.0.0.1:12700 | 0.0.0.0:19005 | 0.0.0.0:19006 | *:81
+=> không listener lạ; không process minict/webproxy còn sót (pgrep trống)
+
+--- 7) make test-minictd: ENV-BLOCKED trên máy này (không Go) — lấy kết quả từ CI job build-test của PR (như SCR Phiên 2), nguồn ghi rõ trong comment SCR.
