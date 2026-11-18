@@ -42,9 +42,11 @@ labels: minict.webport = "3000" | "3000,5173"
 
 Each port P: minictd adds `webport P /.minict-proxy-P.sock` to the spec
 (in-sandbox unix relay, D24 multi-relay) and runs
-`python3 tools/webproxy.py --unix <rootfs>/.minict-proxy-P.sock --port P`
-on the host → `curl 127.0.0.1:P` reaches the sandbox's loopback-only httpd
-(verified E2E). Ports must be 1024..65535 (host proxy binds unprivileged).
+`python3 tools/webproxy.py --root <rootfs> --sock /.minict-proxy-P.sock --port P`
+on the host (S1/D31: the bridge resolves the relay socket symlink-proof —
+openat O_NOFOLLOW chain + connect via /proc/self/fd) → `curl 127.0.0.1:P`
+reaches the sandbox's loopback-only httpd (verified E2E). Ports must be
+1024..65535 (host proxy binds unprivileged).
 
 ## Why some fields are notes instead of errors
 

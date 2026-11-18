@@ -551,8 +551,12 @@ func (s *Store) spawnProxies(name string, dir string, ports []int, wait time.Dur
 	}
 	rootfs := filepath.Join(dir, "rootfs")
 	for _, p := range ports {
-		sock := filepath.Join(rootfs, fmt.Sprintf("/.minict-proxy-%d.sock", p))
-		cmd := exec.Command(s.Python, s.WebProxyPy, "--unix", sock, "--port", fmt.Sprintf("%d", p))
+		// S1 (issue #41, D31): pass --root/--sock so webproxy resolves the
+		// relay socket symlink-proof (openat O_NOFOLLOW chain + connect via
+		// /proc/self/fd) instead of following payload-controlled symlinks.
+		sockInRoot := fmt.Sprintf("/.minict-proxy-%d.sock", p)
+		cmd := exec.Command(s.Python, s.WebProxyPy, "--root", rootfs,
+			"--sock", sockInRoot, "--port", fmt.Sprintf("%d", p))
 		cmd.Stdin = nil
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 		logf, err := os.OpenFile(filepath.Join(dir, fmt.Sprintf("proxy-%d.log", p)), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
