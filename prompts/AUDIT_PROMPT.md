@@ -67,7 +67,7 @@ Lập bảng mọi con số / khẳng định SDDA đưa ra (PR body, daily-log,
 |---|---|---|---|---|
 
 Quy tắc:
-- Số test: số case SDDA khai phải khớp retest. Baseline lấy từ `docs/roadmap.md` (mục "Quy trình hằng ngày"), tại 2026-11-17 là isolation 17 + seccomp 20 + netns 7 + web 6.
+- Số test: số case SDDA khai phải khớp retest. Baseline lấy từ `docs/roadmap.md` (mục "Quy trình hằng ngày"), tại 2026-11-18 là isolation 21 + seccomp 20 + netns 7 + alpine 8 + web 6 + minictd 20.
 - Perf lệch > 2× so với khai → `CONCERNS`; ngưỡng §0 bị vượt mà không có label `perf-regression-approved` → `BLOCK`.
 - Evidence (`journal/*/evidence/*.txt`) do SDDA tự sinh và commit **không được tính** là bằng chứng — chỉ log CI/retest mới tính.
 - Kernel/môi trường trong evidence khác runner CI → ghi chú, không tự suy ra kết quả tương đương.
@@ -81,6 +81,13 @@ Một test PASS chỉ có giá trị nếu nó **có thể FAIL**. Với từng 
 
 #### E. Review bảo mật diff (tập trung `sandbox/minict.c`, script shell)
 Kiểm theo thứ tự: thứ tự `unshare` → ghi `uid_map/gid_map` → `setgroups deny`; `pivot_root` + `umount2(MNT_DETACH)` old root; drop **toàn bộ** capability set (effective/permitted/inheritable/bounding/ambient); `PR_SET_NO_NEW_PRIVS` trước exec; fd leak sang sandbox (thiếu `O_CLOEXEC`, `close_range`); bind-mount `/dev` có `nosuid,noexec`; path từ input người dùng (`minict.sh up <name>`) có bị path traversal; race TOCTOU khi copy rootfs; seccomp filter (nếu có) dùng allowlist + `SECCOMP_RET_KILL_PROCESS` và kiểm arch.
+**Control-plane `minictd/` (từ 2026-11-18, D25/D26)** — PR đụng `minictd/` hoặc `MINICT_SPEC` trong `minict.c` phải kiểm thêm:
+- mọi tên instance / path từ HTTP đi qua `validName` trước khi thành đường dẫn (R1);
+- env của tiến trình con chỉ từ `childEnv()` + RunSpec/request — không `os.Environ()`, minict-exec vẫn `clearenv()` (R2);
+- auth vẫn bắt buộc, so sánh constant-time (R3);
+- thao tác phía host trên rootfs (ghi được bởi payload, tồn tại qua stop/start) **không đi theo symlink**: bind target, socket relay, file copy (R7, S1);
+- seccomp trong `minict-exec.c` khớp `minict.c` (MD0) và vẫn cài **trong child sau setns**;
+- RunSpec field không thực thi được phải thành Note, không im lặng.
 Mỗi phát hiện: mức `critical/high/medium/low`, `file:line`, kịch bản khai thác 1–2 câu, đề xuất sửa (chỉ đề xuất, không push).
 
 #### F. CVE claim

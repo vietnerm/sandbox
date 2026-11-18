@@ -37,12 +37,25 @@ jobs:
       # run-suites.sh runs isolation (17) + seccomp (20) + netns (7) even when
       # an earlier suite is red, and fails if any of them failed — CI evidence
       # is complete and the exit code is real (pipefail above).
-      - name: test (isolation 17 + seccomp 20 + netns 7, all suites)
+      - name: test (isolation 21 + seccomp 20 + netns 7 + alpine 8, all suites)
         run: mkdir -p ci-evidence && make test 2>&1 | tee ci-evidence/test-all.txt
       - name: test-web (6 cases)
         run: mkdir -p ci-evidence && make test-web 2>&1 | tee ci-evidence/test-web.txt
       - name: perf-check (cold start / RSS / disk vs thresholds)
         run: make perf-check
+
+      # minictd control-plane (GĐ2 seed, D25–D27): real daemon -> patched
+      # minict -> minict-exec (setns) e2e, 20 cases incl. seccomp parity
+      # (MD0). Same pipefail rule: a red suite fails the job.
+      # go.mod pins the language MINIMUM (1.23); the toolchain is the
+      # current stable release so net/http & co. carry the latest stdlib
+      # security fixes (1.23 itself is out of upstream support).
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: false
+      - name: test-minictd (20 cases)
+        run: mkdir -p ci-evidence && make test-minictd 2>&1 | tee ci-evidence/test-minictd.txt
 
       - name: upload evidence
         if: always()

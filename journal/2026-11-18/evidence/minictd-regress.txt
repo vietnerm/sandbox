@@ -1,0 +1,16 @@
+# regression: existing suites with MINICT_SPEC merged into minict.c (no spec file set)
+=== summary: PASS=21 FAIL=0 ===
+=== summary: PASS=20 FAIL=0 ===
+=== summary: PASS=7 FAIL=0 ===
+=== summary: PASS=8 FAIL=0 ===
+=== run-suites summary: 4 suites, failed: none ===
+=== summary: PASS=6 FAIL=0 ===
+cold_start_ms  :     4.01  (threshold 100)
+rss_kb         :     3104  (threshold 10240)
+disk_base_mb   :     2.15  (threshold 20)
+perf-check: PASS
+
+# cold start A/B, 40 interleaved runs, /bin/true, python subprocess timing
+orig   median_ms=3.95 p90=4.51
+spec   median_ms=4.05 p90=4.32   (+0.10 ms median, inside noise)
+binary size: 27032 -> 40584 bytes

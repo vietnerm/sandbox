@@ -25,6 +25,15 @@ guy hiểm + clone ns-flags + AF_ALG + AF_NETLINK; `MINICT_NO_SECCOMP=1` để t
 do A/B), PDEATHSIG + pidns teardown.
 Isolated dirs: tmpfs /tmp; /dev = bind 4 node (null/zero/urandom/random).
 
+## Control plane `minictd` (GĐ2 seed, 2026-11-18)
+
+Daemon rootless (Go stdlib) quản lý nhiều instance qua HTTP API + token:
+run/start/stop/remove/inspect/logs/stats và **exec vào instance đang chạy bằng
+setns** (`minict-exec`, seccomp cài lại). Cấu hình instance qua `MINICT_SPEC`
+(hostname, env, bind[:ro], tmpfs, shm, ulimit, nhiều webport). GĐ1 vẫn là giai
+đoạn hiện tại — minictd chỉ giữ xanh + sửa bảo mật (D27). Xem `minictd/README.md`;
+test: `make test-minictd` (20 case).
+
 ## Quick start
 
 ```bash
@@ -52,6 +61,8 @@ sandbox/minict.c        core (C, 1 file, 0 dependency ngoài libc)
 sandbox/mkrootfs.sh     rootfs builder (apt-get download + dpkg-deb -x, rootless)
 sandbox/minict.sh       lifecycle CLI (web = netns + unix-socket bridge)
 tools/webproxy.py       host-side TCP->unix relay cho web bridge (D16)
+minictd/                control-plane daemon (Go) + cmd/minict-exec (setns exec, C) — GĐ2 seed
+tests/test_minictd.sh   e2e control-plane (20 cases: auth, exec setns, env, bind symlink, seccomp parity)
 tests/test_isolation.sh escape/isolation tests (20 cases)
 tests/test_seccomp.sh   seccomp blocklist tests (20 cases, có control A/B)
 tests/test_netns.sh     netns + bridge tests (7 cases, có control NS2)
