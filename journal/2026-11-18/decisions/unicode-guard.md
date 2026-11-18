@@ -59,7 +59,7 @@ dựa trên một bản "chiến lược CI/CD 3 lớp" do AI khác viết. Bả
 đầu vào chưa tin cậy: mọi tool nó nêu được kiểm lại trước khi dùng
 (nguồn: `research.md` cùng ngày).
 
-## D28 - scanner tự viết, stdlib-only, thay vì tool bên thứ ba
+## D29 - scanner tự viết, stdlib-only, thay vì tool bên thứ ba
 
 - `tools/unicode-guard.py`: Python stdlib, không mạng, không pip. Cổng bảo mật
   không được tự kéo code bên ngoài không ghim (`pip install heckler` trong bản
@@ -75,7 +75,7 @@ dựa trên một bản "chiến lược CI/CD 3 lớp" do AI khác viết. Bả
 - Fixture test sinh lúc chạy từ escape `\uXXXX`; `tests/test_unicode.sh` thuần ASCII,
   nên UG13 "repo sạch" không phải tự miễn trừ.
 
-## D29 - 3 lớp, bot không bao giờ ghi thẳng main
+## D30 - 3 lớp, bot không bao giờ ghi thẳng main
 
 1. Local: `tools/hooks/pre-commit`, `make unicode-check`.
 2. PR: `unicode-guard.yml` quét file thay đổi so với base (`--changed`), push main
