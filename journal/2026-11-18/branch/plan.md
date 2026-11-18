@@ -1,4 +1,3 @@
-# SBG Branch Plan — 2026-11-18 (RUN: orchestrator session 2)
 
 > MODE=plan ghi lúc 04:55Z; MODE=apply 05:17–05:20Z cùng lần chạy (§11).
 > main = 81b5dce2 (run #77 ci: success — không halt §0.6).
@@ -28,6 +27,9 @@
 
 ## Ghi chú
 
+- Issue #34 (CVE p0, auto) đã được đối chiếu với watchlist lúc Pha A — mọi CVE
+  trong báo cáo đều có dòng "không với tới"/host-side đã ghi trong `docs/cve-watchlist.md`;
+  xử lý triage trong Pha D.
 - PR #36 gặp sự cố trong B1: commit sync 86030d3 chuẩn hoá TAB Makefile → CI đỏ
   "missing separator"; tác giả PR fix 7685b3f (byte-identical với fix cục bộ của
   SCR-runner; fix cục bộ chưa push đã bỏ). Bài học vào `docs/skills.md`.

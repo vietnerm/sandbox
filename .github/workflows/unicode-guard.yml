@@ -1,0 +1,34 @@
+name: unicode-guard
+# Trojan Source / hidden-Unicode gate (tools/unicode-guard.py, stdlib only).
+# PR: scans files changed vs the base branch and fails on bidi controls,
+# zero-width/invisible chars, tag chars, stray controls. Push to main: scans
+# the whole tree. Findings show up as inline annotations on the diff.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  scan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      # pinned by SHA (v4.2.2) - third-party code in a security gate must not move under us
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: scanner self-test (13 cases)
+        run: bash tests/test_unicode.sh
+      - name: scan changed files (PR)
+        if: github.event_name == 'pull_request'
+        run: python3 tools/unicode-guard.py --github --changed "origin/${{ github.base_ref }}"
+      - name: scan whole tree (push / manual)
+        if: github.event_name != 'pull_request'
+        run: python3 tools/unicode-guard.py --github

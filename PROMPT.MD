@@ -198,6 +198,11 @@ jobs:
 #### `research-log.yml` — nhắc nhở
 - Nếu 2 ngày liên tiếp không có `journal/YYYY-MM-DD/research.md` mới → mở issue `type:chore` nhắc agent.
 
+#### `unicode-guard.yml` + `unicode-clean-daily.yml` — chặn Unicode ẩn (Trojan Source)
+- `unicode-guard`: mỗi PR quét file thay đổi bằng `tools/unicode-guard.py` (stdlib, không cài tool ngoài), fail nếu có ký tự bidi / zero-width / tag / control. Không thêm path vào `.unicode-guard-ignore` để cho xanh.
+- `unicode-clean-daily`: 08:00 ICT quét toàn repo; nếu bẩn thì `--fix`, đẩy nhánh `bot/unicode-clean-YYYY-MM-DD` và mở PR. PR này là `type:security`: **không tự gộp**, gắn `needs-human`, ghi vào báo cáo kèm `git log -S` cho biết ai đưa ký tự vào.
+- Action bên thứ ba trong 2 workflow này ghim theo commit SHA; giữ nguyên khi sửa.
+
 ---
 
 ### 3. PR Template (bắt buộc — đặt tại `.github/PULL_REQUEST_TEMPLATE.md`)
