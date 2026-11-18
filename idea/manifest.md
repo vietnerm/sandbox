@@ -128,6 +128,8 @@ blocklist, busybox httpd trong netns qua unix-socket bridge, 50 test, perf ~2 ms
 
 **Gate nghiên cứu trước khi viết code:** `exec` vào instance đang chạy rootless
 (daemon giữ caps trong userns nó tạo → `setns` từ phía daemon), phải đo được.
+→ **Đo được 2026-11-18** (D25, `minict-exec`), cùng lúc owner gộp sớm "seed"
+`minictd/` (ngoại lệ §8 bên dưới). Các ô DoD dưới đây vẫn chưa tick.
 
 **DoD giai đoạn 2:**
 - [ ] Daemon user-level (systemd `--user` unit) + REST API + CLI `sandbox`:
@@ -173,3 +175,9 @@ microVM cho workload không tin cậy.
 GĐ1 → GĐ2 → GĐ3 → GĐ4 → GĐ5. Không nhảy giai đoạn; nếu buộc phải nhảy (vd. KVM
 có sẵn sớm), cập nhật manifest + roadmap **trước** khi code. Mỗi issue/PR gắn
 đúng một giai đoạn (label `phase:N`).
+
+**Ngoại lệ đã ghi (2026-11-18, owner chốt trên decision card — D27):** code
+control-plane `minictd/` (daemon + `minict-exec` + `MINICT_SPEC`) do owner đặt
+viết ngoài chu trình được gộp sớm như **GĐ2 seed**. Giai đoạn hiện tại **vẫn là
+GĐ1**; với `minictd/` chỉ sửa bảo mật và giữ `make test-minictd` xanh, không mở
+việc GĐ2 mới trước khi DoD GĐ1 xong. PR của seed gắn `phase:2`.
