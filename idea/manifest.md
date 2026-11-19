@@ -111,18 +111,25 @@ mặc định: single-uid mapping. Mọi file thuộc "root" trong instance, cá
 
 **Đã xong** (chi tiết trong docs/roadmap.md): userns + mountns + pidns + utsns +
 ipcns + netns, pivot_root, capdrop, NNP, PDEATHSIG + pidns teardown, seccomp-bpf
-blocklist, busybox httpd trong netns qua unix-socket bridge, 50 test, perf ~2 ms / ~1.1 MB / ~2 MB.
+blocklist, busybox httpd trong netns qua unix-socket bridge, rootfs Alpine, pasta
+egress prototype; `make test` 7 suite / 105 case (2026-11-19), perf ~2 ms / ~1.2 MB / ~2 MB.
 
-**DoD giai đoạn 1** (xong khi tất cả đúng):
+**DoD giai đoạn 1** (xong khi tất cả đúng; tick lại theo thực tế 2026-11-19 — 3/6):
 - [ ] **Rootfs distro thật**: Alpine hoặc Debian minirootfs chạy được trong
       instance (có `/proc` trên nền tảng mục tiêu, init tối thiểu, single-uid
       mapping theo §5), không còn chỉ busybox.
+      → Alpine 3.22.8 chạy được + trọn isolation suite trên alpine (#24, #54);
+      `/proc` trong pidns đã sửa (#64, D39 — PROC1–4/AL4 xanh trên runner kernel 7.0);
+      tick khi owner gắn `verified` cho #31.
 - [ ] Stack web thật (nginx/caddy + API + SQLite hoặc Redis) chạy trong một
-      instance, host truy cập được.
+      instance, host truy cập được. → **chưa bắt đầu** (cần DNS/egress để cài gói).
 - [ ] Mạng instance ↔ host/Internet qua **pasta hoặc slirp4netns**; bridge D16 chỉ còn là fallback.
-- [ ] Escape suite mở rộng (issue #5): fd-based, /proc/self/root, setuid trong rootfs, core dump leak.
-- [ ] Graceful stop (issue #6), vì control plane GĐ2 cần.
-- [ ] Perf vẫn trong ngưỡng perf-guard.
+      → prototype egress + port-forward qua pasta đã gộp (#57/#59, xanh trên runner);
+      **còn thiếu DNS** (`apk add` online) → chưa tick.
+- [x] Escape suite mở rộng (issue #5): fd-based, /proc/self/root, setuid trong rootfs, core dump leak.
+      → #48 + #54 (D36); issue #5 chờ owner gắn `verified` (§6).
+- [x] Graceful stop (issue #6), vì control plane GĐ2 cần. → pidns-1 signal shim (#21, D19).
+- [x] Perf vẫn trong ngưỡng perf-guard. → perf-check PASS trên runner mỗi PR.
 
 ### Giai đoạn 2 — Control plane + storage (lõi "Proxmox nhẹ")
 

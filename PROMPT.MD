@@ -177,13 +177,13 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - run: python3 tools/cve-check.py --kernel $(uname -r) --format md > cve-report.md
-      - name: Open issue if critical CVE
+      - run: python3 tools/cve-check.py --kernel $(uname -r) --watchlist docs/cve-watchlist.md --format md --json cve-report.json > cve-report.md
+      # issue #56: chỉ mở p0 khi có CVE CVSS ≥ 8 KHÔNG nằm trong watchlist (CVE đã
+      # triage không tạo issue trùng mỗi ngày); NVD lỗi → không tính là "mới"
+      - name: Open issue if NEW critical CVE
         run: |
-          if grep -qE 'CVSS: (8|9|10)\.' cve-report.md; then
-            gh issue create --title "security: critical CVE detected $(date +%F)" \
-              --label type:security,priority:p0 --body-file cve-report.md
-          fi
+          NEW=$(python3 tools/cve-gate.py cve-report.json docs/cve-watchlist.md)
+          if [ -n "$NEW" ]; then gh issue create --title "security: new critical CVE $(date +%F): $NEW" ...; fi
       - uses: actions/upload-artifact@v4
         with: {name: cve-report, path: cve-report.md}
 ```

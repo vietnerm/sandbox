@@ -1,7 +1,7 @@
 # Root Makefile — entry points required by PROMPT.MD / CI.
 # The binary build itself lives in sandbox/Makefile.
 
-.PHONY: all build minictd rootfs rootfs-alpine test test-escape test-escape-alpine test-seccomp test-netns test-alpine test-web test-minictd test-pasta unicode-check test-unicode perf-check cve-check bench clean help
+.PHONY: all build minictd rootfs rootfs-alpine test test-escape test-escape-alpine test-seccomp test-netns test-alpine test-web test-minictd test-pasta unicode-check test-unicode test-cve-gate perf-check cve-check bench clean help
 
 all: build
 
@@ -68,6 +68,10 @@ unicode-check:
 
 test-unicode:
 	bash tests/test_unicode.sh
+
+# cve-daily issue gate (issue #56): 7 cases, no network
+test-cve-gate:
+	bash tests/test_cve_gate.sh
 
 bench: build rootfs
 	bash benchmarks/bench.sh
