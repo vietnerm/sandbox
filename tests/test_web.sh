@@ -216,12 +216,31 @@ except OSError:
     pass
 PY
     local apid=$!
+    # wait for BOTH upstream sockets to be bound before starting the proxy —
+    # python startup on a loaded runner takes >2s and the bind is async (#66):
+    # a proxy that starts against a missing socket turns the positive control
+    # into a coin flip (WEB9 flaky 3/9 + 1/4 on main, 2026-11-19).
+    local w=0
+    for _ in $(seq 1 50); do
+        [[ -S "$t/root/sub/real.sock" && -S "$t/outside/real.sock" ]] && { w=1; break; }
+        sleep 0.1
+    done
+    [[ $w -eq 1 ]] || { echo "upstream sockets never bound"; kill $vpid $apid 2>/dev/null; return 1; }
     python3 "$REPO/tools/webproxy.py" --root "$t/root" --sock /sub/real.sock \
         --port "$p9" >/dev/null 2>&1 &
     local ppid=$!
-    sleep 0.5
-    # (a) positive control through the whole new resolution path
-    for _ in $(seq 1 15); do
+    # same discipline as the (b) half below: the proxy must be LISTENING
+    # before we curl — sleep 0.5 alone loses the race under load (#66)
+    local listening=0
+    for _ in $(seq 1 50); do
+        ss -tln 2>/dev/null | grep -q "127.0.0.1:$p9" && { listening=1; break; }
+        sleep 0.1
+    done
+    [[ $listening -eq 1 ]] || { echo "positive-control proxy never listened"; ok=0; }
+    # (a) positive control through the whole new resolution path — budget 50
+    # (5 s) to cover asyncio first-connection bursts on loaded container
+    # hosts (measured: direct upstream 0.00 s, proxy bursts <=1.4 s — #66, D41)
+    for _ in $(seq 1 50); do
         resp="$(curl -s -m 2 "http://127.0.0.1:$p9/" 2>/dev/null)"
         echo "$resp" | grep -q real-marker && break
         sleep 0.1
