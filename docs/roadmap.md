@@ -27,6 +27,14 @@
 5. Ghi `journal/YYYY-MM-DD/daily-log.md` (quy tắc thư mục: PROMPT.MD §10)
 
 ## Đã xong
+- [x] 2026-11-19 (phiên 4, phiên thử của Claude theo PROMPT.MD §11): **/proc trong pidns
+  (issue #31, D39)** — root cause đo được: kernel chỉ cho userns mount procfs khi ns còn
+  một procfs fully-visible (`mount_too_revealing`); minict detach old root TRƯỚC khi
+  mount → EPERM mọi nơi. Sửa: shim pidns-1 mount `/proc` (nosuid,nodev,noexec) rồi mới
+  detach old root (fail-closed). A/B kernel 6.18: main EPERM → fix mount được, payload
+  thấy `Pid: 2`. Test env-aware (probe host `unshare --mount-proc`): PID2 mới + PROC1–4
+  + AL4 thật; isolation 29→31; 4 mutant đều bị bắt (PID2 hết vacuous với M4). Chờ CI
+  runner xác nhận. (#31)
 - [x] 2026-11-19 (phiên 3, SDDA): **pasta egress + port-forward prototype (issue #57,
   mục 3 GĐ1)**: `tools/fetch-pasta.sh` pin passt snapshot 2026_10_02.cba3570 +
   sha256 fail-closed + `make static` (không vendor — D20 pattern, D37);
@@ -180,8 +188,9 @@
    `apk add nginx` / `apt-get install` dưới **single-uid
    mapping** (manifest §5: không dùng `newuidmap` setuid). Ghi rõ gói nào hỏng
    vì `chown` sang uid khác và phương án (bỏ qua / giả lập).
-   → Alpine **xong phiên 8** (xem "Đã xong"); phần còn mở: `apk add` online
-   trong instance **chờ egress pasta (mục 4)** + Debian rootfs (sau).
+   → Alpine **xong phiên 8** (xem "Đã xong"); `/proc` trong pidns **sửa 2026-11-19
+   phiên 4 (#31, D39)**, chờ CI runner; phần còn mở: `apk add` online
+   trong instance **chờ DNS cho pasta (mục 3)** + Debian rootfs (sau).
 2. **chroot-escape test sâu hơn** (issue #5): fd-based escape, /proc/self/root,
    setuid binary trong rootfs (NNP chặn), core dump leak; case seccomp SIGSYS;
    chạy lại cả suite trên rootfs distro thật (có `/proc`, nhiều mặt tấn công hơn busybox).

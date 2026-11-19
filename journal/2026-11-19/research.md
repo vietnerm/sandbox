@@ -141,3 +141,20 @@
 3. Suite `tests/test_pasta.sh` 7 case: PT1/PT2/NET11C chạy mọi nơi,
    NET10/11/12/AB1 SKIP(env-blocked) khi không tun (máy dev đo được — D34).
    Egress test dùng IP host listener (không internet, không DNS).
+
+## Phiên 4 — procfs trong userns+pidns (issue #31, D39)
+
+Nguồn:
+1. Linux `fs/namespace.c` — `mount_too_revealing()` / `mnt_already_visible()`:
+   procfs/sysfs chỉ mount được trong userns không phải init khi ns hiện có một bản
+   mount cùng loại "fully visible" (không bị mount con che). https://github.com/torvalds/linux/blob/master/fs/namespace.c
+2. `pid_namespaces(7)` — procfs phản ánh pidns của **tiến trình thực hiện mount**,
+   nên phải mount từ shim (đã trong pidns), không phải launcher.
+   https://man7.org/linux/man-pages/man7/pid_namespaces.7.html
+3. `mount_namespaces(7)` — mount "locked" khi copy sang userns ít đặc quyền hơn: lý do
+   host có overmount trên /proc (container masking) vẫn EPERM.
+   https://man7.org/linux/man-pages/man7/mount_namespaces.7.html
+4. bubblewrap `bind-mount --proc` làm cùng thứ tự: mount proc trong ns mới trước khi
+   bỏ root cũ. https://github.com/containers/bubblewrap
+
+Kết luận: giả thuyết SIA PR #24 đúng; sửa thứ tự là đủ, không cần quyền mới.

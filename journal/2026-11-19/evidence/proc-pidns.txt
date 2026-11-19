@@ -1,0 +1,153 @@
+# issue #31 / D39 — procfs in pidns (mount before detaching old root)
+# host: kernel 6.18.44-fc-v653 (cloud container), uid 1001, busybox 1.36.1 + alpine 3.22.8 rootfs
+# NOTE: a first run of this file showed FS3+PROC2 red because the M-noumount mutant (below) had
+# left 34 /old-<pid> dirs in the shared test rootfs; cleaned, re-run -> green (no stale dirs after).
+
+## A/B direct (main 1573d93 vs fix)
+$ minict(main) rootfs /bin/sh -c "ls /proc | head -3"
+minict: warn: mount /proc (blocked in this environment): Operation not permitted
+$ minict(fix) rootfs /bin/sh -c "<pids in /proc>; grep ^(Pid|NSpid) /proc/$$/status"
+1 2 3 4 5 
+Pid:	2
+NSpid:	2
+
+## suites (fix)
+### test_isolation
+=== minict isolation tests (2026-11-19 06:05:58) ===
+FS1   sandbox sees OUR /etc/passwd (marker)                    PASS
+FS2   host home dir /home/z unreachable                        PASS
+FS3   no /old-* escape path after pivot_root+umount            PASS
+FS4   mount --bind host / fails (no caps post-drop)            PASS
+FS5   post-capdrop tmpfs mount also fails                      PASS
+FS6   write to /home lands on-disk in rootfs (host view)       PASS
+PID1  payload is PID 2 behind pidns-1 signal shim              PASS
+PID2  /proc lists only sandbox pids (no host processes)        PASS
+PID3  pidns live: shim is pidns-1, payload pidns-2 (host NSpid) PASS
+UID1  uid=0 inside, no foreign gid visible (0/overflow only)   PASS
+UID2  files created inside owned by real host uid              PASS
+NNP1  PR_SET_NO_NEW_PRIVS=1 verified via host /proc            PASS
+CAPD1 capdrop real: shim+payload CapEff=0 (host /proc)         PASS
+HOST1 hostname isolated ('minict')                             PASS
+FD1   fd-based escape closed: inherited host fd EBADF in payload PASS
+CHROOT1 chroot(2) EPERM post-capdrop (jail-escape primitive)     PASS
+SETUID2 suid exec: NNP=1 + CapEff=0 survive (host /proc)         PASS
+CORE1 core dump disabled: RLIMIT_CORE=0 forced in payload      PASS
+CORE2 SIGSEGV leaves no core file in rootfs/repo cwd           PASS
+SIG1  SIGKILL wrapper: PDEATHSIG+pidns teardown, no orphan     PASS
+SIG2  SIGTERM wrapper: tree exits 143 (128+15), no orphan      PASS
+SIG3  SIGINT wrapper: tree exits 130 (128+2)                   PASS
+SIG4  control: TERM to payload (non-init) delivered (143)      PASS
+SIG5  orphan grandchildren reaped by shim, no zombies          PASS
+NET1  netns isolated: only lo inside, no host iface            PASS
+NET2  loopback is UP inside sandbox netns                      PASS
+PROC1 /proc is the sandbox pidns view (payload = pid 2)        PASS
+PROC2 every /proc/<pid>/root is the sandbox root               PASS
+PROC3 runtime procfs mounted nosuid,nodev,noexec               PASS
+PROC4 payload cannot mount a second procfs                     PASS
+CG1   no cgroup limits (cgroups v1 only — known gap)         PASS(expected-fail)
+=== summary: PASS=31 FAIL=0 ===
+### test_seccomp
+=== minict seccomp tests (2026-11-19 06:06:05) ===
+SC0   shell workload works under filter                        PASS
+SC1   keyctl blocked (EPERM)                                   PASS
+SC2   open_by_handle_at blocked (EPERM)                        PASS
+SC3   bpf blocked (EPERM)                                      PASS
+SC4   setns blocked (EPERM)                                    PASS
+SC5   unshare blocked (EPERM)                                  PASS
+SC6   io_uring_setup blocked (EPERM)                           PASS
+SC7   clone(CLONE_NEWUSER) blocked (EPERM)                     PASS
+SC8   ptrace blocked (EPERM)                                   PASS
+SC9   socket(AF_ALG) blocked (EPERM)                           PASS
+SC10  clone3 returns ENOSYS (fallback-friendly)                PASS
+SC11  control: setns NOT EPERM without filter                  PASS
+SC12  control: io_uring NOT EPERM without filter               PASS
+SC13  process_vm_readv blocked (EPERM)                         PASS
+SC14  control: keyctl works without filter                     PASS
+SC15  mount inside sandbox fails under filter (EPERM)          PASS
+SC16  control: process_vm NOT EPERM without filter             PASS
+SC17  socket(AF_NETLINK) blocked (EPERM)                       PASS
+SC18  control: netlink socket works without filter             PASS
+SC19  control: socket(AF_INET) still allowed (httpd)           PASS
+SC20  blocklist hit survives: rc=1 (EPERM), no SIGSYS death    PASS
+=== summary: PASS=21 FAIL=0 ===
+### test_netns
+=== minict netns tests (2026-11-19 06:06:05) — ports 18420/18523, host srv 18657 ===
+NS1   sandbox netns CANNOT reach host loopback listener        PASS
+NS2   control: MINICT_NO_NETNS=1 reaches the same listener     PASS
+NS3   host curl -> unix bridge -> httpd in netns (200+marker)  PASS
+NS4   relay unix socket exists on instance rootfs              PASS
+NS5   host proxy binds loopback-only (no 0.0.0.0)              PASS
+NS6   two instances: each proxy serves its OWN sandbox         PASS
+NS7   down kills proxy, frees port, removes instance           PASS
+=== summary: PASS=7 FAIL=0 ===
+### test_alpine
+curl: (22) The requested URL returned error: 403
+=== minict alpine-rootfs tests (2026-11-19 06:06:08) — alpine 3.22.8, pkg acpid-openrc=n/a ===
+AL1   alpine rootfs boots (busybox alpine build)               PASS
+AL2   sandbox sees OUR passwd marker (not host)                PASS
+AL3   apk-tools present and runnable in sandbox                PASS
+AL4   /proc = pidns view on alpine (payload pid 2) — #31     PASS
+AL5   offline apk add works, signature-verified                PASS
+AL6   single-uid ownership: 0:0 in ns = real uid on host       PASS
+AL7   chown foreign uid: EINVAL (unmapped), sandbox alive      PASS
+AL8   hostname isolated ('minict') on alpine rootfs            PASS
+=== summary: PASS=8 FAIL=0 ===
+### test_escape_alpine
+=== minict isolation tests (2026-11-19 06:06:08) ===
+FS1   sandbox sees OUR /etc/passwd (marker)                    PASS
+FS2   host home dir /home/z unreachable                        PASS
+FS3   no /old-* escape path after pivot_root+umount            PASS
+FS4   mount --bind host / fails (no caps post-drop)            PASS
+FS5   post-capdrop tmpfs mount also fails                      PASS
+FS6   write to /home lands on-disk in rootfs (host view)       PASS
+PID1  payload is PID 2 behind pidns-1 signal shim              PASS
+PID2  /proc lists only sandbox pids (no host processes)        PASS
+PID3  pidns live: shim is pidns-1, payload pidns-2 (host NSpid) PASS
+UID1  uid=0 inside, no foreign gid visible (0/overflow only)   PASS
+UID2  files created inside owned by real host uid              PASS
+NNP1  PR_SET_NO_NEW_PRIVS=1 verified via host /proc            PASS
+CAPD1 capdrop real: shim+payload CapEff=0 (host /proc)         PASS
+HOST1 hostname isolated ('minict')                             PASS
+FD1   fd-based escape closed: inherited host fd EBADF in payload PASS
+CHROOT1 chroot(2) EPERM post-capdrop (jail-escape primitive)     PASS
+SETUID2 suid exec: NNP=1 + CapEff=0 survive (host /proc)         PASS
+CORE1 core dump disabled: RLIMIT_CORE=0 forced in payload      PASS
+CORE2 SIGSEGV leaves no core file in rootfs/repo cwd           PASS
+SIG1  SIGKILL wrapper: PDEATHSIG+pidns teardown, no orphan     PASS
+SIG2  SIGTERM wrapper: tree exits 143 (128+15), no orphan      PASS
+SIG3  SIGINT wrapper: tree exits 130 (128+2)                   PASS
+SIG4  control: TERM to payload (non-init) delivered (143)      PASS
+SIG5  orphan grandchildren reaped by shim, no zombies          PASS
+NET1  netns isolated: only lo inside, no host iface            PASS
+NET2  loopback is UP inside sandbox netns                      PASS
+PROC1 /proc is the sandbox pidns view (payload = pid 2)        PASS
+PROC2 every /proc/<pid>/root is the sandbox root               PASS
+PROC3 runtime procfs mounted nosuid,nodev,noexec               PASS
+PROC4 payload cannot mount a second procfs                     PASS
+CG1   no cgroup limits (cgroups v1 only — known gap)         PASS(expected-fail)
+=== summary: PASS=31 FAIL=0 ===
+### test_web
+=== minict web tests (2026-11-19 06:06:16) — port 18223 ===
+WEB1  httpd inside sandbox answers 200 with marker             PASS
+WEB2  listener is loopback-only (no 0.0.0.0 bind)              PASS
+WEB3  path traversal cannot read host /etc/passwd              PASS
+WEB4  probe in instance rootfs served; host cwd is not         PASS
+WEB5  missing file -> 404, server stays alive                  PASS
+WEB8  symlink to ATTACKER host socket -> zero leak             PASS
+WEB7  symlink at socket path -> proxy refuses (no follow)      PASS
+WEB9  resolver: ancestor symlink blocked, positive control     PASS
+WEB6  down closes port and leaves no processes                 PASS
+=== summary: PASS=9 FAIL=0 ===
+### test_minictd
+=== summary: PASS=20 FAIL=0 ===
+### test_pasta: env-blocked here (passt.top + dl-cdn refused by this host's egress proxy) — same on main; CI runner is the source of truth
+
+## negative control (test_isolation.sh, fix suite vs mutant binaries)
+M-old (main order: umount before mount) -> PID2 PROC1 PROC2 PROC3 FAIL (27/31)
+M4 no CLONE_NEWPID                     -> FS3 PID1 PID2 PID3 PROC1 PROC2 PROC3 FAIL (24/31)  [PID2 no longer vacuous w.r.t. pidns]
+M-noflags (proc mounted without nosuid/nodev/noexec) -> PROC3 FAIL (30/31)
+M-noumount (old root never detached) -> FS3 PROC2 FAIL (29/31)
+
+## perf (40 interleaved cold starts, /bin/true, x3 runs)
+main median 4.77-4.91 ms ; fix median 3.72-3.86 ms (not slower; ~1 ms faster here, cause not investigated)
+perf-check (fix): cold 3.82 ms / rss 2504 kB / disk 2.29 MB — PASS

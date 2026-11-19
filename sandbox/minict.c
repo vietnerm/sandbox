@@ -1405,12 +1405,14 @@ int main(int argc, char **argv)
         if (chdir("/") < 0)
                 die("chdir(/)");
 
-        /* detach + forget the old (host) root: fail closed on error */
-        if (umount2(rel, MNT_DETACH) < 0)
-                die("umount2(old root) — refusing to continue with host root "
-                    "still visible");
-        if (rmdir(rel) < 0)
-                warn("rmdir(old)");
+        /* The old (host) root is detached by the pidns-1 child right after
+         * it mounts /proc (issue #31, D39): the kernel only lets a userns
+         * mount procfs while a FULLY VISIBLE procfs already exists in the
+         * mount ns (fs/namespace.c mount_too_revealing ->
+         * mnt_already_visible). Detaching first left none -> EPERM on every
+         * kernel. Nothing in this process touches the filesystem between
+         * here and the fork, and the payload is only forked after the
+         * child has detached the old root (fail-closed there). */
 
         /* forwarders BEFORE the pidns fork: the shim and the payload
          * inherit these dispositions. Installing them only after the fork
@@ -1439,10 +1441,26 @@ int main(int argc, char **argv)
                         warn("PR_SET_PDEATHSIG");
                 if (sethostname(g_hostname, strlen(g_hostname)) < 0)
                         warn("sethostname");
-                /* /proc is blocked by the HOST seccomp filter in this env;
-                 * on a normal kernel this succeeds and gives pidns proc */
-                if (mount("proc", "/proc", "proc", 0, NULL) < 0)
-                        warn("mount /proc (blocked in this environment)");
+                /* procfs of THIS pidns, mounted while the host procfs is
+                 * still visible under the parked old root (#31, D39).
+                 * nosuid/nodev/noexec like every container runtime. Still
+                 * warn-only: a host seccomp filter or a host with masked
+                 * /proc (overmounted paths = not fully visible) refuses it,
+                 * and a sandbox without /proc is degraded, not unsafe. */
+                if (mkdir("/proc", 0555) < 0 && errno != EEXIST)
+                        warn("mkdir /proc");
+                if (mount("proc", "/proc", "proc",
+                          MS_NOSUID | MS_NODEV | MS_NOEXEC, NULL) < 0)
+                        warn("mount /proc");
+
+                /* now detach + forget the old (host) root: fail closed —
+                 * the payload must never start with the host root
+                 * reachable */
+                if (umount2(rel, MNT_DETACH) < 0)
+                        die("umount2(old root) — refusing to continue with "
+                            "host root still visible");
+                if (rmdir(rel) < 0)
+                        warn("rmdir(old)");
                 if (mount("tmpfs", "/tmp", "tmpfs", MS_NOSUID | MS_NODEV,
                           NULL) < 0)
                         warn("mount /tmp (child)");
