@@ -255,3 +255,54 @@ tiến độ GĐ2 và số issue tăng.
 - Root cause: race `select` giữa `frames` và `done` trong `handleExecStream` (D40).
   Sửa bằng bước xả channel; regression test Go bắt được mutant.
 - `make test-minictd` chạy thêm `go test ./...`; local ×3: go ok + e2e 20/20.
+
+## Phiên 6 — Orchestrator §11 (ZAI: ủy quyền owner — merge #63, verified, Pha D WEB9)
+
+### Pha A — Sync + SBG
+- Owner IM: «đọc PROMPT.MD và làm tiếp thay việc owner» → ủy quyền các việc
+  owner-pending đã liệt kê Phiên 4/5. main `f1612ec` (Claude vừa gộp #69 + #70).
+- plan.md Phiên 6 + `branch/branch-report.json` cập nhật (4 nhánh xét).
+
+### Pha B/C — PR #63 (cve-gate + DoD GĐ1) → MERGED
+- B1 resync `f1612ec` → `eb1dbc2` (delta chứa code minictd #69 — không áp dụng
+  delta docs-only) → SCR vòng 3: **lần đầu chạy minictd cục bộ** (Go 1.24.4 qua
+  `apt-get download` + `dpkg-deb -x`, không root): e2e 20/20 ×3 + `go test ./...`
+  ok; **mutant M-drain caught** (stdout="" iter 113 — đúng symptom #50); suite
+  7 suite rc=0; web 9/9; host unchanged.
+- SIA re-verdict PASS @ `eb1dbc2` + comment G7 ghi nhận ủy quyền owner
+  (tiền lệ #16/#17 owner chỉ thị trực tiếp) → squash `47023c3` match-head.
+- CI main xanh (ci #181 + unicode-guard #57 @ `47023c3`). #56 auto-closed.
+- Nhánh xoá sau merge (DELETE_MERGED).
+
+### Owner-pending (ủy quyền, có bằng chứng)
+- `verified` + đóng **#31** (proc pidns — #64, CI runner PID2/PROC1–4 PASS thật),
+  **#5** (deep escape — #48 + #54, suite alpine 29+31 case), **#34**, **#52**
+  (cve-daily trùng watchlist 19/19, 0 mới, 0 ảnh hưởng; gate D38 chặn tái phát).
+
+### Pha D — Issue #66: WEB9 flake (phát hiện SCR Phiên 5)
+- Nhánh `fix/66-web9-wait-listen`, D41 (`decisions/web9-wait.md`) + research
+  Phiên 6 (ss(8), curl(1) — link 200).
+- Chẩn đoán: 2 cơ chế chồng nhau — (1) slow-start async (proxy chưa listen /
+  upstream chưa bind) → sửa cấu trúc wait-bind + wait-listen; (2) burst
+  `rc=52` empty-reply của proxy asyncio trên host container (≤1.4 s standalone,
+  dài hơn trong suite) → budget curl 15→50 (5 s). Loại trừ: magic-link 200/200,
+  upstream 0.00 s, instrumented 0 refusal/26 run. Residual ~1/26 — không có
+  trên runner CI (nguồn sự thật) → follow-up **#72** (SIA low).
+- Kết quả đo: fail-rate WEB9 host ZAI ~35% → 4% (25/26 suite run); mutant
+  port-sai caught; CI ×4 xanh @ `74f501f`; runner web 9/9.
+- PR #71 → squash `1a12688` (SCR/SIA PASS); #66 đóng; nhánh xoá.
+
+### Pha E — SBG apply cuối
+- Xoá 3 nhánh merged: `fix/50-execstream-drain`, `chore/ledger-2026-11-19-claude-p2`
+  (ủy quyền apply của Phiên Claude — commit 07:14–07:16Z, ngoài cửa sổ §0.4 lúc
+  07:53Z), `fix/66-web9-wait-listen`.
+- `git ls-remote`: **chỉ còn `main`** `1a12688` — trạng thái mục tiêu §11 đạt.
+- Ledger 4 hàng append; `branch/branch-report.json` (4 nhánh, 0 halt).
+
+### CVE Check (Bước 6)
+- cve-check rc=0 (NVD reachable), 19 hàng, 0 CVE mới ngoài watchlist.
+
+### Kế hoạch kế tiếp
+- GĐ1 mục 2: stack web thật (nginx + API + SQLite) trên rootfs distro — cần
+  DNS pasta hoặc pre-bake; #72 residual theo dõi; #55/#61/#62 from-audit;
+  GĐ2 roadmap (roadmap.md mục kế).
