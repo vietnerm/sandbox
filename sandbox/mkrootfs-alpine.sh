@@ -98,12 +98,17 @@ echo "minict" > "$TARGET/etc/hostname"
 cat > "$TARGET/etc/profile.d/minict.sh" <<'EOF'
 export PS1='minict-alpine> '
 EOF
+mkdir -p "$TARGET/tmp"
 chmod 1777 "$TARGET/tmp"
 
 # sanity: minict requires /bin/busybox; minirootfs ships it (busybox static)
 [[ -x "$TARGET/bin/busybox" ]] || { echo "no /bin/busybox in minirootfs?!"; exit 1; }
 [[ -x "$TARGET/sbin/apk" ]] || { echo "no /sbin/apk in minirootfs?!"; exit 1; }
-mkdir -p "$TARGET/home/minict"
+# D36 residual: alpine 3.22.8 tarball ships /tmp + /home, but empty dirs
+# were observed MISSING after intermittent builds (2/4 runs 2026-11-19,
+# issue #55) — create them unconditionally, fail loud on failure
+mkdir -p "$TARGET/home/minict" "$TARGET/media" "$TARGET/root" "$TARGET/run" \
+         "$TARGET/srv" "$TARGET/sys"
 
 SIZE=$(du -sh "$TARGET" | cut -f1)
 echo "==> done: $TARGET ($SIZE, alpine $(cat "$TARGET/etc/alpine-release" 2>/dev/null || echo '?'))"

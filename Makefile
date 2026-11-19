@@ -1,7 +1,7 @@
 # Root Makefile — entry points required by PROMPT.MD / CI.
 # The binary build itself lives in sandbox/Makefile.
 
-.PHONY: all build minictd rootfs rootfs-alpine test test-escape test-seccomp test-netns test-alpine test-web test-minictd unicode-check test-unicode perf-check cve-check bench clean help
+.PHONY: all build minictd rootfs rootfs-alpine test test-escape test-escape-alpine test-seccomp test-netns test-alpine test-web test-minictd unicode-check test-unicode perf-check cve-check bench clean help
 
 all: build
 
@@ -26,6 +26,11 @@ test: build rootfs
 	bash tests/run-suites.sh
 
 test-escape: test
+
+# the WHOLE isolation/escape suite re-run against the alpine distro rootfs
+# (roadmap GĐ1 mục 2 residual, issue #5 — more attack surfaces than busybox)
+test-escape-alpine: build rootfs-alpine
+	bash tests/test_escape_alpine.sh
 
 test-seccomp: build rootfs
 	bash tests/test_seccomp.sh
@@ -71,6 +76,7 @@ help:
 	@echo "make rootfs-alpine- build alpine minirootfs rootfs (rootless)"
 	@echo "make test         - isolation (29) + seccomp (21) + netns (7) + alpine (8) + cve-check tool (4), all suites always run"
 	@echo "make test-escape  - same suites (alias, CI requirement)"
+	@echo "make test-escape-alpine - isolation suite re-run on alpine rootfs (29 cases)"
 	@echo "make test-web     - web service suite (6 cases)"
 	@echo "make minictd      - build minictd daemon + minict-exec (needs Go >= 1.23)"
 	@echo "make test-minictd - minictd e2e suite (19 cases)"
