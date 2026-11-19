@@ -94,3 +94,50 @@
    Seccomp suite: SC21.
 4. Residual ghi vào decision + PR: piped core_pattern (GĐ2), không tự đóng
    issue #5 theo §6 (type:security) — chờ owner `verified`.
+
+---
+
+# Phiên 3 — Research pasta (issue #57, GĐ1 mục 3)
+
+> Bổ sung sau D34 (cùng ngày): khi implement đã đọc SOURCE passt 2026_10_02
+> thay vì chỉ docs — phát hiện một trap lớn và xác nhận một cơ chế.
+
+## Nguồn 1: passt source 2026_10_02.cba3570 (passt.top cgit snapshot)
+- Tarball đã pin (HEAD request + sha256 đo được): https://passt.top/passt/snapshot/passt-2026_10_02.cba3570.tar.gz
+- Trang dự án / mô hình phát hành (không có binary tĩnh chính thức): https://passt.top/passt/about
+- Trang chính: https://passt.top/passt
+- `conf.c conf_pasta_ns()`: `pasta --netns <path>` **không có `--userns`**
+  → `netns_only = 1` ngầm định ("Attaching to a netns/PID, with no userns
+  given"). Hệ quả: pasta ở lại userns caller, setns vào netns thuộc userns
+  instance minict → EPERM. Chống lại giả thuyết D34 ("pasta tự join userns
+  sở hữu netns") — must-pass `--userns /proc/<pid>/ns/user` tường minh.
+- `conf.c conf_ugid()`: non-root giữ euid/egid (không drop nobody) — với
+  `--runas` mặc định chỉ áp dụng khi start as root in init ns.
+- `isolation.c isolate_user()`: setgid/setuid(euid) (no-op) → enter_userns
+  (euid==owner rule) → uid 0 trong ns (map `0 1001 1`) → giữ CAP_SYS_ADMIN
+  cho setns(netns) + unshare trong isolate_prefork. Chain rootless khép kín.
+- `fwd.c nat_outbound()`: outbound ns→dst: chỉ MAP host-loopback (mặc định =
+  gateway addr) và map-guest-addr bị dịch; còn lại **đi qua nguyên vẹn** →
+  wget từ sandbox tới IP host tới listener `0.0.0.0` host — deterministic.
+- `pasta --help`: `-t HPORT:GPORT` (host→ns forward), `-f/--foreground`
+  (mặc định daemonize — cần cho pid tracking), `--config-net`.
+
+## Nguồn 2: podman rootless pasta invocation
+- Oracle lab "Use Pasta Networking with Podman" (ps auxww cho thấy argv thật của pasta rootless, `-t 8080-8080:80-80 --netns /run/user/1001/netns/netns-…`): https://luna.oracle.com/lab/6cc1f2f1-5a2b-44cb-8662-b89aec478449/steps
+- eriksjolund/podman-networking-docs (so sánh pasta vs slirp4netns, source-address preserved): https://github.com/eriksjolund/podman-networking-docs
+- Podman spawn pasta uid thường: `pasta --config-net -t 8080-8080:80-80 …
+  --netns /run/user/1001/netns/netns-XXX` — cùng model "pasta host-side
+  process join ns của container", precedent cho flow `up --pasta`.
+- Khác: podman chạy pasta TỪ TRONG userns đã join (inherited) nên không cần
+  --userns; minict spawn pasta từ host userns → phải --userns (Nguồn 1).
+  Đây là điểm thiết kế KHÁC của minict so với podman.
+
+## Áp dụng cho minict (D37, decisions/pasta-egress.md)
+1. `tools/fetch-pasta.sh` pin snapshot + sha256 + `make static` (D20 pattern;
+   passt không phát binary tĩnh chính thức — build từ source ~19 s).
+2. `minict.sh up [--pasta] [-- payload]`: spawn `pasta --foreground
+   --userns --netns --config-net` sau khi instance sống; route readiness
+   poll host-side `/proc/<pid>/net/route` (00000000).
+3. Suite `tests/test_pasta.sh` 7 case: PT1/PT2/NET11C chạy mọi nơi,
+   NET10/11/12/AB1 SKIP(env-blocked) khi không tun (máy dev đo được — D34).
+   Egress test dùng IP host listener (không internet, không DNS).

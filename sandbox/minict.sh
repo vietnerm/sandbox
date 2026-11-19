@@ -1,7 +1,29 @@
 #!/usr/bin/env bash
 # minict.sh — lifecycle CLI for the minict rootless container.
 #
-#   ./sandbox/minict.sh up <name>            start instance (bg shell), private rootfs copy
+#   ./sandbox/minict.sh up <name> [--pasta] [-- payload...]
+#                                        start instance (bg shell), private
+#                                        rootfs copy. Payload override: give a
+#                                        command after `--` to run it instead
+#                                        of the default sleep (one-shot probes,
+#                                        in-instance servers — the command runs
+#                                        in THIS instance's ns set, unlike
+#                                        `exec` which starts a NEW ns set).
+#
+#   Connectivity (GĐ1 mục 3, issue #57, D37):
+#   `--pasta` / MINICT_PASTA=1 attaches pasta (passt project, pinned by
+#   tools/fetch-pasta.sh) to the instance's netns AFTER it is up:
+#     pasta --foreground --userns /proc/<pid>/ns/user --netns /proc/<pid>/ns/net
+#           --config-net [$MINICT_PASTA_FWD]
+#   NOTE the explicit --userns: with `--netns` alone pasta implies
+#   --netns-only (stays in ITS userns) and setns into OUR netns would EPERM
+#   (conf.c conf_pasta_ns, passt 2026_10_02). Joining the instance userns
+#   works rootless: pasta's euid == userns owner (single-uid map 0<-1001,
+#   D20) → uid 0 + caps inside → tap + default route. MINICT_PASTA_FWD is
+#   appended verbatim (e.g. "-t 18080:80" = host 18080 → instance 80).
+#   Fail-closed: no /dev/net/tun (dev container, D34) or MINICT_NO_NETNS=1
+#   → error, no silent skip. Host-side metrics: pasta spawn is measured
+#   SEPARATELY from minict cold_start (A/B in tests/test_pasta.sh AB1).
 #   ./sandbox/minict.sh web <name> <port>    web instance: busybox httpd serving a
 #                                            docroot INSIDE the sandbox, in its OWN
 #                                            netns (loopback-only, issue #3). The host
@@ -30,12 +52,92 @@ REPO="$(cd "$HERE/.." && pwd)"
 INST="$REPO/instances"
 BIN="$HERE/minict"
 
+down_pasta() { # <name> — kill the pasta process of an instance if any
+    local name="$1"
+    if [[ -f "$INST/$name/pasta-pid" ]]; then
+        local ppid="$(cat "$INST/$name/pasta-pid")"
+        kill "$ppid" 2>/dev/null || true
+        sleep 0.1
+        kill -9 "$ppid" 2>/dev/null || true
+        rm -f "$INST/$name/pasta-pid"
+    fi
+}
+
+spawn_pasta() { # <name> <shim-pid> — attach pasta to the instance netns (D37)
+    local name="$1" pid="$2"
+    if [[ ! -e "/proc/$pid/ns/net" ]]; then
+        echo "pasta attach failed: /proc/$pid/ns/net gone (instance died?)"
+        exit 1
+    fi
+    if [[ ! -c /dev/net/tun ]]; then
+        echo "pasta attach failed: /dev/net/tun missing on this host (D34: "\
+             "dev container env-blocked; GitHub runners have it)" >&2
+        # fail-closed AND clean: kill the instance we just started, no orphan
+        kill "$pid" 2>/dev/null || true; sleep 0.2; kill -9 "$pid" 2>/dev/null || true
+        rm -rf "$INST/$name"
+        exit 1
+    fi
+    bash "$REPO/tools/fetch-pasta.sh" >/dev/null
+    local PASTA_BIN="$REPO/tools/bin/pasta"
+    # Explicit --userns is REQUIRED: `--netns` alone implies --netns-only
+    # (passt conf.c conf_pasta_ns) and pasta could not setns into a netns
+    # owned by the instance's userns. euid==owner rule makes this rootless.
+    nohup "$PASTA_BIN" --foreground \
+        --userns "/proc/$pid/ns/user" --netns "/proc/$pid/ns/net" \
+        --config-net ${MINICT_PASTA_FWD:-} \
+        </dev/null >"$INST/$name/pasta.log" 2>&1 &
+    local ppid=$!
+    echo "$ppid" > "$INST/$name/pasta-pid"
+    # route readiness (host-side view, netns-scoped): /proc/<pid>/net/route
+    # shows the shim's netns table; default row = Destination 00000000.
+    local t0 t1 ok=0
+    t0=$(date +%s%N)
+    for _ in $(seq 1 100); do
+        if awk '$2 == "00000000"' "/proc/$pid/net/route" 2>/dev/null | grep -q .; then
+            ok=1; break
+        fi
+        kill -0 "$ppid" 2>/dev/null || break
+        sleep 0.05
+    done
+    t1=$(date +%s%N)
+    if [[ "$ok" == "1" ]]; then
+        # pasta may die right after configuring the tap (e.g. forward-spec
+        # problems) — route seen once is NOT enough; require it alive briefly
+        sleep 0.3
+        if ! kill -0 "$ppid" 2>/dev/null; then
+            echo "pasta attached '$name' then DIED — pasta.log:" >&2
+            tail -20 "$INST/$name/pasta.log" >&2 || true
+            kill "$pid" 2>/dev/null || true; sleep 0.2; kill -9 "$pid" 2>/dev/null || true
+            rm -rf "$INST/$name"
+            exit 1
+        fi
+        echo "pasta attached to '$name' in $(( (t1 - t0) / 1000000 )) ms "\
+             "(tap + default route + alive; log $INST/$name/pasta.log)"
+    else
+        echo "pasta attach to '$name' FAILED (no default route in 5s) — pasta.log:" >&2
+        tail -20 "$INST/$name/pasta.log" >&2 || true
+        kill "$ppid" 2>/dev/null || true; sleep 0.1; kill -9 "$ppid" 2>/dev/null || true
+        kill "$pid" 2>/dev/null || true; sleep 0.2; kill -9 "$pid" 2>/dev/null || true
+        rm -rf "$INST/$name"
+        exit 1
+    fi
+}
+
 cmd="${1:-help}"
 case "$cmd" in
 up)
-    name="${2:?usage: minict.sh up <name>}"
+    name="${2:?usage: minict.sh up <name> [--pasta] [-- payload...]}"
+    shift 2 2>/dev/null || true
+    PASTA_ON=0
+    if [[ "${1:-}" == "--pasta" ]]; then PASTA_ON=1; shift; fi
+    if [[ "${MINICT_PASTA:-0}" == "1" ]]; then PASTA_ON=1; fi
+    PAYLOAD=(/bin/sh -c 'sleep 31536000')
+    if [[ "${1:-}" == "--" ]]; then shift; PAYLOAD=("$@"); fi
     [[ -x "$BIN" ]] || { echo "minict binary missing; run: make -C $HERE"; exit 1; }
     [[ -d "$REPO/rootfs" ]] || "$HERE/mkrootfs.sh" "$REPO/rootfs"
+    if [[ "$PASTA_ON" == "1" ]] && [[ "${MINICT_NO_NETNS:-0}" == "1" ]]; then
+        echo "--pasta requires the instance's private netns; unset MINICT_NO_NETNS"; exit 1
+    fi
     mkdir -p "$INST/$name"
     if [[ -f "$INST/$name/pid" ]] && kill -0 "$(cat "$INST/$name/pid")" 2>/dev/null; then
         echo "instance '$name' already running (pid $(cat "$INST/$name/pid"))"
@@ -47,12 +149,16 @@ up)
     # NOTE: bg `sh` with stdin=/dev/null exits on EOF, so the daemon runs a
     # long sleep as PID 1 instead; `exec`/`shell` still give you a shell in
     # the same instance fs (new ns set per process, PoC limitation — see
-    # journal/2026-11-17/decisions/poc.md)
-    nohup "$BIN" "$INST/$name/rootfs" /bin/sh -c 'sleep 31536000' \
+    # journal/2026-11-17/decisions/poc.md). Payload override (--) runs the
+    # given command in THIS instance's ns set instead of the sleep.
+    nohup "$BIN" "$INST/$name/rootfs" "${PAYLOAD[@]}" \
         </dev/null >"$INST/$name/log" 2>&1 &
     echo $! > "$INST/$name/pid"
     sleep 0.1
     echo "instance '$name' up (pid $(cat "$INST/$name/pid"), rootfs $INST/$name/rootfs)"
+    if [[ "$PASTA_ON" == "1" ]]; then
+        spawn_pasta "$name" "$(cat "$INST/$name/pid")"
+    fi
     ;;
 web)
     name="${2:?usage: minict.sh web <name> <port> [docdir]}"
@@ -118,6 +224,7 @@ HTML
     echo "web '$name' failed to listen on 127.0.0.1:$port (log: $INST/$name/log, proxy: $INST/$name/proxy.log)"
     exit 1
     ;;
+
 exec)
     name="${2:?usage: minict.sh exec <name> -- cmd...}"
     shift 2
@@ -131,6 +238,7 @@ shell)
     ;;
 down)
     name="${2:?usage: minict.sh down <name>}"
+    down_pasta "$name"
     if [[ -f "$INST/$name/pid" ]]; then
         pid="$(cat "$INST/$name/pid")"
         kill "$pid" 2>/dev/null || true
@@ -155,8 +263,12 @@ ps)
         [[ -d "$d" ]] || continue
         n="$(basename "$d")"
         p="$(cat "$d/pid" 2>/dev/null || echo -)"
+        pasta=""
+        if [[ -f "$d/pasta-pid" ]] && kill -0 "$(cat "$d/pasta-pid")" 2>/dev/null; then
+            pasta="  pasta=yes"
+        fi
         if [[ "$p" != "-" ]] && kill -0 "$p" 2>/dev/null; then
-            echo "$n  running  pid=$p  fs=$(du -sh "$d/rootfs" 2>/dev/null | cut -f1)"
+            echo "$n  running  pid=$p  fs=$(du -sh "$d/rootfs" 2>/dev/null | cut -f1)$pasta"
         else
             echo "$n  stopped"
         fi

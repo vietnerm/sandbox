@@ -1,7 +1,7 @@
 # Root Makefile — entry points required by PROMPT.MD / CI.
 # The binary build itself lives in sandbox/Makefile.
 
-.PHONY: all build minictd rootfs rootfs-alpine test test-escape test-escape-alpine test-seccomp test-netns test-alpine test-web test-minictd unicode-check test-unicode perf-check cve-check bench clean help
+.PHONY: all build minictd rootfs rootfs-alpine test test-escape test-escape-alpine test-seccomp test-netns test-alpine test-web test-minictd test-pasta unicode-check test-unicode perf-check cve-check bench clean help
 
 all: build
 
@@ -18,14 +18,19 @@ rootfs:
 rootfs-alpine:
 	bash sandbox/mkrootfs-alpine.sh rootfs-alpine
 
-# isolation suite (17 cases) + seccomp blocklist suite (20 cases)
-# + netns suite (7 cases) + alpine-rootfs suite (8 cases) — ALL suites run
-# even if an earlier one fails (tests/run-suites.sh), aggregate exit code
-# (issue #14).
+# isolation suite (29 cases) + seccomp blocklist suite (21 cases)
+# + netns suite (7 cases) + alpine-rootfs suite (8 cases)
+# + escape-alpine suite (29 cases) + cve-check tool suite (4 cases)
+# + pasta connectivity suite (7 cases: PT1/PT2/NET11C always run,
+#   NET10/NET11/NET12/AB1 env-gated SKIP without /dev/net/tun — D37)
 test: build rootfs
 	bash tests/run-suites.sh
 
 test-escape: test
+
+# pasta connectivity suite standalone (issue #57, D37)
+test-pasta: build rootfs
+	bash tests/test_pasta.sh
 
 # the WHOLE isolation/escape suite re-run against the alpine distro rootfs
 # (roadmap GĐ1 mục 2 residual, issue #5 — more attack surfaces than busybox)
@@ -74,7 +79,8 @@ help:
 	@echo "make build        - build minict binary"
 	@echo "make rootfs       - build busybox rootfs (rootless)"
 	@echo "make rootfs-alpine- build alpine minirootfs rootfs (rootless)"
-	@echo "make test         - isolation (29) + seccomp (21) + netns (7) + alpine (8) + cve-check tool (4), all suites always run"
+	@echo "make test         - isolation (29) + seccomp (21) + netns (7) + alpine (8) + escape-alpine (29) + cve-check tool (4) + pasta (7; NET10-12/AB1 SKIP without tun), all suites always run"
+	@echo "make test-pasta  - pasta connectivity suite only (issue #57, D37)"
 	@echo "make test-escape  - same suites (alias, CI requirement)"
 	@echo "make test-escape-alpine - isolation suite re-run on alpine rootfs (29 cases)"
 	@echo "make test-web     - web service suite (6 cases)"

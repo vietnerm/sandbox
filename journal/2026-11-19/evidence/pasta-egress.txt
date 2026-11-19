@@ -1,0 +1,46 @@
+# Evidence — feat/3-pasta-egress (issue #57, D37) — 2026-11-19 Phiên 3
+
+## make test (7 suites, rc=0)
+=== summary: PASS=29 FAIL=0 ===
+=== summary: PASS=21 FAIL=0 ===
+=== summary: PASS=7 FAIL=0 ===
+=== summary: PASS=8 FAIL=0 ===
+=== summary: PASS=29 FAIL=0 ===
+=== summary: PASS=4 FAIL=0 ===
+=== summary: PASS=3 SKIP=4 FAIL=0 ===
+=== run-suites summary: 7 suites, failed: none ===
+total: 98 existing PASS + pasta PT1/PT2/NET11C = 101 PASS, 4 SKIP (env-blocked no tun), 0 FAIL
+
+## make test-web
+=== summary: PASS=9 FAIL=0 ===
+
+## pasta suite standalone (re-run for evidence)
+=== minict pasta tests (2026-11-19 04:08:56) — host listener 19495, fwd 19898, host-ip 21.0.2.215 ===
+PT1     pasta binary pinned+verified+static built                PASS
+PT2     pasta --version matches pin (2026_10_02.cba3570)         PASS
+NET11C  control: WITHOUT pasta, host IP unreachable              PASS
+NET10   with pasta: tap iface + default route inside             SKIP
+        (env-blocked: no /dev/net/tun on this host — D34/D37)
+NET11   with pasta: egress wget sandbox→host listener          SKIP
+        (env-blocked: no /dev/net/tun on this host — D34/D37)
+NET12   with pasta: host→instance port-forward (-t FPORT:8080) SKIP
+        (env-blocked: no /dev/net/tun on this host — D34/D37)
+AB1     with pasta: attach latency measured (host-side)          SKIP
+        (env-blocked: no /dev/net/tun on this host — D34/D37)
+=== summary: PASS=3 SKIP=4 FAIL=0 ===
+(SKIP = pasta env-blocked on this host: no /dev/net/tun — real run happens on CI runners, D34/D37)
+
+## perf-check (default path — pasta out-of-band, not in cold_start)
+== perf-check 2026-11-19 04:08:52 — kernel 5.10.134-013.15.kangaroo.al8.x86_64, N=20 ==
+cold_start_ms  :     1.87  (threshold 100)
+rss_kb         :     1184  (threshold 10240)
+disk_base_mb   :     2.04  (threshold 20)
+perf-check: PASS
+A/B pasta attach: AB1 SKIP on dev (no tun) — CI run đo thật, SCR sẽ lấy từ log CI.
+
+## Host baseline ("không bị nhiễm")
+sha256: /etc/passwd 21d5de2d..., /bin/bash 223fe856..., /usr/bin/sudo a59f393b... — KHỚP CHÍNH XÁC với phiên sáng nay (deep-escape.txt) và journal/2026-11-18/evidence/host-baseline.txt → UNCHANGED. (/etc/shadow không đọc được dưới uid 1001 — như mọi phiên.)
+Listeners (ss -tln): cùng tập nền (127.0.0.1:12600/12700/19001, 0.0.0.0:19005/19006, *:81) — không listener lạ.
+
+## CVE check
+rc=0, 19 hàng, 0 CVE mới ngoài watchlist — journal/2026-11-19/cve/pasta-egress.md|.json
