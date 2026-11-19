@@ -1,99 +1,40 @@
 {
   "date": "2026-11-19",
-  "mode": "plan+apply (Phiên 7, ZAI)",
+  "mode": "plan+apply (Phiên 8, ZAI)",
   "halted": false,
   "halt_reason": null,
   "branches": [
     {
-      "name": "docs/issue-throughput",
-      "head_sha": "eb1dbc2d84d878dc67fa93cba2ea4b6e2e36e6ae",
+      "name": "feat/79-apk-online",
+      "head_sha": "e8002d29632c80ed4a75ebed5368133538470c73",
       "decision": "MERGE",
-      "reason": "G1–G8 PASS; G7 via owner IM ủy quyền (tiền lệ #16/#17); squash 47023c3; CI main xanh sau merge",
-      "pr": 63,
-      "issue": 56,
-      "gates": {
-        "G1": true,
-        "G2": true,
-        "G3": true,
-        "G4": true,
-        "G5": true,
-        "G6": true,
-        "G7": true,
-        "G8": true
-      },
+      "reason": "G1-G8 PASS; SCR PASS (clean-room x4 + M0/M-badrootfs caught); SIA PASS 11/11 audit:pass; CI xanh (PT4 PASS that tren runner: pasta 11/11 0 SKIP, minictd 20/20, web 9/9); khong G7; squash f610e52 match-head",
+      "pr": 81,
+      "issue": 79,
+      "gates": {"G1": true, "G2": true, "G3": true, "G4": true, "G5": true, "G6": true, "G7": true, "G8": true},
       "archive_tag": "",
       "done": true,
       "error": ""
     },
     {
-      "name": "fix/50-execstream-drain",
-      "head_sha": "0ce0346d1d0531661e46e6cb92804a95954f8e11",
+      "name": "feat/79-apk-online",
+      "head_sha": "e8002d29632c80ed4a75ebed5368133538470c73",
       "decision": "DELETE_MERGED",
-      "reason": "PR #69 merged bởi phiên Claude (f1612ec); ZAI apply xoá 07:53Z ngoài cửa sổ §0.4",
-      "pr": 69,
-      "issue": 50,
-      "gates": {
-        "G1": true,
-        "G2": true,
-        "G5": true,
-        "G7": true
-      },
+      "reason": "PR #81 MERGED (squash f610e52) — xoa ngay sau merge, ls-remote chi con main",
+      "pr": 81,
+      "issue": 79,
+      "gates": {},
       "archive_tag": "",
       "done": true,
       "error": ""
-    },
-    {
-      "name": "chore/ledger-2026-11-19-claude-p2",
-      "head_sha": "8848af6",
-      "decision": "DELETE_MERGED",
-      "reason": "PR #70 merged bởi phiên Claude (0dff143); ZAI apply xoá 07:53Z",
-      "pr": 70,
-      "issue": 0,
-      "gates": {
-        "G1": true,
-        "G2": true,
-        "G5": true,
-        "G7": true
-      },
-      "archive_tag": "",
-      "done": true,
-      "error": ""
-    },
-    {
-      "name": "fix/66-web9-wait-listen",
-      "head_sha": "74f501f",
-      "decision": "MERGE",
-      "reason": "G1–G8 PASS; thuần test harness; SCR web 25/26 post-fix + mutant caught; SIA PASS (1 low → #72); squash 1a12688; #66 đóng",
-      "pr": 71,
-      "issue": 66,
-      "gates": {
-        "G1": true,
-        "G2": true,
-        "G3": true,
-        "G4": true,
-        "G5": true,
-        "G6": true,
-        "G7": true,
-        "G8": true
-      },
-      "archive_tag": "",
-      "done": true,
-      "error": ""
-    },
-    {
-      "branch": "feat/74-pasta-dns",
-      "head": "abc5a442b9e432684242174b4e73614aefae4f2a",
-      "decision": "MERGE -> DELETE_MERGED",
-      "pr": 76,
-      "issue": 74,
-      "reason": "SCR PASS r1 @9d7227e + SIA CONCERNS (3 medium: counts/B6/B10) -> fix(review) abc5a44 (S1-S4, low->#77) -> SCR PASS r2 + SIA PASS re-verdict (audit:pass); CI xanh ca 2 SHA (pasta 9/9 0 SKIP runner); squash 524b87a match-head; #74 auto-close; CI main xanh sau merge"
     }
   ],
-  "remaining_branches": [],
-  "main_ci_after": "success (ci + unicode-guard @ 524b87a)",
+  "remaining_branches": ["main"],
+  "main_ci_after": "success",
   "notes": [
-    "Pha B/C dau phien rong (0 PR mo) — tiep tuc Pha D ngay",
-    "gh CLI khong co trong sandbox -> REST API scripts/ghapi.sh (token tu remote, khong echo)",
-    "Phat hien phu: #75 port-collision test_web (19006 = infra host), #77 from-audit low"
+    "Pha A/B dau chu trinh rong (0 PR mo, remote chi main)",
+    "Pha D: issue #79 (apk add online, GDD1 muc 1 residual) — PR #81 di day du Pha B->C trong cung phien",
+    "Side-finding: issue #80 (rootfs-alpine tracked mutate moi make test + AL5 vacuous tu #21)",
+    "gh CLI 2.63.2 cai local /home/z/.local/bin (khac Phien 7 — khong can REST wrapper)"
   ]
 }

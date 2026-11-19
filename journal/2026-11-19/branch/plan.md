@@ -205,3 +205,31 @@ MODE=plan (Pha A). APPLY sẽ chạy ở Pha C/E.
   runner (tiền lệ Phiên 3/7). Cần thêm `--rootfs` cho `minict.sh up` (đang
   hardcode busybox rootfs) — đo được: rootfs-alpine đã ship đủ HTTPS runtime
   (libcrypto/libssl/libz/libapk + ca-certificates-bundle 118 certs + keys).
+
+---
+
+# SBG Branch Plan + APPLY — 2026-11-19 (Phiên 8, ZAI — Orchestrator §11)
+
+MODE=plan (Pha A) → MODE=apply (Pha C/E — ghi hợp nhất tại đây).
+
+## Thu thập cuối phiên
+- Nhánh ≠ main duy nhất: **feat/79-apk-online** @ `e8002d2` (PR #81 — Pha D của
+  chính phiên này: issue #79 apk add online).
+- PR mở sau merge: **0**; issue #79 auto-closed (COMPLETED) bởi merge.
+
+## Quyết định theo nhánh
+| Nhánh | Ahead/Behind | PR | CI | retest | audit | Quyết định | Lý do |
+|---|---|---|---|---|---|---|---|
+| feat/79-apk-online | 2/0 | #81 | xanh ×2 SHA (d41d250, e8002d2) — build-test/perf/scan | SCR PASS: clean-room ×3 @ `d41d250` + ×1 @ `e8002d2` (make test 107P+6S dev, web 9/9 ×4) + M0 caught (NET11C/PT3C/PT4C FAIL) + M-badrootfs fail-closed | SIA PASS 11/11 (label audit:pass) — B1–B11 OK, 0 claim sai, 0 vacuous, 0 finding | MERGE → DELETE_MERGED | G1–G8 PASS; không G7 (Makefile/docs/journal/minict.sh/test_pasta.sh); squash `f610e52` match-head; CI main xanh sau merge (ci + unicode-guard @ `f610e52`) |
+
+- DELETE_MERGED: feat/79-apk-online (xoá remote OK; `git ls-remote`: chỉ `main`).
+- MERGE: (đã thực hiện — #81) — KEEP: (rỗng) — DROP: (rỗng)
+- §0.6 dừng: không áp dụng (CI main xanh; host baseline unchanged trong-ph-version;
+  CVE gate rc=0).
+
+## Kết luận
+- Repo về trạng thái mục tiêu §11: chỉ **`main`**.
+- §7 self-audit: make test rc=0 (dev), test-web 9/9, minictd 20/20 từ log CI main
+  @ `f610e52` (dev không Go — nguồn ghi rõ), cve-check rc=0 (cve/apk-online.md),
+  main checks xanh.
+- DAY PASS — 2026-11-19 Phiên 8.
