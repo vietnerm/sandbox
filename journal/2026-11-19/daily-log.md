@@ -65,3 +65,78 @@
 - Owner: tick manifest DoD (rootfs thật ✓ escape suite ✓ graceful stop ✓ —
   manifest là G7, agent không tự gộp); review `verified` cho #5/#34/#52.
 - #50 MD13 flake + #55 alpine flake: instrumentation khi có dư thời gian.
+
+## Phiên 3 — Orchestrator §11 (ZAI, chu trình chuẩn: A→B→C→D→E)
+
+### Issue xử lý
+- **#57** (p1 feature, area:netns — GĐ1 mục 3, kế hoạch chốt từ Phiên 2) —
+  status: **done** (merge #59 → `01899ee`; issue auto-closed).
+- #52/#34 (p0 cve-daily): không tái phát — CVE check phiên này 0 mới ngoài
+  watchlist (cve/pasta-egress.md|.json).
+
+### Research (D37 bổ sung D34 — đọc SOURCE passt thay vì chỉ docs)
+- **Trap bắt được**: `pasta --netns` mà không `--userns` ⇒ ngầm `--netns-only`
+  (conf.c conf_pasta_ns) ⇒ setns EPERM với netns thuộc userns instance —
+  phải truyền `--userns /proc/<pid>/ns/user` tường minh; join rootless được
+  vì euid==owner userns (map `0 1001 1`, D20). isolation.c isolate_user:
+  non-root giữ euid (không drop nobody), uid 0 trong ns sau join.
+- Egress deterministic: dst=GW_IP được pasta NAT → host 127.0.0.1 (fwd.c
+  nat_outbound; map-host-loopback default = gateway). dst=IP host (địa chỉ
+  tap copy từ host) là bẫy: traffic tự-address ở lại lo, không qua tap.
+- Nguồn có URL trong research.md Phiên 3 (B6 fix sau audit).
+
+### Development (nhánh feat/3-pasta-egress, 5 commit, merge #59 → 01899ee)
+- `tools/fetch-pasta.sh`: pin passt snapshot 2026_10_02.cba3570 + sha256
+  fail-closed + `make static` → tools/bin (gitignored, không vendor — D20).
+- `minict.sh`: `up <name> [--pasta] [-- payload…]` + `MINICT_PASTA=1` +
+  `MINICT_PASTA_FWD` (-t FPORT:GPORT) + route-ready poll host-side qua
+  /proc/<pid>/net/route + aliveness guard + fail-closed cleanup.
+- `tests/test_pasta.sh` 7 case vào `make test` (7 suites): PT1/PT2/NET11C
+  chạy mọi nơi; NET10 tap+route / NET11 egress gw / NET12 port-forward /
+  AB1 attach-latency — SKIP(env-blocked) khi không tun (dev), PASS thật
+  trên runner.
+- **CI nuôi suite ×4 vòng đỏ→xanh (bắt lỗi thật, không phải flake)**:
+  (1) payload phụ thuộc /proc/net/route trong sandbox (/proc EPERM — AL4;
+  netlink bị seccomp D15) → ifconfig-ioctl + route assert host-side;
+  (2) wget race trước khi pasta gắn + egress target sai (host-IP tự-address)
+  → chờ tap + gw target; (3) NET11C vacuous dưới M0 (SCR bắt) → PROBE_ALIVE
+  guard; (4) PT2 superstring match (SCR M-version bắt) → exact-match.
+- Gates: SCR PASS ×5 run (make test 7 suites rc=0 ×5, web 9/9 ×5, mutant
+  M0/M-pin/M-version caught, bench N=50 p50 2.0ms, host unchanged) + SIA
+  PASS 11/11 (2 medium sửa: listener 0.0.0.0→127.0.0.1, B6 URLs; 3 low →
+  from-audit issues) — label audit:pass trên PR #59 @ 47ce5d5.
+
+### CVE Check
+- rc=0, 19 hàng, 0 mới ngoài watchlist — `cve/pasta-egress.md|.json`.
+- Kernel 5.10.134 dev (runner azure 7.0.0-1014-aws cho CI).
+
+### Validation "không bị nhiễm"
+- `make test` ×5 (SCR clean-room): **101 PASS + 4 SKIP / 0 FAIL** mỗi run;
+  `make test-web` 9/9 ×5; host baseline unchanged (khớp 2026-11-18);
+  listeners cùng tập nền. Bằng chứng: `evidence/pasta-egress.txt` + SCR
+  comment PR #59.
+- CI runner: build-test PASS (pasta 7/7), perf-check PASS 2.02ms/3128kB/
+  2.14MB; test-minictd 20/20.
+
+### Perf
+- cold_start KHÔNG đổi (pasta out-of-band, không nằm trong đường đo):
+  dev p50 2.0ms N=50 / runner 2.02ms N=20 / rss 1184-3128kB / disk 2.04MB.
+- AB1 attach latency: metric đo được (< 30s assert) nhưng chưa in số tuyệt
+  đối khi PASS (low follow-up).
+
+### PR
+- #59 — merged `01899ee` — CI xanh ×2 vòng cuối + main xanh — đủ cổng
+  (SCR ×5 + SIA PASS + mutant ×3 caught) ✓
+- Branch feat/3-pasta-egress xoá sau merge (SBG DELETE_MERGED).
+
+### Kế hoạch kế tiếp
+- **GĐ1 mục 4** (stack web thật trên rootfs distro — nginx + API + SQLite;
+  AL7 pre-bake ownership) là mục thấp nhất chưa xong của GĐ1; DNS cho pasta
+  (resolv.conf inject hoặc --dns-forward) là điều kiện cho `apk add online`
+  (mục 1 residual) — ứng viên song song nhỏ.
+- from-audit issues: M-userns env-blocked mutant + AB1 logging + MINICT_PASTA_FWD globbing (mở ngay sau ledger).
+- Owner: review `verified` cho #5/#34/#52; tick manifest DoD (G7).
+- #50 MD13 flake + #55 alpine flake: instrumentation khi có dư thời gian.
+
+DAY PASS — 2026-11-19 Phiên 3: issue #57 done (merge #59, đủ cổng SCR/SIA),
+CVE 0 mới, escape suite 105 case xanh, host unchanged, main xanh.

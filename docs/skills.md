@@ -148,3 +148,8 @@ python3 -c 'import subprocess,time; t=time.monotonic_ns(); subprocess.run([...])
   rootfs-alpine stale cache làm đỏ giả. Flake #55 (build rc=0 nhưng thiếu
   empty-dir của tarball, 2/4 lần): mitigation mkdir vô điều kiện + self-heal
   precondition trong wrapper; root-cause theo issue #55.
+- Flip draft→ready trên PR: REST `PATCH /pulls/<n> {"draft":false}` trả 200
+  nhưng KHÔNG đổi trạng thái với PAT fine-grained (no-op im lặng — kỳ lạ:
+  cùng token tạo PR/comment/label/merge được). Quy tắc: dùng GraphQL
+  `markPullRequestReadyForReview` với `node_id` từ `GET /pulls/<n>`; xác minh
+  lại bằng GET (tái hiện 2026-11-19 Phiên 3, PR #59).

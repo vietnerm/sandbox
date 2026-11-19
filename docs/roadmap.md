@@ -20,13 +20,28 @@
 3. C — CVE check: `python3 tools/cve-check.py --json journal/$(date +%F)/cve/<slug>.json`
    + cập nhật `docs/cve-watchlist.md`
 4. D — No-Compromise Validation: `make test` (isolation 29 + seccomp 21 + netns 7 +
-   alpine 8 + escape-alpine 29 + cve-check tool 4 = 98, pipefail thật —
-   issue #14; đếm lại 2026-11-19 phiên 2) + `make test-web` +
+   alpine 8 + escape-alpine 29 + cve-check tool 4 + pasta 7 = 105, pipefail thật —
+   issue #14; đếm lại 2026-11-19 phiên 3; dev: 101 PASS + 4 SKIP env-blocked) + `make test-web` +
    `make test-minictd` (20, từ 2026-11-18) + lưu evidence vào
    `journal/YYYY-MM-DD/evidence/` + integrity check host
 5. Ghi `journal/YYYY-MM-DD/daily-log.md` (quy tắc thư mục: PROMPT.MD §10)
 
 ## Đã xong
+- [x] 2026-11-19 (phiên 3, SDDA): **pasta egress + port-forward prototype (issue #57,
+  mục 3 GĐ1)**: `tools/fetch-pasta.sh` pin passt snapshot 2026_10_02.cba3570 +
+  sha256 fail-closed + `make static` (không vendor — D20 pattern, D37);
+  `minict.sh up --pasta` gắn pasta vào netns instance SAU khi sống (`--userns`
+  tường minh — trap: `--netns` đơn lẻ ⇒ --netns-only ⇒ EPERM, conf.c
+  conf_pasta_ns; join rootless bằng euid==owner); payload override
+  `up <name> [-- payload]` (exec mở ns set mới — không dùng được cho pasta);
+  `MINICT_PASTA_FWD` port-forward; suite `tests/test_pasta.sh` 7 case vào
+  `make test` (7 suites, 105 case: PT1/PT2/NET11C mọi nơi + NET10/11/12/AB1
+  SKIP(env-blocked) khi không tun — PASS thật trên runner 7/7); egress
+  deterministic qua gateway-NAT (không internet/DNS); CI nuôi suite 4 vòng
+  đỏ→xanh bắt lỗi thật (payload /proc-dependency, race attach, NET11C vacuous
+  dưới M0, PT2 superstring); SCR ×5 + mutant ×3 caught + SIA PASS; perf không
+  đổi (pasta out-of-band). D16 unix-socket bridge = fallback loopback-only.
+  (#57/#59)
 - [x] 2026-11-19 (phiên 2, SDDA — chu trình tăng tốc theo chỉ thị owner
   "đẩy nhanh tiến độ để kịp qua giai đoạn 2", D35): **(a) #44 — cve-check.py
   đỡ crash khi NVD lỗi transient** (D35: parse_nvd defensive + render_cvss
@@ -170,9 +185,9 @@
 2. **chroot-escape test sâu hơn** (issue #5): fd-based escape, /proc/self/root,
    setuid binary trong rootfs (NNP chặn), core dump leak; case seccomp SIGSYS;
    chạy lại cả suite trên rootfs distro thật (có `/proc`, nhiều mặt tấn công hơn busybox).
-3. **Connectivity qua pasta/slirp4netns** (thay proxy tự viết): A/B với bridge D16;
-   D16 chỉ còn fallback loopback-only. Điều kiện cho egress (cài gói trong instance)
-   và cho port-forward theo instance ở GĐ2.
+3. ~~Connectivity qua pasta/slirp4netns~~ — **xong phiên 3** (prototype CI-gated,
+   issue #57): egress + port-forward qua pasta; DNS + `apk add online` là residual
+   (cần resolv.conf inject hoặc `--dns-forward`). D16 chỉ còn fallback loopback-only.
 4. **Stack web thật trong 1 instance**: nginx/caddy + API + SQLite trên rootfs
    distro; `./sandbox up|down|bench` một lệnh; cold start stack < 5 s;
    signal lifecycle graceful đã có từ phiên 7 (D19).
