@@ -69,7 +69,7 @@ help:
 	@echo "make build        - build minict binary"
 	@echo "make rootfs       - build busybox rootfs (rootless)"
 	@echo "make rootfs-alpine- build alpine minirootfs rootfs (rootless)"
-	@echo "make test         - isolation (17) + seccomp (20) + netns (7) + alpine (8), all suites always run"
+	@echo "make test         - isolation (29) + seccomp (21) + netns (7) + alpine (8) + cve-check tool (4), all suites always run"
 	@echo "make test-escape  - same suites (alias, CI requirement)"
 	@echo "make test-web     - web service suite (6 cases)"
 	@echo "make minictd      - build minictd daemon + minict-exec (needs Go >= 1.23)"
