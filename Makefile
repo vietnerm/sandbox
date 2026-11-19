@@ -49,8 +49,9 @@ test-alpine: build rootfs-alpine
 test-web: build rootfs
 	bash tests/test_web.sh
 
-# minictd e2e (19 cases): real daemon -> patched minict -> minict-exec
+# minictd: go unit tests (issue #50 regression) + e2e (20 cases): real daemon -> patched minict -> minict-exec
 test-minictd: build rootfs minictd
+	cd minictd && $(or $(GO),go) test -count=1 ./...
 	bash tests/test_minictd.sh
 
 # perf-guard gate: cold start <= 100 ms, RSS <= 10240 kB, disk <= 20 MB

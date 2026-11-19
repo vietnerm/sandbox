@@ -227,3 +227,11 @@ CVE 0 mới, escape suite 105 case xanh, host unchanged, main xanh.
 - Owner: review + merge PR #63 (G7); `verified` cho #5/#31; đóng #34/#52.
 - Sau merge #63: xoá nhánh KEEP (SBG apply kế); WEB9 instrumentation;
   DNS pasta (GĐ1 mục 1 residual); stack web thật (mục 2).
+
+## Phiên Claude — issue #50: MD13 flaky (execstream mất frame cuối, D40)
+
+- Kích hoạt: CI PR #63 @ `e98a379` đỏ MD13 (`b''`), lần thứ 3 trong ngày. Đã rerun
+  job lỗi một lần cho #63.
+- Root cause: race `select` giữa `frames` và `done` trong `handleExecStream` (D40).
+  Sửa bằng bước xả channel; regression test Go bắt được mutant.
+- `make test-minictd` chạy thêm `go test ./...`; local ×3: go ok + e2e 20/20.
