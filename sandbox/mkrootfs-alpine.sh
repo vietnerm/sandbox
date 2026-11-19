@@ -106,7 +106,7 @@ chmod 1777 "$TARGET/tmp"
 [[ -x "$TARGET/sbin/apk" ]] || { echo "no /sbin/apk in minirootfs?!"; exit 1; }
 # D36 residual: alpine 3.22.8 tarball ships /tmp + /home, but empty dirs
 # were observed MISSING after intermittent builds (2/4 runs 2026-11-19,
-# issue #51) — create them unconditionally, fail loud on failure
+# issue #55) — create them unconditionally, fail loud on failure
 mkdir -p "$TARGET/home/minict" "$TARGET/media" "$TARGET/root" "$TARGET/run" \
          "$TARGET/srv" "$TARGET/sys"
 
