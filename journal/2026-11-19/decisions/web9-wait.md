@@ -18,3 +18,18 @@
   trên cùng host/mốc thời gian có 3/9 FAIL trước fix.
 - Không đổi proxy/production code (`tools/webproxy.py` untouched) — thuần test
   harness; 9 case web giữ nguyên ngữ nghĩa (WEB7/WEB8 không đổi).
+
+## Phụ lục D41 (sau vòng đo thêm trên host ZAI)
+
+- Kết quả post-fix trên host ZAI (cùng host, các mốc liên tiếp): **25/26 suite
+  run PASS** (8/8 + 4/5 non-instrumented; 13/13 instrumented) so với pre-fix
+  ~6/17 FAIL (~35%). Cải thiện 35%→4% fail-rate.
+- Loại trừ nguyên nhân (đo được): (a) `/proc/self/fd` magic-link connect
+  stress 200/200 OK; (b) upstream socket trả marker **0.00 s** mọi lần probe
+  trực tiếp; (c) proxy instrumented: **0 refusal** qua 26 run (log stderr).
+- Residual (1/26): burst `rc=52` empty-reply của proxy asyncio trên host
+  container này, dài tới >5 s trong context suite — **không tái hiện trên
+  runner CI** (web 9/9 xanh mọi run trong ngày, kernel 7.0). Chua ra root
+  cause tầng scheduler/container; budget 5 s đã bao phủ mọi burst ≤1.4 s đo
+  được standalone. Theo dõi: nếu xuất hiện trên CI → mở issue sâu hơn.
+- Mutant port-sai vẫn caught (check "never listened" sống).
