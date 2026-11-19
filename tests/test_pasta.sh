@@ -136,8 +136,8 @@ dump_logs() { # <suffix> — tails for CI diagnosability
 run_case PT1 "pasta binary pinned+verified+static built" pass \
     bash "$REPO/tools/fetch-pasta.sh"
 
-run_case PT2 "pasta --version matches pin ($PASTA_VERSION)" pass \
-    sh -c "'$REPO/tools/bin/pasta' --version | grep -q '$PASTA_VERSION'"
+run_case PT2 "pasta --version == pin exactly ($PASTA_VERSION)" pass \
+    sh -c "'$REPO/tools/bin/pasta' --version | head -1 | grep -qx 'pasta $PASTA_VERSION'"
 
 # ---------- control: no pasta → gateway unreachable (runs everywhere) ----------
 net11c_test() {
