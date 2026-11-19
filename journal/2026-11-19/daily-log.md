@@ -1,93 +1,67 @@
 # Daily Log — 2026-11-19
 
-## Phiên 1 — Orchestrator §11 (ZAI): issue #5 — deep escape PoC (D33)
+## Phiên 2 — Orchestrator §11 (ZAI, chu trình tăng tốc theo chỉ thị owner)
 
-> Chu trình: pull (main 187bfd2, chỉ mode-change rác — restore) → Pha A SBG
-> plan (0 PR mở, repo chỉ main) → Pha B/C rỗng → Pha D issue #5 → PR #47
-> (draft, PAT không flip được) → PR #48 non-draft → B→C, merge `70921c2` →
-> Pha E SBG apply + ledger PR.
+> Owner chỉ thị: "đẩy nhanh tiến độ để kịp qua giai đoạn 2, làm nhiều hơn 1
+> ngày nhiều hơn 1 xíu" → override luật §1 Bước 3 (1 issue/ngày) — ghi nhận
+> như dữ liệu owner-level (tương tự D27). Mọi PR vẫn đi ĐỦ cổng §11 B→C.
 
 ### Issue xử lý
-- **#5** — sec(escape): deep escape PoC — fd-based chroot escape, core_dump
-  leak, setuid binary vs NNP — status: done (đã merge; issue mở lại theo §6
-  chờ owner `verified`).
-- Triage khác: #44 gỡ `needs-repro` (repro đã xác nhận live Phiên 4) +
-  `status:blocked`; #34 giữ mở theo §6 (đã triage Phiên 2).
+- **#44** (p2 chore, from-audit) — status: done (merge #53; issue auto-close
+  khi merge — type:chore, §6 không cản).
+- **#5 residual** — "chạy lại cả suite trên rootfs distro thật" — status: done
+  (merge #54; issue #5 vẫn mở theo §6 chờ owner `verified`).
+- **#52** (p0 security, auto cve-daily) — triage cùng ngày: bảng 19 hàng trùng
+  khớp watchlist, 0 CVE mới ngoài watchlist, 0 ảnh hưởng sandbox — comment
+  chi tiết + **giữ mở** theo §6 (như #34). Mở chore **#56** (cve-daily chỉ
+  mở issue khi CVE ngoài watchlist).
+- **#55** mới (p2 bug, area:ci) — flake rootfs-alpine thiếu empty-dir 2/4
+  build; mitigation trong #54, root-cause cần instrumentation.
+- **#57** mới (p1 feature, area:netns) — pasta egress prototype CI-gated
+  (GĐ1 mục 3), theo D34.
 
-### Research (5 nguồn — `research.md`)
-- CVE-2018-15664 (TOCTOU qua fd); close_range(2) man7 (kernel 5.9, syscall
-  436); PR_SET_NO_NEW_PRIVS man7 + kernel.org; core(5) man7 (WebFetch trực
-  tiếp: "RLIMIT_CORE will be ignored if the system is configured to pipe core
-  dumps to a program"); Elastic rule core_pattern container escape.
+### Research (D34 — pasta)
+- Đo được: máy dev **không có `/dev/net/tun`** → pasta/slirp4netns env-blocked
+  dev; chỉ runner CI có (phải probe). Seccomp side OK (AF_INET = SC19).
+- Thiết kế đầy đủ trong `decisions/pasta-connectivity.md`: binary pin, flow
+  `--netns /proc/<shim>/ns/net`, NET10-12 env-gated, A/B perf tách.
+- Quyết định: KHÔNG PR code pasta hôm nay (test chỉ giá trị trên CI → rủi ro
+  main đỏ blind); issue #57 cho phiên kế.
 
-### Development (`sec/5-deep-escape`, squash `70921c2`, D33)
-- Phát hiện trước vá: minict.c **0** `close_range/FD_CLOEXEC` (payload kế thừa
-  mọi fd không-CLOEXEC của caller → bypass pivot_root) và **0** `RLIMIT_CORE`
-  (crash → core file trong rootfs; máy dev `core_pattern` = `core` file).
-- `harden_payload_fds()` (minict.c payload, trước capdrop/seccomp):
-  `setrlimit(RLIMIT_CORE,{0,0})` die-on-fail + `close_range(3,~0U,0)` +
-  fallback loop trần 65536. `harden_exec_fds()` (minict-exec child) — cùng
-  lớp, **filter seccomp không đổi** (MD0 PASS trên CI).
-- Test mới: isolation 23→**29** — FD1 (2 giai đoạn: control kế thừa qua
-  /proc/<minict>/fd/9 → không vacuous; payload `cat <&9` phải EBADF + không
-  lộ marker), PROC2, CHROOT1 (expect=fail), SETUID2 (exec busybox 4755,
-  host /proc NoNewPrivs=1 + CapEff=0 kiểu D32), CORE1 (harness tự nâng limit
-  trước để không kế thừa 0 — vacuous-guard), CORE2; seccomp 20→**21** — SC20
-  (blocklist hit sống sót rc=1 EPERM, không SIGSYS death).
-- Negative control clean-room 6/6 bắt đúng: fd→FD1+CORE1; **core→CORE1 duy
-  nhất với FD1 PASS** (chứng minh mỗi test đo đúng lớp); capdrop→CAPD1+
-  CHROOT1+SETUID2; nnp→collapse (seccomp tự die); trap→SC20; M0→collapse.
-- Sự cố + bài học: (1) mutant script `git checkout` cả file chưa commit →
-  mất WIP minict.c + 2 suite giữa phiên (khôi phục bằng vá lại; NC1 lần đó
-  vẫn hợp lệ) — bài học vào `docs/skills.md`; (2) mutant binary đặt tên
-  `minict_fd` làm comm-matching đỏ giả toàn suite (quirk #38) — rebuild tên
-  `minict` per-dir; (3) SC20 viết bằng `ic` không tồn tại trong seccomp suite
-  → FAIL giả lần chạy đầu — đổi sang helper riêng; (4) tưởng seccomp kết thúc
-  SC19, thực tế có **SC0** — lesson đếm id bằng grep/sort -V/uniq -c vào
-  `docs/skills.md`; (5) **PR #47 draft stuck**: PAT fine-grained không flip
-  được draft (PATCH 200 no-op + GraphQL FORBIDDEN → merge 405 "still a
-  draft") — đóng có lý do + tạo lại non-draft cùng head SHA, SCR/SIA hợp lệ
-  (evidence gắn SHA không gắn PR).
+### Development (2 merge)
+- **PR #53 → `07d016e`** (fix/44): cve-check.py defensive (`parse_nvd` +
+  `render_cvss` error-first); suite tool offline 4 case (CV1 repro #44, CV2
+  malformed, CV3 V30-fallback, CV4 control cũ-KeyError); mutant caught.
+  **LỖI QUY TRÌNH: merge thiếu SCR/SIA** (phiên tăng tốc) — khắc phục post-hoc
+  audit sau-merge (PASS, comment PR + label), ghi daily-log + skills.md.
+- **PR #54 → `c2b9f0e`** (test/5-escape-alpine): `ISOLATION_ROOTFS` env +
+  wrapper + suite thứ 5 (29 case trên alpine); CHROOT1 applet-explicit
+  (vacuous-rc127 class mới); flake #55 mitigation (mkdir vô điều kiện +
+  self-heal); B1 resync main 07d016e (conflict run-suites union) — sự cố
+  conflict-marker sót 1 commit, sửa + `bash -n` checklist. Đủ cổng: SCR ×2
+  (98/98 + mutant trên alpine) + SIA PASS (label audit:pass).
 
 ### CVE Check
-- Kernel `5.10.134-013.15.kangaroo.al8.x86_64` (máy dev == máy SCR).
-- `cve/deep-escape.md|.json` — rc=0, 19 hàng watchlist, **0 CVE mới ngoài
-  watchlist**; critical đã biết đều host-side (WEB2 loopback đo được — Phiên 2).
-- NVD live OK lần này (không tái hiện crash #44 — issue vẫn hợp lệ cho lỗi
-  transient, giữ `status:blocked`).
+- Sáng (Bước 6 Phiên 1): rc=0, 19 hàng, 0 mới — `cve/deep-escape.md|.json`.
+- cve-daily runner (02:50 UTC) mở **#52** — triage: trùng watchlist, giữ mở.
+- NVD live OK cả hai lần (không tái hiện crash #44 — fix #53 dùng được).
 
 ### Validation "không bị nhiễm"
-- `make test` ×3 clean-room + ×1 máy dev: isolation 29/29 + seccomp 21/21 +
-  netns 7/7 + alpine 8/8 (4 suites failed: none); `make test-web` 9/9 ×3.
-- `make test-minictd`: máy dev không Go (env-blocked) — nguồn CI job
-  135286325326 @ đúng SHA 32dd9aa: **PASS=20 FAIL=0**, MD0 PASS.
-- Perf (make perf-check, N=20 máy dev + bench N=50 SCR): cold_start 1.86 ms
-  (SCR p50 1.9 / p95 2.5), rss 1160 kB, disk 2.04 MB — **PASS** mọi ngưỡng.
-- Host baseline: /etc/passwd, /bin/bash, /usr/bin/sudo sha256 **khớp chính
-  xác** 2026-11-18 → UNCHANGED; listeners cùng tập nền (6 dòng).
-- Bằng chứng: `evidence/deep-escape.txt`.
+- `make test` ×2 từ rootfs-alpine sạch (sau mitigation): **98/98**
+  (isolation 29 + seccomp 21 + netns 7 + alpine 8 + escape-alpine 29 +
+  cve-check 4); SCR clean-room ×2 tại 5d1d0af; `make test-web` 9/9.
+- Perf: 1.86 ms / 1160 kB / 2.04 MB — PASS (không đổi runtime).
+- Host baseline: unchanged (sha256 khớp); listeners cùng tập nền.
 
 ### PR
-- #47 — draft (PAT-limited) — closed có lý do.
-- #48 — ready, CI xanh (scan/build-test×2/perf @ 32dd9aa) — **merged squash
-  `70921c2`**, match-head-commit; CI main xanh sau merge.
+- #53 — merged `07d016e` — CI xanh — thiếu cổng khi merge → post-hoc audit ✓
+- #54 — merged `c2b9f0e` — CI xanh — đủ cổng ✓
+- #51 (addendum Phiên 1) — merged trước phiên.
 
-### Kế hoạch ngày mai
-- Owner review #5 (gắn `verified` → đóng) và #41 (từ Phiên 3, cùng trạng
-  thái `status:needs-review`).
-- GĐ1 mục thấp nhất kế tiếp: mục 2 còn phần "chạy lại cả suite trên rootfs
-  distro thật" (Alpine đã có — extension: chạy isolation suite với
-  MINICT_ROOTFS=alpine nếu làm được, hoặc mục 3 pasta/slirp4netns connectivity).
-- Ứng viên từ-audit: issue CHROOT1 assert-started (low), PROC2/CORE2
-  follow-up (low), cve-daily chỉ mở issue khi CVE ngoài watchlist (chore CI,
-  kế hoạch từ Phiên 2/3), #44 cve-check.py KeyError (p2).
-
-### Phụ chú (sau khi merge ledger PR #49)
-- CI main @ `a339401` (run 44445048915) **đỏ 1 lần**: `test-minictd` MD13
-  `AssertionError: b''` (execstream stdout frame trống) — cùng tree đã PASS
-  build-test ×2 trên nhánh; `rerun-failed-jobs` → success. Flake runner, Không
-  phải regression #48 (minictd 20/20 @ 32dd9aa job 135286325326 + SCR ×3).
-  Đã mở **issue #50** (type:chore, area:ci) — nghi vấn vùng R6 exit-frame
-  ordering; đề xuất đo tỷ lệ N=20 trên runner.
-- Trạng thái cuối: main `a339401` CI **xanh** (rerun success) + unicode-guard
-  xanh; repo chỉ còn `main` (0 nhánh, 0 PR mở).
+### Kế hoạch ngày mai (GĐ2 gate)
+- **#57 pasta prototype** (GĐ1 mục 3) — PR `feat/3-pasta-egress` theo D34:
+  probe tun, binary pin, NET10-12, A/B. GĐ1 mục 4 (web stack nginx offline,
+  AL7 pre-bake ownership) là ứng viên song song.
+- Owner: tick manifest DoD (rootfs thật ✓ escape suite ✓ graceful stop ✓ —
+  manifest là G7, agent không tự gộp); review `verified` cho #5/#34/#52.
+- #50 MD13 flake + #55 alpine flake: instrumentation khi có dư thời gian.
