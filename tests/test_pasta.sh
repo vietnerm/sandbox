@@ -118,9 +118,10 @@ fi
 echo "=== minict pasta tests ($(date '+%F %T')) — host listener $HPORT, fwd $FPORT, gw $GW_IP ==="
 
 # host-side listener used by the NET11C control and the NET11 egress case;
-# binds 0.0.0.0 so it catches both the loopback NAT (gateway → 127.0.0.1)
-# and any direct host-IP path.
-python3 -m http.server "$HPORT" --bind 0.0.0.0 >/dev/null 2>&1 &
+# binds 127.0.0.1 ONLY (SIA: a 0.0.0.0 bind on a runner is transiently exposed
+# to the internet; pasta maps gateway → 127.0.0.1 by default, so loopback
+# binding is sufficient for the egress path).
+python3 -m http.server "$HPORT" --bind 127.0.0.1 >/dev/null 2>&1 &
 SRV_PID=$!
 sleep 0.5
 

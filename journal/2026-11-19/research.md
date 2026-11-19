@@ -103,6 +103,9 @@
 > thay vì chỉ docs — phát hiện một trap lớn và xác nhận một cơ chế.
 
 ## Nguồn 1: passt source 2026_10_02.cba3570 (passt.top cgit snapshot)
+- Tarball đã pin (HEAD request + sha256 đo được): https://passt.top/passt/snapshot/passt-2026_10_02.cba3570.tar.gz
+- Trang dự án / mô hình phát hành (không có binary tĩnh chính thức): https://passt.top/passt/about
+- Trang chính: https://passt.top/passt
 - `conf.c conf_pasta_ns()`: `pasta --netns <path>` **không có `--userns`**
   → `netns_only = 1` ngầm định ("Attaching to a netns/PID, with no userns
   given"). Hệ quả: pasta ở lại userns caller, setns vào netns thuộc userns
@@ -119,8 +122,9 @@
 - `pasta --help`: `-t HPORT:GPORT` (host→ns forward), `-f/--foreground`
   (mặc định daemonize — cần cho pid tracking), `--config-net`.
 
-## Nguồn 2: podman rootless pasta invocation (luna.oracle.com lab + github
-eriksjolund/podman-networking-docs)
+## Nguồn 2: podman rootless pasta invocation
+- Oracle lab "Use Pasta Networking with Podman" (ps auxww cho thấy argv thật của pasta rootless, `-t 8080-8080:80-80 --netns /run/user/1001/netns/netns-…`): https://luna.oracle.com/lab/6cc1f2f1-5a2b-44cb-8662-b89aec478449/steps
+- eriksjolund/podman-networking-docs (so sánh pasta vs slirp4netns, source-address preserved): https://github.com/eriksjolund/podman-networking-docs
 - Podman spawn pasta uid thường: `pasta --config-net -t 8080-8080:80-80 …
   --netns /run/user/1001/netns/netns-XXX` — cùng model "pasta host-side
   process join ns của container", precedent cho flow `up --pasta`.
