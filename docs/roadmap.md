@@ -19,13 +19,30 @@
 2. B — Develop prototype (web service trong sandbox, đo startup/RAM)
 3. C — CVE check: `python3 tools/cve-check.py --json journal/$(date +%F)/cve/<slug>.json`
    + cập nhật `docs/cve-watchlist.md`
-4. D — No-Compromise Validation: `make test` (isolation 21 + seccomp 20 + netns 7 +
-   alpine 8, pipefail thật — issue #14) + `make test-web` + `make test-minictd`
-   (20, từ 2026-11-18) + lưu evidence vào `journal/YYYY-MM-DD/evidence/`
-   + integrity check host
+4. D — No-Compromise Validation: `make test` (isolation 29 + seccomp 21 + netns 7 +
+   alpine 8, pipefail thật — issue #14; đếm lại 2026-11-19) + `make test-web` +
+   `make test-minictd` (20, từ 2026-11-18) + lưu evidence vào
+   `journal/YYYY-MM-DD/evidence/` + integrity check host
 5. Ghi `journal/YYYY-MM-DD/daily-log.md` (quy tắc thư mục: PROMPT.MD §10)
 
 ## Đã xong
+- [x] 2026-11-19 (phiên 1, SDDA): **deep escape PoC #5 — fd/core hardening + 7 test**
+  (issue #5, type:security p2, mục 2 GĐ1): `harden_payload_fds()` trong
+  `sandbox/minict.c` payload path — `close_range(3, ~0U, 0)` (syscall 436,
+  fallback loop có trần cho kernel < 5.9) + `RLIMIT_CORE=0` (trước vá: payload
+  kế thừa MỌI fd không-CLOEXEC của caller qua fork+exec — bypass pivot_root,
+  lớp TOCTOU CVE-2018-15664; core dump ghi vào rootfs khi crash);
+  `minict-exec.c` same hardening (filter không đổi — MD0 PASS). Test mới
+  isolation 23→29 (FD1 hai giai đoạn chống-vacuous, PROC2, CHROOT1, SETUID2
+  host-/proc kiểu D32, CORE1 vacuous-guard, CORE2) + seccomp 20→21 (SC20
+  ERRNO-mode survival); negative control clean-room 6/6 bắt đúng
+  (fd→FD1+CORE1; core→CORE1 duy nhất; capdrop→CAPD1+CHROOT1+SETUID2; nnp→
+  collapse; trap→SC20; M0→collapse). Residual khai đúng: piped core_pattern
+  (core(5) bỏ qua RLIMIT khi pattern pipe) → GĐ2; PROC2/CORE2 env-dependent;
+  CHROOT1 cùng class FS4/FS5 (expect=fail khi sandbox chết). Perf 1.86 ms /
+  1160 kB / 2.04 MB PASS. SCR ×3 + SIA PASS; PR #47 (draft, PAT không flip
+  được) → PR #48 non-draft, squash `70921c2`; #5 mở lại theo §6 chờ
+  `verified`. (#5/#48)
 - [x] 2026-11-18 (phiên 4, SDDA): **suite hardening #38 — assertion cơ chế
   capdrop/pidns** (issue #38, type:chore from-audit): CAPD1 (CapEff=0 shim+payload
   qua host /proc) + PID3 (NSpid lồng shim=1/payload=2) — bắt mutant M2 (trước
@@ -202,7 +219,7 @@
 - [ ] nginx/caddy + API (Node/Python/Go) + SQLite/Postgres + Redis trong sandbox
 - [x] không Docker, không root (bất biến từ PoC — mọi test chạy uid 1001)
 - [ ] cold start toàn stack < 5s; RAM idle < 300MB
-- [x] escape test cơ bản pass (isolation 21/21 + seccomp 20/20 + netns 7/7 + alpine 8/8,
+- [x] escape test cơ bản pass (isolation 29/29 + seccomp 21/21 + netns 7/7 + alpine 8/8,
   pipefail thật; signal lifecycle graceful từ phiên 7; đếm lại 2026-11-18)
 - [ ] `./sandbox up|down|bench` một lệnh
 - **Tiến độ: 2/5** (mục 2 và 4).
