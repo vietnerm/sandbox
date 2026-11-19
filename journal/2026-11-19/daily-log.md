@@ -171,3 +171,13 @@ CVE 0 mới, escape suite 105 case xanh, host unchanged, main xanh.
 ### Host baseline
 - Máy khác với máy ZAI (container cloud) — không so được với baseline 2026-11-17;
   không ghi "unchanged".
+
+### Kết phiên 4
+- PR #64 gộp (squash `da429c6`) sau CI xanh trên runner kernel 7.0: `/proc` có mặt và
+  đúng pidns — PID2, PROC1–PROC4, AL4 PASS thật, không rơi vào chế độ "absent".
+- #31 mang nhãn `type:security` → không tự đóng; đã đổi `Closes` → `Refs` trước khi
+  gộp, comment kết quả lên issue, chờ owner `verified`.
+- Nhánh `fix/31-proc-pidns`: ledger DELETE_MERGED, nhưng proxy phiên này chặn xoá ref
+  remote (403) → để ZAI/owner apply.
+- Bài học: kiểm nhãn issue (`type:security`) **trước** khi viết `Closes #N` trong PR.
+- Còn chờ owner: PR #63 (G7), `verified` cho #31 và #5, đóng #34/#52.
