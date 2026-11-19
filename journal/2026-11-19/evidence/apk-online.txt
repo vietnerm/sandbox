@@ -1,0 +1,64 @@
+=== evidence apk-online — 2026-11-19 09:56:03 — kernel 5.10.134-013.15.kangaroo.al8.x86_64 — uid 1001 ===
+
+--- make test (full, 7 suites) ---
+### suite: test_isolation.sh
+=== summary: PASS=31 FAIL=0 ===
+### suite: test_isolation.sh — OK
+### suite: test_seccomp.sh
+=== summary: PASS=21 FAIL=0 ===
+### suite: test_seccomp.sh — OK
+### suite: test_netns.sh
+=== summary: PASS=7 FAIL=0 ===
+### suite: test_netns.sh — OK
+### suite: test_alpine.sh
+=== summary: PASS=8 FAIL=0 ===
+### suite: test_alpine.sh — OK
+### suite: test_escape_alpine.sh
+=== summary: PASS=31 FAIL=0 ===
+### suite: test_escape_alpine.sh — OK
+### suite: test_cve_check.sh
+=== summary: PASS=4 FAIL=0 ===
+### suite: test_cve_check.sh — OK
+### suite: test_pasta.sh
+=== summary: PASS=5 SKIP=6 FAIL=0 ===
+### suite: test_pasta.sh — OK
+=== run-suites summary: 7 suites, failed: none ===
+RC=0
+
+--- make test-web ---
+=== summary: PASS=9 FAIL=0 ===
+RC=0
+
+--- perf-check ---
+bash tools/perf-check.sh
+== perf-check 2026-11-19 09:56:26 — kernel 5.10.134-013.15.kangaroo.al8.x86_64, N=20 ==
+cold_start_ms  :     2.08  (threshold 100)
+rss_kb         :     1080  (threshold 10240)
+disk_base_mb   :     2.04  (threshold 20)
+perf-check: PASS
+
+--- negative control M0 (mutant no-start) ---
+PT1     pasta binary pinned+verified+static built                FAIL
+NET11C  control: WITHOUT pasta, gateway unreachable              FAIL
+PT3C    control: WITHOUT pasta, resolver unavailable             FAIL
+PT4C    control: WITHOUT pasta, apk update unreachable           SKIP
+PT4     with pasta: apk add ONLINE (HTTPS+signature) in alpine   SKIP
+=== summary: PASS=0 SKIP=7 FAIL=4 ===
+M0| PT1     pasta binary pinned+verified+static built                PASS
+M0| PT2     pasta --version == pin exactly (2026_10_02.cba3570)      PASS
+M0| NET11C  control: WITHOUT pasta, gateway unreachable              FAIL
+M0| PT3C    control: WITHOUT pasta, resolver unavailable             FAIL
+M0| PT4C    control: WITHOUT pasta, apk update unreachable           FAIL
+M0| PT4     with pasta: apk add ONLINE (HTTPS+signature) in alpine   SKIP
+M0| === summary: PASS=2 SKIP=6 FAIL=3 ===
+
+(M0 methodology: bản sao clean của cây làm việc tại /tmp/retest-m0, sandbox/minict
+thay bằng script exit 1 — M0 no-start; PT4C FAIL dưới M0 = control KHÔNG vacuous.
+PT4 SKIP dưới M0 do env-gate tun (dev), PASS thật chờ CI runner.)
+
+--- host baseline SAU run (so với đầu phiên /tmp/host-baseline-now.txt) ---
+21d5de2dc39f2ceb19e33f8cc124b311b57a48aea6d7703a9a98b93079d412bd  /etc/passwd
+223fe8564b60636bc738b6178d3ba9a50ef7d791266b0efae6363bb716e4c47f  /bin/bash
+a59f393bad5037644b89de64fe558ae6d5d1473c25c63022241e7c7019ad2f0c  /usr/bin/sudo
+HOST: unchanged (sha256 khớp trong-ph-version)
+listeners: unchanged

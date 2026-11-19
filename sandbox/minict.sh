@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # minict.sh — lifecycle CLI for the minict rootless container.
 #
-#   ./sandbox/minict.sh up <name> [--pasta] [-- payload...]
+#   ./sandbox/minict.sh up <name> [--pasta] [--rootfs <dir>] [-- payload...]
 #                                        start instance (bg shell), private
 #                                        rootfs copy. Payload override: give a
 #                                        command after `--` to run it instead
@@ -9,6 +9,12 @@
 #                                        in-instance servers — the command runs
 #                                        in THIS instance's ns set, unlike
 #                                        `exec` which starts a NEW ns set).
+#                                        --rootfs <dir> boots a DIFFERENT rootfs
+#                                        (e.g. rootfs-alpine from mkrootfs-alpine.sh,
+#                                        issue #79/D43); default stays the busybox
+#                                        rootfs. Fail-closed: missing dir or no
+#                                        /bin/sh in it is an error, NO silent
+#                                        fallback to the default rootfs.
 #
 #   Connectivity (GĐ1 mục 3, issue #57, D37):
 #   `--pasta` / MINICT_PASTA=1 attaches pasta (passt project, pinned by
@@ -158,15 +164,43 @@ spawn_pasta() { # <name> <shim-pid> — attach pasta to the instance netns (D37)
 cmd="${1:-help}"
 case "$cmd" in
 up)
-    name="${2:?usage: minict.sh up <name> [--pasta] [-- payload...]}"
+    name="${2:?usage: minict.sh up <name> [--pasta] [--rootfs <dir>] [-- payload...]}"
     shift 2 2>/dev/null || true
     PASTA_ON=0
-    if [[ "${1:-}" == "--pasta" ]]; then PASTA_ON=1; shift; fi
+    SRC_ROOTFS="$REPO/rootfs"
+    # D43 (issue #79): flags before `--` in ANY order: --pasta (D37) and
+    # optional --rootfs <dir> (e.g. rootfs-alpine). The default busybox
+    # rootfs is auto-built when missing; a custom --rootfs must already
+    # exist AND contain /bin/sh (fail-closed, no silent fallback).
+    while [[ "${1:-}" == "--pasta" || "${1:-}" == "--rootfs" ]]; do
+        if [[ "$1" == "--pasta" ]]; then
+            PASTA_ON=1; shift
+        else
+            SRC_ROOTFS="${2:?usage: --rootfs <dir>}"; shift 2
+        fi
+    done
     if [[ "${MINICT_PASTA:-0}" == "1" ]]; then PASTA_ON=1; fi
     PAYLOAD=(/bin/sh -c 'sleep 31536000')
     if [[ "${1:-}" == "--" ]]; then shift; PAYLOAD=("$@"); fi
     [[ -x "$BIN" ]] || { echo "minict binary missing; run: make -C $HERE"; exit 1; }
-    [[ -d "$REPO/rootfs" ]] || "$HERE/mkrootfs.sh" "$REPO/rootfs"
+    if [[ "$SRC_ROOTFS" == "$REPO/rootfs" ]]; then
+        [[ -d "$REPO/rootfs" ]] || "$HERE/mkrootfs.sh" "$REPO/rootfs"
+    else
+        [[ -d "$SRC_ROOTFS" ]] || { echo "--rootfs: directory not found: $SRC_ROOTFS (build it first, e.g. make rootfs-alpine)"; exit 1; }
+        # /bin/sh may be a symlink (alpine: /bin/sh -> /bin/busybox, ABSOLUTE
+        # target — valid only INSIDE the rootfs, dangling on the host). Resolve
+        # it relative to the rootfs root before the executability check.
+        _sh="$SRC_ROOTFS/bin/sh"
+        if [[ -L "$_sh" ]]; then
+            _ltgt="$(readlink "$_sh")"
+            case "$_ltgt" in
+                /*) _sh="$SRC_ROOTFS$_ltgt" ;;
+                *)  _sh="$(dirname "$_sh")/$_ltgt" ;;
+            esac
+        fi
+        [[ -e "$_sh" ]] || { echo "--rootfs: /bin/sh missing (after symlink resolve: $_sh) — not a usable minict rootfs"; exit 1; }
+        [[ -x "$_sh" ]] || { echo "--rootfs: no executable /bin/sh in $SRC_ROOTFS — not a usable minict rootfs"; exit 1; }
+    fi
     if [[ "$PASTA_ON" == "1" ]] && [[ "${MINICT_NO_NETNS:-0}" == "1" ]]; then
         echo "--pasta requires the instance's private netns; unset MINICT_NO_NETNS"; exit 1
     fi
@@ -175,9 +209,10 @@ up)
         echo "instance '$name' already running (pid $(cat "$INST/$name/pid"))"
         exit 1
     fi
-    # private rootfs copy per instance: ~2MB, no overlayfs needed
+    # private rootfs copy per instance: ~2MB (busybox) / ~10MB (alpine),
+    # no overlayfs needed
     rm -rf "$INST/$name/rootfs"
-    cp -a "$REPO/rootfs" "$INST/$name/rootfs"
+    cp -a "$SRC_ROOTFS" "$INST/$name/rootfs"
     # NOTE: bg `sh` with stdin=/dev/null exits on EOF, so the daemon runs a
     # long sleep as PID 1 instead; `exec`/`shell` still give you a shell in
     # the same instance fs (new ns set per process, PoC limitation — see

@@ -172,3 +172,36 @@ MODE=plan (Pha A). APPLY sẽ chạy ở Pha C/E.
   Mở issue mới (chưa có issue riêng), nhánh dự kiến `feat/<N>-pasta-dns`.
   Môi trường dev không tun → NET-case chạy SKIP cục bộ, nguồn sự thật = CI
   runner (tiền lệ Phiên 3 — pasta prototype).
+
+---
+
+# SBG Branch Plan — 2026-11-19 (Phiên 8, ZAI — Orchestrator §11)
+
+MODE=plan (Pha A). APPLY sẽ chạy ở Pha C/E.
+
+## Thu thập (09:3xZ)
+- main `80a0c1f` (ledger Phiên 7 #78 đã gộp); CI main: ci + unicode-guard =
+  success → không dừng vì CI.
+- Remote `git ls-remote`: chỉ `main` — không nhánh lạ ✓. Local chỉ `main` ✓.
+- PR mở: **0** (REST) → Pha B/C rỗng ở đầu chu trình.
+- Issue mở (13): #77/#62/#61/#72/#30 (p3 from-audit/needs-repro), #75 (p2 bug
+  area:web), #55 (p2 flaky), #28 (p2), #27/#26 (p1 docs), #8 (p2 security
+  track), #4 (p2 GĐ2 — luật D27 không chọn).
+- §0.6 dừng: không áp dụng (CI main xanh; không issue p0 security CVE mở;
+  host baseline sẽ đo ở Bước 7 của phiên — máy ZAI container, so trong-ph phiên).
+
+## Kế hoạch cho từng nhánh ≠ main
+| Nhánh | Quyết định plan-mode |
+|---|---|
+| — | — |
+
+- DELETE_MERGED: (rỗng) — MERGE: (rỗng) — KEEP: (rỗng) — DROP: (rỗng)
+
+## Pha D dự kiến
+- **apk add online trong instance** (GĐ1 mục 1 residual — lớp DNS đã có từ
+  #76/D42; còn HTTPS/apk-tools runtime) — mục thấp nhất chưa xong của GĐ1.
+  Mở issue mới (chưa có issue riêng), nhánh dự kiến `feat/<N>-apk-online`.
+  Môi trường dev không tun → case pasta-gated SKIP cục bộ, nguồn sự thật = CI
+  runner (tiền lệ Phiên 3/7). Cần thêm `--rootfs` cho `minict.sh up` (đang
+  hardcode busybox rootfs) — đo được: rootfs-alpine đã ship đủ HTTPS runtime
+  (libcrypto/libssl/libz/libapk + ca-certificates-bundle 118 certs + keys).

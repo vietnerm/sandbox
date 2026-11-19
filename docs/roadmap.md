@@ -20,8 +20,8 @@
 3. C — CVE check: `python3 tools/cve-check.py --json journal/$(date +%F)/cve/<slug>.json`
    + cập nhật `docs/cve-watchlist.md`
 4. D — No-Compromise Validation: `make test` (isolation 31 + seccomp 21 + netns 7 +
-   alpine 8 + escape-alpine 31 + cve-check tool 4 + pasta 9 = 111, pipefail thật —
-   issue #14; đếm lại 2026-11-19 phiên 7; dev: 106 PASS + 5 SKIP env-blocked) + `make test-web` +
+   alpine 8 + escape-alpine 31 + cve-check tool 4 + pasta 11 = 113, pipefail thật —
+   issue #14; đếm lại 2026-11-19 phiên 8; dev: 107 PASS + 6 SKIP env-blocked) + `make test-web` +
    `make test-minictd` (20, từ 2026-11-18) + lưu evidence vào
    `journal/YYYY-MM-DD/evidence/` + integrity check host
 5. Ghi `journal/YYYY-MM-DD/daily-log.md` (quy tắc thư mục: PROMPT.MD §10)

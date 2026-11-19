@@ -21,14 +21,14 @@ rootfs-alpine:
 # isolation suite (29 cases) + seccomp blocklist suite (21 cases)
 # + netns suite (7 cases) + alpine-rootfs suite (8 cases)
 # + escape-alpine suite (29 cases) + cve-check tool suite (4 cases)
-# + pasta connectivity suite (9 cases: PT1/PT2/NET11C/PT3C always run,
-#   NET10/NET11/NET12/PT3/AB1 env-gated SKIP without /dev/net/tun — D37/D42)
+# + pasta connectivity suite (11 cases: PT1/PT2/NET11C/PT3C/PT4C always run,
+#   NET10/NET11/NET12/PT3/PT4/AB1 env-gated SKIP without /dev/net/tun — D37/D42/D43)
 test: build rootfs
 	bash tests/run-suites.sh
 
 test-escape: test
 
-# pasta connectivity suite standalone (issue #57, D37)
+# pasta connectivity suite standalone (issue #57, D37; apk online #79, D43)
 test-pasta: build rootfs
 	bash tests/test_pasta.sh
 
@@ -84,8 +84,8 @@ help:
 	@echo "make build        - build minict binary"
 	@echo "make rootfs       - build busybox rootfs (rootless)"
 	@echo "make rootfs-alpine- build alpine minirootfs rootfs (rootless)"
-	@echo "make test         - isolation (29) + seccomp (21) + netns (7) + alpine (8) + escape-alpine (29) + cve-check tool (4) + pasta (9; NET10-12/PT3/AB1 SKIP without tun), all suites always run"
-	@echo "make test-pasta  - pasta connectivity suite only (issue #57, D37)"
+	@echo "make test         - isolation (31) + seccomp (21) + netns (7) + alpine (8) + escape-alpine (31) + cve-check tool (4) + pasta (11; NET10-12/PT3/PT4/AB1 SKIP without tun), all suites always run"
+	@echo "make test-pasta  - pasta connectivity suite only (issues #57/#79)"
 	@echo "make test-escape  - same suites (alias, CI requirement)"
 	@echo "make test-escape-alpine - isolation suite re-run on alpine rootfs (29 cases)"
 	@echo "make test-web     - web service suite (6 cases)"

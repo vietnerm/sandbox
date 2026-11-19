@@ -242,3 +242,50 @@ https://github.com/rootless-containers/rootlesskit) — cùng class giải pháp
 --config-net copy host gw làm guest_gw), truyền `--dns-forward $GW`, sau
 route-ready ghi `nameserver $GW` vào `$INST/$name/rootfs/etc/resolv.conf`.
 GW rỗng → skip cả hai (fail-soft, hành vi giữ nguyên như trước DNS).
+
+---
+
+# Phiên 8 — apk add online trong instance (issue #79, GĐ1 mục 1 residual)
+
+Vấn đề: boot được instance alpine rootfs thật qua `minict.sh up` và chạy
+`apk update/add` ONLINE (HTTPS + signature-verified) qua pasta egress — lớp
+DNS đã có (D42), còn "HTTPS/apk-tools runtime".
+
+## Nguồn 1 — passt.1 (SOURCE pin 2026_10_02.cba3570, sha256 `7b81892b…484b6` verify lại phiên này)
+- Tarball pin (HEAD + sha256 fail-closed, fetch-pasta.sh): https://passt.top/passt/snapshot/passt-2026_10_02.cba3570.tar.gz
+- Trích từ `passt.1` trong tarball (artifact `tools/cache/`): `--dns-forward`
+  map **UDP/TCP :53 (và :853)** traffic tới addr đó → `--dns-host` (mặc định =
+  nameserver đầu của host `/etc/resolv.conf`), replies reverse-map ngược lại.
+- Áp dụng cho minict: interception ở tầng flow (dst-addr + port), **client-
+  agnostic** — musl getaddrinfo của apk cũng đi qua như busybox nslookup của
+  PT3. Không cần cấu hình thêm phía apk.
+
+## Nguồn 2 — musl libc resolver (wiki.musl-libc.org, HTTP 200)
+- https://wiki.musl-libc.org/functional-differences-from-glibc.html
+- Trích đo được: musl đọc **tối đa 3 dòng `nameserver`** và **query song song
+  cả nhóm**, chấp nhận câu trả lời đầu tiên — khác glibc (tuần tự + timeout).
+- Áp dụng: resolv.conf do spawn_pasta inject có **đúng 1 nameserver** (GW_IP)
+  → hành vi musl deterministic; A+AAAA chạy chung 1 socket → vẫn là flow UDP
+  53 tới --dns-forward, pasta xử lý bình thường.
+
+## Nguồn 3 — apk-tools 2.14 networking (GitHub, HTTP 200) + contents gói
+- https://github.com/alpinelinux/apk-tools (repo chính thức, branch 2.14)
+- https://pkgs.alpinelinux.org/package/v3.22/main/x86_64/ca-certificates-bundle (HTTP 200)
+- apk-tools 2.14 fetch qua **libfetch + libcrypto** (OpenSSL 3) — link đo được
+  trên rootfs pin: `readelf -d sbin/apk` NEEDS libcrypto.so.3 / libz.so.1 /
+  libapk.so.2.14.10 / musl libc; `libssl.so.3` + `libcrypto.so.3` nằm ở
+  `/usr/lib` của minirootfs; **ca-certificates-bundle** preinstall =
+  `/etc/ssl/certs/ca-certificates.crt` (118 certs, đo được) + alpine-keys.
+- Áp dụng: KHÔNG cần pre-bake thêm gì — HTTPS runtime đã ship sẵn trong
+  rootfs-alpine; điều kiện còn thiếu duy nhất là đường mạng (pasta) + resolver
+  (D42) + cách boot rootfs alpine làm instance (`--rootfs` mới).
+
+## Trade-off đã cân nhắc
+- (a) **apk add online** qua pasta: đúng ý roadmap ("apk add online trong
+  instance"), chứng minh end-to-end thật; chi phí: chỉ đo được trên runner CI
+  (dev không tun) — tiền lệ NET10-12/PT3 đã chấp nhận mô hình này (D34/D37).
+- (b) mirror HTTP (http://dl-cdn...) để tránh TLS: loại — dl-cdn redirect về
+  HTTPS; và case mất giá trị chứng minh HTTPS runtime.
+- (c) chroot host-side chạy apk --root: không phải sandbox, không chứng minh
+  isolation stack (seccomp/capdrop/netns cùng lúc) — chỉ dùng như sanity local,
+  KHÔNG đưa vào suite.

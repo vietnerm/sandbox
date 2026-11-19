@@ -38,6 +38,21 @@
 #          during the tap wait — anti-race) and asserts DNS_RESOLVED_OK;
 #          host-side asserts rootfs/etc/resolv.conf content BEFORE down
 #          (env-gated)
+#   PT4C   CONTROL (issue #79, D43): WITHOUT pasta, `apk update` inside an
+#          ALPINE rootfs instance FAILS (netns lo-only, no resolver — musl
+#          falls back to 127.0.0.1:53, refused) — proves PT4's success comes
+#          from pasta connectivity, not from anything else. Anti-vacuous:
+#          PROBE_ALIVE guard before trusting the absence of APK_CONTROL_OK
+#          (runs everywhere; SKIP(env-blocked) only when rootfs-alpine is
+#          missing AND the CDN rebuild fails — never a fake PASS)
+#   PT4    with pasta: apk add ONLINE (GĐ1 mục 1 residual, issue #79/D43) —
+#          alpine instance (--rootfs) attached via pasta: payload waits for
+#          the tap, retries `apk update` (APKINDEX over HTTPS via dl-cdn),
+#          then `apk add --no-cache tree` (no deps, 30 KB; NOT in the base
+#          rootfs apk DB) — signature-verified (NO --allow-untrusted) —
+#          asserts `apk info -e tree` + marker APK_ONLINE_OK; HOST-side
+#          asserts the apk DB of the instance rootfs records `P:tree` BEFORE
+#          down (a log marker alone is not state — PT2 lesson) (env-gated)
 #   AB1    with pasta: pasta attach latency (up --pasta → route ready + alive),
 #          measured HOST-side and reported separately from minict cold_start
 #          (env-gated)
@@ -111,7 +126,7 @@ wait_for_log() {
     return 1
 }
 
-SUFFIXES=" tap eg pf ab dns ndns"
+SUFFIXES=" -tap -eg -pf -ab -dns -ndns -apk"
 cleanup() {
     for s in "" $SUFFIXES; do
         bash "$REPO/sandbox/minict.sh" down "$NAME_P$s" >/dev/null 2>&1 || true
@@ -198,6 +213,41 @@ pt3c_test() {
 }
 run_case PT3C "control: WITHOUT pasta, resolver unavailable" pass pt3c_test
 
+# ---------- control: no pasta → apk cannot fetch its index (issue #79) ------
+# shared helper: the alpine rootfs is tracked in git (D36); if it went missing
+# locally, rebuild once from the pinned tarball — a CDN failure here is
+# env-blocked (rc 125 = SKIP, never a fake PASS; same class as AL5, SIA #24)
+ensure_alpine_rootfs() {
+    [[ -d "$REPO/rootfs-alpine" ]] && return 0
+    bash "$REPO/sandbox/mkrootfs-alpine.sh" "$REPO/rootfs-alpine" >/dev/null 2>&1 \
+        || return 125
+    return 0
+}
+
+pt4c_test() {
+    ensure_alpine_rootfs || return $?
+    # anti-vacuous (M0 class, same as NET11C): assert the sandbox ACTUALLY
+    # started (payload prints PROBE_ALIVE) BEFORE trusting the absence of
+    # APK_CONTROL_OK — a dead instance would otherwise "pass" this control
+    bash "$REPO/sandbox/minict.sh" up "$NAME_P-apk" \
+        --rootfs "$REPO/rootfs-alpine" -- \
+        /bin/sh -c "busybox echo PROBE_ALIVE && /sbin/apk update >/dev/null 2>&1 && echo APK_CONTROL_OK" \
+        >/dev/null 2>&1
+    sleep 0.5
+    local log="$REPO/instances/$NAME_P-apk/log"
+    if ! wait_for_log "$log" "PROBE_ALIVE" 20; then
+        dump_logs "-apk"
+        return 1
+    fi
+    if grep -q APK_CONTROL_OK "$log"; then
+        dump_logs "-apk"
+        return 1
+    fi
+    bash "$REPO/sandbox/minict.sh" down "$NAME_P-apk" >/dev/null 2>&1
+    return 0
+}
+run_case PT4C "control: WITHOUT pasta, apk update unreachable" skip pt4c_test
+
 # ---------- env-gated: real pasta attachment (CI / tun present) ----------
 net10_test() {
     skip_no_tun || return $?
@@ -279,6 +329,38 @@ pt3_test() {
     [[ $rc_up -eq 0 && $ok -eq 1 && $ok_resolv -eq 1 ]]
 }
 run_case PT3 "with pasta: resolver injected + nslookup resolves" skip pt3_test
+
+# ---------- env-gated: apk add ONLINE in an alpine instance (issue #79/D43) --
+pt4_test() {
+    skip_no_tun || return $?
+    ensure_alpine_rootfs || return $?
+    # payload is SELF-CONTAINED (NET12 lesson): waits for the tap first
+    # (resolv.conf is written by spawn_pasta right after route-ready +
+    # aliveness — roughly when the tap appears), then RETRIES apk update
+    # (musl getaddrinfo reads the single injected nameserver, wiki.musl-libc
+    # D43 research), then installs `tree` — signature-verified, NO
+    # --allow-untrusted; prints a marker ONLY when `apk info -e tree` agrees.
+    bash "$REPO/sandbox/minict.sh" up "$NAME_P-apk" --pasta \
+        --rootfs "$REPO/rootfs-alpine" -- \
+        /bin/sh -c 'i=0; while [ $i -lt 100 ]; do busybox ifconfig -a | grep -q "encap:Ethernet" && break; busybox sleep 0.1; i=$((i+1)); done; j=0; while [ $j -lt 20 ]; do /sbin/apk update >/dev/null 2>&1 && break; busybox sleep 1; j=$((j+1)); done; /sbin/apk add --no-cache tree >/dev/null 2>&1 && /sbin/apk info -e tree && echo APK_ONLINE_OK' \
+        >/dev/null 2>&1
+    local rc_up=$?
+    local log="$REPO/instances/$NAME_P-apk/log"
+    local ok=0 ok_db=0 ok_bin=0
+    wait_for_log "$log" "APK_ONLINE_OK" 400 && ok=1
+    # host-side STATE asserts, BEFORE down (down deletes the instance dir):
+    # (a) the apk DB of the instance rootfs records P:tree — the install went
+    #     through the full apk path (index fetch + signature + unpack), not a
+    #     stale entry (tree is NOT in the base rootfs DB, measured D43);
+    # (b) the binary actually landed in the instance rootfs.
+    grep -qx "P:tree" \
+        "$REPO/instances/$NAME_P-apk/rootfs/lib/apk/db/installed" 2>/dev/null && ok_db=1
+    [[ -x "$REPO/instances/$NAME_P-apk/rootfs/usr/bin/tree" ]] && ok_bin=1
+    if [[ $ok -eq 0 || $ok_db -eq 0 || $ok_bin -eq 0 ]]; then dump_logs "-apk"; fi
+    bash "$REPO/sandbox/minict.sh" down "$NAME_P-apk" >/dev/null 2>&1
+    [[ $rc_up -eq 0 && $ok -eq 1 && $ok_db -eq 1 && $ok_bin -eq 1 ]]
+}
+run_case PT4 "with pasta: apk add ONLINE (HTTPS+signature) in alpine" skip pt4_test
 
 ab1_test() {
     skip_no_tun || return $?
