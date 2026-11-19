@@ -306,3 +306,74 @@ tiến độ GĐ2 và số issue tăng.
 - GĐ1 mục 2: stack web thật (nginx + API + SQLite) trên rootfs distro — cần
   DNS pasta hoặc pre-bake; #72 residual theo dõi; #55/#61/#62 from-audit;
   GĐ2 roadmap (roadmap.md mục kế).
+
+## Phiên 7 — Orchestrator §11 (ZAI: SBG plan → Pha D #74 DNS pasta → SCR/SIA PR #76)
+
+### Pha A — Sync + SBG
+- main `a80849e` (ledger Phiên 6 #73); CI main xanh (ci #188 + unicode-guard #61).
+- PR mở: 0 → Pha B/C rỗng. Remote chỉ `main`; dọn 5 nhánh local dư (đã merge).
+- plan.md Phiên 7. `gh` CLI thiếu trong sandbox → REST API qua `scripts/ghapi.sh`
+  (token từ remote URL, không echo).
+
+### Issue xử lý
+- **#74** (p1 feature area:netns — mở phiên này, triage+assign luôn): DNS cho
+  instance qua pasta — residual thấp nhất của GĐ1 mục 1 (apk add online chờ
+  DNS). Status: done (PR #76, chờ gộp).
+- **#75** (p2 bug area:web — mở khi SCR): `PORT=18000+RANDOM%2000` trùng
+  listener infra host `0.0.0.0:19006` → WEB1/2/4/5 đỏ giả run đầu (5/9),
+  rerun 9/9. Root cause + phương án trong issue; không sửa trong #76.
+- From-audit #76 (low, từ-audit SIA): resolv.conf không dọn khi pasta chết
+  giữa chừng (behavioral) — issue riêng.
+
+### Research (D42 — đọc SOURCE passt pin, hass của slirp4netns/RootlessKit)
+- `fwd.c fwd_nat_from_tap()` 908–915: DNS flow tới `dns_match` ưu tiên TRƯỚC
+  nat_outbound → --dns-forward không phá map-gw/NET11.
+- `--dns-forward` cách DUY NHẤT đặt dns_match (conf.c 1413–1421, không default);
+  dns_host = nameserver đầu từ host /etc/resolv.conf (đọc host-side).
+- Map-gw cho DNS là bẫy: host thật dùng resolver public (100.100.2.x) →
+  query GW:53 sẽ bị map về 127.0.0.1:53 (không có gì nghe) → phải --dns-forward.
+- 5 URL nguồn (tarball pin, passt.1 cgit, slirp4netns, rootlesskit, podman)
+  đều HEAD 200.
+
+### Development (nhánh feat/74-pasta-dns, merge #76 — đang SCR/SIA)
+- `minict.sh spawn_pasta`: GW host-side (`ip -4 route show default` — cùng
+  nguồn GW_IP suite NET11), `--dns-forward $GW` + ghi `nameserver $GW` vào
+  rootfs instance SAU khi tap+route+alive; GW rỗng → skip (fail-soft).
+- `tests/test_pasta.sh`: **PT3** (env-gated: resolv.conf == GW_IP + nslookup
+  github.com marker anti-race) + **PT3C** (control mọi nơi, guard PROBE_ALIVE);
+  pasta 7→9 case, make test 105→**111** (isolation 31 + seccomp 21 + netns 7 +
+  alpine 8 + escape-alpine 31 + cve-check 4 + pasta 9; đếm đúng lại — số cũ
+  29/29 stale từ #64).
+- Perf: cold_start 2.02 ms (N=20; retest N=50 p50 2.1) / rss 1160 kB /
+  disk 2.04 MB — PASS, không đổi runtime.
+
+### CVE Check
+- `cve/pasta-dns.md|.json`: rc=0, 19 hàng, 0 lỗi NVD, cve-gate rc=0 → 0 CVE
+  mới ngoài watchlist. Kernel dev 5.10.134 (runner azure 7.0 cho CI).
+
+### Validation "không bị nhiễm"
+- `make test` ×3 clean-room rc=0 (SCR clone @ 9d7227e) + ×1 cây chính:
+  106 PASS + 5 SKIP (NET10-12/PT3/AB1 env-blocked, không tun); `make test-web`
+  9/9 ×4 (1 run đỏ giả do port #75); M0 caught (91 FAIL, rc=1).
+- **CI runner @ `9d7227e`: pasta 9/9 thật (PT3 PASS, gw 10.0.128.1, 0 SKIP),
+  minictd 20/20 + go test ok, perf 1.83ms/2524kB/2.14MB PASS.**
+- Host baseline unchanged (3 sha256 khớp); listeners cùng tập infra.
+- Bằng chứng: `evidence/pasta-dns.txt` + comment SCR/SIA trên PR #76.
+
+### PR
+- #76 — draft, CI xanh @ `9d7227e` (build-test ×2, perf-guard, unicode-guard,
+  scan); SCR PASS (ZAI §0b) + SIA CONCERNS @ vòng 1 (3 medium: số đếm case,
+  B6 URL, B10 daily-log — đang sửa B4) → vòng 2 sau commit fix(review).
+
+### Sự cố quy trình (ghi để sửa)
+- Edit tool trên Makefile chuyển TAB→space toàn file (`missing separator`)
+  → khôi phục từ HEAD + vá bằng python (giữ TAB). Bài học: Makefile chỉ sửa
+  bằng python/sed, không qua Edit tool.
+- `cve-check.py` bị `timeout 120` giết giữa vòng NVD sleep(9) → mất json;
+  rerun với timeout 480 rc=0. Bài học: script NVD cần ~19×9.5s ≈ 200s.
+
+### Kế hoạch kế tiếp
+- Sau merge #76: **apk add online** (GĐ1 mục 1 — HTTPS runtime cho apk-tools
+  trên alpine, DNS đã có) hoặc **GĐ1 mục 4 stack web thật** (nginx+API+SQLite,
+  cần pre-bake ownership AL7) — chọn theo roadmap.
+- #75 port-collision test_web; #72 residual WEB9; from-audit #76 (low).

@@ -102,7 +102,7 @@ spawn_pasta() { # <name> <shim-pid> — attach pasta to the instance netns (D37)
     # owned by the instance's userns. euid==owner rule makes this rootless.
     nohup "$PASTA_BIN" --foreground \
         --userns "/proc/$pid/ns/user" --netns "/proc/$pid/ns/net" \
-        --config-net ${DNS_ARGS[@]:-} ${MINICT_PASTA_FWD:-} \
+        --config-net ${DNS_ARGS[@]+"${DNS_ARGS[@]}"} ${MINICT_PASTA_FWD:-} \
         </dev/null >"$INST/$name/pasta.log" 2>&1 &
     local ppid=$!
     echo "$ppid" > "$INST/$name/pasta-pid"
