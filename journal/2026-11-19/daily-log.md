@@ -81,3 +81,13 @@
 - Ứng viên từ-audit: issue CHROOT1 assert-started (low), PROC2/CORE2
   follow-up (low), cve-daily chỉ mở issue khi CVE ngoài watchlist (chore CI,
   kế hoạch từ Phiên 2/3), #44 cve-check.py KeyError (p2).
+
+### Phụ chú (sau khi merge ledger PR #49)
+- CI main @ `a339401` (run 44445048915) **đỏ 1 lần**: `test-minictd` MD13
+  `AssertionError: b''` (execstream stdout frame trống) — cùng tree đã PASS
+  build-test ×2 trên nhánh; `rerun-failed-jobs` → success. Flake runner, Không
+  phải regression #48 (minictd 20/20 @ 32dd9aa job 135286325326 + SCR ×3).
+  Đã mở **issue #50** (type:chore, area:ci) — nghi vấn vùng R6 exit-frame
+  ordering; đề xuất đo tỷ lệ N=20 trên runner.
+- Trạng thái cuối: main `a339401` CI **xanh** (rerun success) + unicode-guard
+  xanh; repo chỉ còn `main` (0 nhánh, 0 PR mở).
