@@ -10,6 +10,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -267,15 +268,50 @@ func (s *Server) handleExecStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	enc := json.NewEncoder(w)
+	emit := func(f contract.StreamFrame) error {
+		if err := enc.Encode(f); err != nil {
+			return err
+		}
+		if canFlush {
+			flusher.Flush()
+		}
+		return nil
+	}
+	if !muxStreams(r.Context(), stdout, stderr, emit) {
+		// client went away or the write failed; the runtime process dies
+		// via ctx. Still reap it (wait() also removes the exec env file)
+		// so a disconnect leaves no zombie behind.
+		go func() { _, _ = wait() }()
+		return
+	}
+	res, werr := wait()
+	exit := contract.StreamFrame{T: "exit", ExitCode: res.ExitCode,
+		TimedOut: res.TimedOut, Truncated: res.Truncated, DurationMs: res.DurationMs}
+	if werr != nil {
+		s.log.Warn("execstream wait", "err", werr.Error())
+	}
+	_ = emit(exit)
+}
+
+// muxStreams forwards stdout/stderr as frames until both reach EOF. It
+// returns false if ctx ended or emit failed (the caller must not send an
+// exit frame then).
+//
+// R6 (2026-11-18): each frame gets its OWN copy of the bytes — the read
+// buffer is reused by the next Read while the frame may still sit in the
+// channel — and every send also watches ctx so a vanished client cannot
+// strand the pumps.
+//
+// Issue #50 (2026-11-19): a pump queues its last chunk and then signals
+// done. select picks randomly among ready cases, so both done signals can
+// win over chunks still buffered in frames; the loop used to exit there
+// and drop them (MD13: stdout frame b”). Once both pumps are done nothing
+// else is sent, so drain whatever is left before returning.
+func muxStreams(ctx context.Context, stdout, stderr io.Reader,
+	emit func(contract.StreamFrame) error) bool {
 	frames := make(chan contract.StreamFrame, 256)
 	done := make(chan struct{})
-
-	ctx := r.Context()
-	// R6 (2026-11-18): each frame gets its OWN copy of the bytes — the
-	// read buffer is reused by the next Read while the frame may still sit
-	// in the channel (aliasing corrupted interleaved output) — and every
-	// send also watches ctx so a vanished client cannot strand the pumps.
-	pump := func(rc interface{ Read([]byte) (int, error) }, t string) {
+	pump := func(rc io.Reader, t string) {
 		defer func() {
 			select {
 			case done <- struct{}{}:
@@ -301,35 +337,27 @@ func (s *Server) handleExecStream(w http.ResponseWriter, r *http.Request) {
 	go pump(stdout, "stdout")
 	go pump(stderr, "stderr")
 
-	completed := 0
-	for completed < 2 {
+	for completed := 0; completed < 2; {
 		select {
 		case <-ctx.Done():
-			// client went away; the runtime process dies via ctx. Still
-			// reap it (wait() also removes the exec env file) so a
-			// disconnect leaves no zombie behind.
-			go func() { _, _ = wait() }()
-			return
+			return false
 		case f := <-frames:
-			if err := enc.Encode(f); err != nil {
-				return
-			}
-			if canFlush {
-				flusher.Flush()
+			if emit(f) != nil {
+				return false
 			}
 		case <-done:
 			completed++
 		}
 	}
-	res, werr := wait()
-	exit := contract.StreamFrame{T: "exit", ExitCode: res.ExitCode,
-		TimedOut: res.TimedOut, Truncated: res.Truncated, DurationMs: res.DurationMs}
-	if werr != nil {
-		s.log.Warn("execstream wait", "err", werr.Error())
-	}
-	_ = enc.Encode(exit)
-	if canFlush {
-		flusher.Flush()
+	for {
+		select {
+		case f := <-frames:
+			if emit(f) != nil {
+				return false
+			}
+		default:
+			return true
+		}
 	}
 }
 
