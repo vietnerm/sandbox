@@ -988,6 +988,61 @@ static void apply_spec_rlimits(void)
         }
 }
 
+/* ---- payload fd + core-dump hardening (issue #5, D33) ----
+ *
+ * Two leak classes closed BEFORE the payload exec:
+ *
+ * 1. Inherited fds: everything the launcher's caller (shell, daemon, IDE)
+ *    holds open with no FD_CLOEXEC survives fork()+execvp() into the
+ *    payload — an fd pointing at a HOST file then bypasses pivot_root
+ *    entirely (openat/fchdir/read via the fd need no privilege at all).
+ *    The TOCTOU class this enables is CVE-2018-15664-shaped: an fd opened
+ *    before a check, used after. The payload contract is stdio (0/1/2)
+ *    only — minict-exec additionally documents its stdin passthrough as
+ *    fd 0 — so closing 3..max is strictly narrowing. close_range(2)
+ *    (Linux 5.9, syscall 436) does it kernel-side; on older kernels fall
+ *    back to a bounded close loop (best effort, errors ignored per fd).
+ *
+ * 2. Core dumps: RLIMIT_CORE is left at the caller's value, so a payload
+ *    crash would write a core FILE of the sandbox process into the rootfs
+ *    (disk fill + memory image outside tmpfs). Force RLIMIT_CORE to 0
+ *    before exec. Residual, documented in D33: core(5) — "RLIMIT_CORE will
+ *    be ignored if the system is configured to pipe core dumps to a
+ *    program" — a piped host handler still receives the (payload-owned)
+ *    memory; core_pattern itself is unreachable from the payload (no
+ *    /proc, AL4) and GĐ2 owns host-side pattern policy.
+ */
+#ifndef SYS_close_range
+#define SYS_close_range 436 /* Linux 5.9 (x86_64) */
+#endif
+#define CLOSE_LOOP_MAX 65536 /* fallback bound; fd tables are way below */
+static void harden_payload_fds(void)
+{
+        struct rlimit core0 = { 0, 0 };
+
+        if (setrlimit(RLIMIT_CORE, &core0) < 0)
+                die("setrlimit(RLIMIT_CORE, 0)");
+        if (syscall(SYS_close_range, 3, ~0U, 0) == 0)
+                return;
+        /* ENOSYS path (kernel < 5.9): bounded loop, per-fd errors ignored */
+        {
+                struct rlimit rl;
+                rlim_t hi;
+
+                if (getrlimit(RLIMIT_NOFILE, &rl) < 0)
+                        rl.rlim_max = 1024;
+                hi = rl.rlim_max;
+                if (hi > CLOSE_LOOP_MAX)
+                        hi = CLOSE_LOOP_MAX;
+                {
+                        rlim_t fd;
+
+                        for (fd = 3; fd < hi; fd++)
+                                close((int)fd);
+                }
+        }
+}
+
 /* ------------------------------------------------------------------ *
  * seccomp-bpf blocklist (issue #2, decision D11; AF_NETLINK D15).
  *
@@ -1446,6 +1501,8 @@ int main(int argc, char **argv)
                                      k++)
                                         signal(rst[k], SIG_DFL);
                         }
+
+                        harden_payload_fds(); /* fd leak + core dump (D33) */
 
                         apply_spec_rlimits(); /* setrlimit BEFORE capdrop (D23) */
 

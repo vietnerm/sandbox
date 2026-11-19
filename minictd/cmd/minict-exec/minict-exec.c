@@ -57,6 +57,7 @@
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
+#include <sys/resource.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -89,6 +90,53 @@ static void drop_all_caps(void)
          * which makes setgroups() permanently EPERM in this userns and, as a
          * side effect, already forces an empty supplementary group list.
          * See user_namespaces(7). */
+}
+
+/* ---- exec'd-cmd fd + core-dump hardening (issue #5, D33) ----
+ *
+ * Same two leak classes as minict.c harden_payload_fds() (read the full
+ * rationale there), applied to the command this tool execs into the
+ * RUNNING instance:
+ *
+ * 1. The fork()'d child inherits every fd the CALLER of minict-exec kept
+ *    open without FD_CLOEXEC — for the daemon path that is the API stream
+ *    (fd 0/1/2 only), but for the CLI path it is whatever the invoking
+ *    shell holds. Those fds were opened in the HOST view BEFORE the
+ *    setns chain; after the exec the command lives inside the instance,
+ *    yet an inherited fd still pins its original HOST open file
+ *    description (an ns fd to a HOST file = pivot_root bypass).
+ *    Contract: stdio 0/1/2 only (fd 0 = stdin passthrough, documented).
+ * 2. RLIMIT_CORE=0: a crash must not drop a core FILE of the cmd into
+ *    the instance rootfs. Residual piped-core_pattern case is host-side
+ *    policy (core(5): RLIMIT_CORE ignored for pipes) — D33.
+ *
+ * NOT part of the seccomp filter copy (MD0 compares filters only).
+ */
+#ifndef SYS_close_range
+#define SYS_close_range 436 /* Linux 5.9 (x86_64) */
+#endif
+#define CLOSE_LOOP_MAX 65536 /* fallback bound; fd tables are way below */
+static void harden_exec_fds(void)
+{
+        struct rlimit core0 = { 0, 0 };
+
+        if (setrlimit(RLIMIT_CORE, &core0) < 0)
+                die("setrlimit(RLIMIT_CORE, 0)");
+        if (syscall(SYS_close_range, 3, ~0U, 0) == 0)
+                return;
+        /* ENOSYS path (kernel < 5.9): bounded loop, per-fd errors ignored */
+        {
+                struct rlimit rl;
+                rlim_t hi, fd;
+
+                if (getrlimit(RLIMIT_NOFILE, &rl) < 0)
+                        rl.rlim_max = 1024;
+                hi = rl.rlim_max;
+                if (hi > CLOSE_LOOP_MAX)
+                        hi = CLOSE_LOOP_MAX;
+                for (fd = 3; fd < hi; fd++)
+                        close((int)fd);
+        }
 }
 
 /* ------------------------------------------------------------------ *
@@ -507,6 +555,8 @@ int main(int argc, char **argv)
                         die("PDEATHSIG");
                 if (sigprocmask(SIG_SETMASK, &old, NULL) < 0)
                         _exit(126);
+
+                harden_exec_fds(); /* fd leak + core dump (D33) */
 
                 install_seccomp(); /* NOT inherited via setns — mandatory */
 

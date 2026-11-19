@@ -1,0 +1,52 @@
+# evidence — issue #5 deep escape (sec/5-deep-escape) — 2026-11-19
+
+Máy: container kernel 5.10.134-013.15.kangaroo.al8.x86_64, uid 1001 (rootless).
+Mutant/negative-control harness: scripts/mutant5.sh (ngoài repo, /home/z/my-project/scripts).
+
+## Suite đầy đủ sau khi vá (make test — 4 suite, pipefail thật)
+=== minict isolation tests (2026-11-19 02:08) ===
+=== summary: PASS=29 FAIL=0 ===        (23 → 29: +FD1 CHROOT1 SETUID2 CORE1 CORE2 PROC2)
+=== minict seccomp tests ===
+=== summary: PASS=21 FAIL=0 ===        (20 → 21: +SC20)
+=== minict netns tests ===
+=== summary: PASS=7 FAIL=0 ===
+=== minict alpine-rootfs tests (alpine 3.22.8) ===
+=== summary: PASS=8 FAIL=0 ===
+=== run-suites summary: 4 suites, failed: none ===
+
+make test-web: === summary: PASS=9 FAIL=0 === (WEB1–WEB9)
+
+## Negative controls (mutants — mỗi test mới phải bị bắt, D32/SIA rule)
+NC1 bỏ harden_payload_fds()          → FD1      FAIL   ✓ caught
+NC2 bỏ setrlimit(RLIMIT_CORE, 0)     → CORE1    FAIL   ✓ caught (bản script
+                                       in lặng; chạy lại thủ công: core dump
+                                       disabled ... FAIL, PASS=28 FAIL=1)
+NC3 bỏ drop_all_caps() payload       → CHROOT1  PASS(fail-expect vi phạm) ✓ caught
+NC4 SECCOMP_EPERM → SECCOMP_RET_TRAP → SC20    FAIL   ✓ caught
+NC5 bỏ PR_SET_NO_NEW_PRIVS           → SETUID2  FAIL   ✓ caught (filter tự die
+                                       vì seccomp cần NNP — đúng logic)
+Không mutant được: PROC2 (phụ thuộc mount-block của môi trường ngoài),
+CORE2 (phụ thuộc core_pattern host = "core" file pattern tại máy dev) —
+ghi rõ trong D33, không claim mutant-coverage.
+
+## Perf (make perf-check, N=20)
+cold_start_ms : 1.86  (threshold 100)  — nền 1.80–1.95 các phiên trước: nhiễu
+rss_kb        : 1160  (threshold 10240)
+disk_base_mb  : 2.04  (threshold 20)
+perf-check: PASS
+
+## Host baseline ("không bị nhiễm")
+sha256: /etc/passwd 21d5de2d..., /bin/bash 223fe856..., /usr/bin/sudo
+a59f393b... — KHỚP CHÍNH XÁC với journal/2026-11-18/evidence/host-baseline.txt
+→ UNCHANGED. (/etc/shadow không đọc được dưới uid 1001 — giống hôm qua.)
+Listeners (ss -tlnp): cùng tập nền phiên trước (127.0.0.1:12600/12700/19001,
+0.0.0.0:19005/19006, *:81) — không listener lạ.
+
+## minictd (make test-minictd)
+Máy dev KHÔNG có Go (env-blocked, giống Phiên 2/3) — lấy kết quả từ job CI
+`test-minictd` của đúng HEAD SHA PR (ghi nguồn trong SCR comment, luật §11 B2).
+
+## CVE check
+tools/cve-check.py rc=0 — 19 hàng watchlist, 0 CVE mới ngoài watchlist,
+critical đã biết đều host-side. File: cve/deep-escape.md|.json. NVD live OK
+lần này (không tái hiện crash #44).

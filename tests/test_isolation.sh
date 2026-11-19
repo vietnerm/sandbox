@@ -266,6 +266,90 @@ uid1_test() {
         && ! ic 'id -G | tr " " "\n" | grep -qvE "^(0|65534)$"'
 }
 
+# ---- deep escape PoCs (issue #5, D33) ----
+# FD1: an fd the CALLER holds open without FD_CLOEXEC must not survive into
+# the payload (minict.c harden_payload_fds closes 3..max via close_range).
+# Two stages so the case cannot go vacuous:
+#   stage 1 (inheritance control): the SAME fd is visible as
+#     /proc/<minict-pid>/fd/9 -> marker — proves bash->minict inheritance is
+#     real, so stage 2's EBADF is the FIX working, not bash closing the fd.
+#   stage 2: payload `cat <&9` must FAIL (EBADF) and must NOT print the
+#     host marker (escape check). Pre-fix behavior: cat prints the marker.
+fd1_test() {
+    local marker="$REPO/.fd1-marker-$$" mp="" p w inherited=0 rc=1 out
+    echo "HOST-SECRET-$$" > "$marker"
+    exec 9<"$marker"   # bash redirection: no cloexec — survives fork+exec
+    "$MINICT" "$ROOTFS" /bin/sh -c 'sleep 61' >/dev/null 2>&1 & w=$!
+    sleep 0.4
+    if [[ "$(cat "/proc/$w/comm" 2>/dev/null)" == "minict" ]]; then
+        mp="$w"
+    else
+        for p in $(pgrep -P "$w" 2>/dev/null); do
+            if [[ "$(cat "/proc/$p/comm" 2>/dev/null)" == "minict" ]]; then
+                mp="$p"; break
+            fi
+        done
+    fi
+    if [[ -n "$mp" ]] \
+        && [[ "$(readlink "/proc/$mp/fd/9" 2>/dev/null)" == "$marker" ]]; then
+        inherited=1
+    fi
+    kill -9 "$w" "$mp" 2>/dev/null
+    wait "$w" 2>/dev/null
+    out=$(ic 'cat <&9' 2>&1); rc=$?
+    exec 9<&-
+    rm -f "$marker"
+    [[ $inherited -eq 1 ]] || return 1
+    [[ $rc -ne 0 ]] || return 1
+    ! printf '%s' "$out" | grep -q 'HOST-SECRET-'
+}
+# SETUID2: exec a setuid-root-marked binary (busybox chmod 4755 — restored)
+# and assert the MECHANISM from the host (D32 style): NoNewPrivs must still
+# be 1 and CapEff must still be 0 on the exec'd process. In-ns assertions
+# would be vacuous: single-uid mapping makes every setuid bit a no-op
+# regardless of NNP (owner uid == executor uid in-ns). The file is owned by
+# the REAL host uid (AL7 proved chown foreign-uid EPERM), so a host-root-
+# owned suid file — the actual escalation class — cannot exist in rootfs.
+setuid2_test() {
+    local tag="busybox sleep 61" ok=0
+    [[ -f "$ROOTFS/bin/busybox" ]] || return 1
+    chmod 4755 "$ROOTFS/bin/busybox" || return 1
+    SBX_LAUNCH=""; SBX_SHIM=""; SBX_PAYLOAD=""
+    "$MINICT" "$ROOTFS" /bin/busybox sleep 61 >/dev/null 2>&1 & local w=$!
+    if _find_sandbox_tree "$tag"; then
+        [[ "$(awk '/^NoNewPrivs:/{print $2}' "/proc/$SBX_PAYLOAD/status" 2>/dev/null)" == "1" ]] \
+            && [[ "$(awk '/^CapEff:/{print $2}' "/proc/$SBX_PAYLOAD/status" 2>/dev/null)" == "0000000000000000" ]] \
+            && ok=1
+    fi
+    kill -9 "$w" "$SBX_LAUNCH" "$SBX_SHIM" "$SBX_PAYLOAD" 2>/dev/null
+    wait "$w" 2>/dev/null
+    chmod 755 "$ROOTFS/bin/busybox" 2>/dev/null
+    [[ $ok -eq 1 ]]
+}
+# CORE1: RLIMIT_CORE must be forced to 0 in the payload (harden_payload_fds).
+# The harness inherits ITS OWN core limit (often 0) — raise it first, else
+# the in-payload `ulimit -c == 0` is vacuous by inheritance, not by the fix.
+core1_test() {
+    ulimit -c 1048576 2>/dev/null || ulimit -c unlimited 2>/dev/null || return 1
+    local rc=0
+    ic '[ "$(ulimit -c)" = "0" ]' || rc=1
+    ulimit -c 0 2>/dev/null
+    return $rc
+}
+# CORE2: behavior check — a SEGV in the payload must leave NO core file in
+# the rootfs root (payload cwd = /) or the repo cwd. NOTE: on hosts with a
+# PIPED core_pattern (systemd-coredump) no file would appear even without
+# the fix (core(5): RLIMIT_CORE ignored for pipes) — CORE2 is defense in
+# depth for file-pattern hosts; CORE1 is the mechanism assertion (D33).
+core2_test() {
+    "$MINICT" "$ROOTFS" /bin/sh -c 'kill -SEGV $$' >/dev/null 2>&1 || true
+    local f
+    for f in "$ROOTFS/core" "$ROOTFS/core."* "$REPO/core" "$REPO/core."*; do
+        [[ -e "$f" ]] && return 1
+    done
+    return 0
+}
+
 PASS=0; FAIL=0
 run_case() { # <id> <desc> <expect: pass|fail|xfail> <cmd...>
     local id="$1" desc="$2" expect="$3"; shift 3
@@ -321,6 +405,19 @@ run_case NNP1 "PR_SET_NO_NEW_PRIVS=1 verified via host /proc" pass nnp1_test
 run_case CAPD1 "capdrop real: shim+payload CapEff=0 (host /proc)" pass capd1_test
 run_case HOST1 "hostname isolated ('minict')" pass \
     ic 'hostname | grep -qx minict'
+
+# ---------- deep escape PoCs (issue #5, D33) ----------
+run_case FD1 "fd-based escape closed: inherited host fd EBADF in payload" pass \
+    fd1_test
+run_case CHROOT1 "chroot(2) EPERM post-capdrop (jail-escape primitive)" fail \
+    ic 'mkdir -p /c && chroot /c /bin/true'
+run_case SETUID2 "suid exec: NNP=1 + CapEff=0 survive (host /proc)" pass \
+    setuid2_test
+run_case CORE1 "core dump disabled: RLIMIT_CORE=0 forced in payload" pass \
+    core1_test
+run_case CORE2 "SIGSEGV leaves no core file in rootfs/repo cwd" pass \
+    core2_test
+
 run_case SIG1 "SIGKILL wrapper: PDEATHSIG+pidns teardown, no orphan" pass sig1_test
 run_case SIG2 "SIGTERM wrapper: tree exits 143 (128+15), no orphan" pass \
     sigfwd_test TERM 143 wrapper
@@ -338,6 +435,12 @@ run_case NET2 "loopback is UP inside sandbox netns" pass \
     ic 'busybox ifconfig lo | grep -q "UP LOOPBACK RUNNING"'
 run_case PROC1 "/proc mount blocked by host seccomp (known gap)" xfail \
     ic 'mount -t proc none /proc'
+# issue #5: /proc/self/root trick (host-procfs escape class) — there is no
+# procfs inside the sandbox at all (mount EPERM in pidns on dev AND runner,
+# AL4), so /proc/self/root is unreachable; netns does not change this but
+# the contract must be LOCKED by assertion, not theory.
+run_case PROC2 "/proc/self/root unreachable (no procfs mounted)" pass \
+    ic '[ ! -e /proc/self/root ]'
 run_case CG1 "no cgroup limits (cgroups v1 only — known gap)" xfail \
     ic '[ -f /sys/fs/cgroup/cgroup.controllers ]'
 
