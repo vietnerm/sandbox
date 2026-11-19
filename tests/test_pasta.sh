@@ -141,12 +141,19 @@ run_case PT2 "pasta --version matches pin ($PASTA_VERSION)" pass \
 
 # ---------- control: no pasta → gateway unreachable (runs everywhere) ----------
 net11c_test() {
+    # anti-vacuous (M0 class, same as CHROOT1 #54): assert the sandbox ACTUALLY
+    # started (payload prints PROBE_ALIVE) BEFORE trusting the absence of
+    # UNREACH_OK — otherwise a dead instance would "pass" this expect-fail case
     bash "$REPO/sandbox/minict.sh" up "$NAME_P" -- \
-        /bin/sh -c "busybox wget -T 2 -q -O /dev/null http://$GW_IP:$HPORT/ && echo UNREACH_OK" \
+        /bin/sh -c "busybox echo PROBE_ALIVE && busybox wget -T 2 -q -O /dev/null http://$GW_IP:$HPORT/ && echo UNREACH_OK" \
         >/dev/null 2>&1
     sleep 0.5
-    # expected: wget fails inside the private netns → NO marker (grep BEFORE down)
-    if grep -q UNREACH_OK "$REPO/instances/$NAME_P/log"; then
+    local log="$REPO/instances/$NAME_P/log"
+    if ! wait_for_log "$log" "PROBE_ALIVE" 20; then
+        dump_logs ""
+        return 1
+    fi
+    if grep -q UNREACH_OK "$log"; then
         dump_logs ""
         return 1
     fi
