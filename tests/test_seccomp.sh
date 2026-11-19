@@ -115,8 +115,9 @@ run_case SC19 "control: socket(AF_INET) still allowed (httpd)" pass sc19
 # this case locks the SURVIVAL contract on the shell path. Wrong-arch
 # SECCOMP_RET_KILL_THREAD is intentional (hard fail on non-x86_64) and out
 # of scope here.
+sc20() { "$MINICT" "$ROOTFS" /bin/sh -c 'mount -t tmpfs none /mnt5 2>/dev/null; test $? -eq 1'; }
 run_case SC20 "blocklist hit survives: rc=1 (EPERM), no SIGSYS death" pass \
-    ic 'mount -t tmpfs none /mnt5 2>/dev/null; test $? -eq 1'
+    sc20
 
 echo "=== summary: PASS=$PASS FAIL=$FAIL ==="
 [[ $FAIL -eq 0 ]]
