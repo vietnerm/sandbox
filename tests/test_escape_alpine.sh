@@ -19,7 +19,17 @@ AROOTFS="$REPO/rootfs-alpine"
 
 # reuse the rootfs built by test_alpine.sh when run-suites.sh got here;
 # build standalone otherwise (pinned tarball + sha256, rootless)
-[[ -d "$AROOTFS/bin" ]] || bash "$REPO/sandbox/mkrootfs-alpine.sh" "$AROOTFS" >/dev/null
+# self-heal: intermittent builds were observed shipping WITHOUT the tarball's
+# empty dirs (home/tmp/media/root/run/srv/sys — issue #51); FS6/UID2 then fail
+# with a confusing "can't create /home/iso". Rebuild whenever dirs are missing.
+if ! [[ -d "$AROOTFS/bin" && -d "$AROOTFS/home" && -d "$AROOTFS/tmp" \
+        && -d "$AROOTFS/media" && -d "$AROOTFS/root" && -d "$AROOTFS/run" \
+        && -d "$AROOTFS/srv" && -d "$AROOTFS/sys" ]]; then
+    rm -rf "$AROOTFS"
+    bash "$REPO/sandbox/mkrootfs-alpine.sh" "$AROOTFS" >/dev/null || exit 1
+fi
 [[ -x "$AROOTFS/bin/busybox" ]] || { echo "alpine rootfs build failed"; exit 1; }
+[[ -d "$AROOTFS/home" && -d "$AROOTFS/tmp" ]] \
+    || { echo "alpine rootfs STILL missing /home//tmp after rebuild — issue #51"; exit 1; }
 
 ISOLATION_ROOTFS="$AROOTFS" bash "$HERE/test_isolation.sh"
