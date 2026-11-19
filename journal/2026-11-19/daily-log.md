@@ -181,3 +181,49 @@ CVE 0 mới, escape suite 105 case xanh, host unchanged, main xanh.
   remote (403) → để ZAI/owner apply.
 - Bài học: kiểm nhãn issue (`type:security`) **trước** khi viết `Closes #N` trong PR.
 - Còn chờ owner: PR #63 (G7), `verified` cho #31 và #5, đóng #34/#52.
+## Phiên 5 — Orchestrator §11 (ZAI: SBG apply + SCR/SIA PR #63 + ledger)
+
+### Pha A — Sync + SBG (MODE=plan 06:26Z)
+- main `b5c7e9f` (ci #158 + unicode-guard #43 xanh); 3 nhánh ≠ main.
+- §0.6 dừng: không áp dụng (#52/#34 đã triage — 0 CVE mới ngoài watchlist, 0
+  ảnh hưởng, chờ owner `verified`; CI main xanh).
+- Plan: `branch/plan.md` (Phiên 5). 2 nhánh đã merge chờ cửa sổ §0.4 30 phút.
+
+### Pha B — PR #63 (cve-gate + DoD GĐ1)
+- B1 sync main → `4afae47` (sạch, không conflict); CI run #160 xanh trên runner
+  (isolation 31, seccomp 21, netns 7, alpine 8, escape-alpine 31, cve-check 4,
+  **pasta 7/7 thật 0 SKIP**, cve-gate 6/6, web 9/9, minictd 20/20, perf PASS).
+- B2 SCR clean-room @ `4afae4` (ZAI mode §0b): make test ×5 rc=0; test-cve-gate
+  6/6 ×5; web 9/9 ×3 + 8/9 ×1 — **WEB9 flaky mới: tái hiện cả trên main
+  `b5c7e9f` (1/4) → không thuộc PR**; mutant M0/MG1/MG2 caught (0 vacuous);
+  perf p50 1.9ms / rss 1184kB / disk 2.0MB; host unchanged; minictd từ log CI
+  run #160 (máy ZAI không Go ≥ 1.23). Comment SCR trên PR (ZAI mode §0b).
+- B3 SIA @ `4afae4`: **CONCERNS** — B6 (thiếu research #56), B10 (thiếu
+  daily-log phiên làm PR), manifest+body stale "/proc còn thiếu" sau merge #64;
+  2 low (CVE_RE validate đầu ra gate; branch naming). Label `audit:concerns`.
+- **Điều phối đồng thời**: phiên Claude đang ghi nhánh này (§0.4 — commit
+  `cebde08` + `1a39b69` 06:41Z) sửa đủ 3 việc medium + low #4 (CG7 validate
+  CVE_RE, mutant đỏ). Phiên ZAI **nhường vòng B4** (SCR/CI trên `1a39b69`)
+  cho phiên đó, không push commit trùng; backup cục bộ giữ `local/zai-phen5-*`.
+
+### SBG MODE=apply 06:44Z (Pha C/E)
+- DELETE_MERGED: `fix/31-proc-pidns` (ủy quyền Phiên 4), `chore/ledger-2026-11-19-p4`
+  — xoá remote OK sau cửa sổ §0.4; verified `ls-remote`.
+- KEEP: `docs/issue-throughput` — G7 `needs-human` + concurrent writer.
+- Ledger: 3 hàng append (`branch-ledger.md`); report: `branch/branch-report.json`.
+
+### CVE Check (Bước 6)
+- cve-check rc=0 từ máy ZAI (NVD reachable), 19 hàng, 0 CVE mới ngoài watchlist.
+- Gate trên report thật: không CVE mới → cve-daily không mở issue (D38 đúng).
+
+### WEB9 flake (phát hiện SCR)
+- Race khởi động positive-control `web9_test` (sleep 0.5s + 15×0.1s retry trước
+  khi proxy listen) — mở issue #66 (`type:bug` `area:web`), không chặn PR #63.
+
+### Pha D
+- Không mở việc mới (Pha B–C còn PR chờ owner; luật ưu tiên gộp).
+
+### Kế hoạch kế tiếp
+- Owner: review + merge PR #63 (G7); `verified` cho #5/#31; đóng #34/#52.
+- Sau merge #63: xoá nhánh KEEP (SBG apply kế); WEB9 instrumentation;
+  DNS pasta (GĐ1 mục 1 residual); stack web thật (mục 2).

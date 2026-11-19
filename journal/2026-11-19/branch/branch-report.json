@@ -1,0 +1,46 @@
+{
+  "date": "2026-11-19",
+  "mode": "apply",
+  "halted": false,
+  "halt_reason": "",
+  "branches": [
+    {
+      "name": "chore/ledger-2026-11-19-p4",
+      "head_sha": "dd869681a2d0fc42f149766282a828d697af4f4e",
+      "decision": "DELETE_MERGED",
+      "reason": "PR #65 MERGED, headRefOid khớp HEAD nhánh (squash b5c7e9f, cherry+=0); xoá 06:44Z sau cửa sổ §0.4",
+      "pr": 65,
+      "issue": 0,
+      "gates": {"G1": true, "G2": true, "G5": true, "G7": true},
+      "archive_tag": "",
+      "done": true,
+      "error": ""
+    },
+    {
+      "name": "fix/31-proc-pidns",
+      "head_sha": "d87a7ac89065b91569f4b97cb7b75ba76137fab1",
+      "decision": "DELETE_MERGED",
+      "reason": "PR #64 MERGED, headRefOid khớp HEAD nhánh (squash da429c6, cherry+=0); hoàn tất ủy quyền Phiên 4; xoá 06:44Z sau cửa sổ §0.4",
+      "pr": 64,
+      "issue": 31,
+      "gates": {"G1": true, "G2": true, "G5": true, "G7": true},
+      "archive_tag": "",
+      "done": true,
+      "error": ""
+    },
+    {
+      "name": "docs/issue-throughput",
+      "head_sha": "1a39b69b58952fd3513fc5af31eb53f6f862667a",
+      "decision": "KEEP",
+      "reason": "G7: PR #63 đụng workflows/PROMPT.MD/manifest → needs-human; concurrent writer (1a39b69 06:41Z) sửa SIA CONCERNS @ 4afae4 → nhường vòng B4; ngày xem lại: sau owner review PR #63",
+      "pr": 63,
+      "issue": 56,
+      "gates": {"G1": true, "G2": true, "G5": true, "G7": false, "G3": false, "G4": false, "G6": true, "G8": true},
+      "archive_tag": "",
+      "done": true,
+      "error": ""
+    }
+  ],
+  "remaining_branches": ["main", "docs/issue-throughput"],
+  "main_ci_after": "success"
+}
