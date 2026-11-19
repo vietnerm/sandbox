@@ -119,7 +119,8 @@ egress prototype; `make test` 7 suite / 105 case (2026-11-19), perf ~2 ms / ~1.2
       instance (có `/proc` trên nền tảng mục tiêu, init tối thiểu, single-uid
       mapping theo §5), không còn chỉ busybox.
       → Alpine 3.22.8 chạy được + trọn isolation suite trên alpine (#24, #54);
-      **còn thiếu `/proc` trong pidns** (EPERM cả máy dev lẫn runner — #31).
+      `/proc` trong pidns đã sửa (#64, D39 — PROC1–4/AL4 xanh trên runner kernel 7.0);
+      tick khi owner gắn `verified` cho #31.
 - [ ] Stack web thật (nginx/caddy + API + SQLite hoặc Redis) chạy trong một
       instance, host truy cập được. → **chưa bắt đầu** (cần DNS/egress để cài gói).
 - [ ] Mạng instance ↔ host/Internet qua **pasta hoặc slirp4netns**; bridge D16 chỉ còn là fallback.
