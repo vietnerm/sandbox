@@ -392,12 +392,51 @@ run_case FS5 "post-capdrop tmpfs mount also fails" fail \
 run_case FS6 "write to /home lands on-disk in rootfs (host view)" pass fs6_test
 
 # ---------- pid/identity isolation ----------
+# issue #31 / D39: minict now mounts a procfs of the instance pidns (before
+# detaching the old root). Whether the HOST lets an unprivileged userns
+# mount procfs at all is probed independently of minict: a host seccomp
+# filter (dev box kernel 5.10) refuses it for every process. On such hosts
+# the /proc cases keep the old "absent" assertion (xfail/pass) — never a
+# silent PASS for a feature that did not run.
+if unshare --user --map-root-user --pid --fork --mount --mount-proc true \
+        >/dev/null 2>&1; then
+    PROC_ENV=ok
+else
+    PROC_ENV=blocked
+    echo "NOTE: host refuses procfs in an unprivileged userns — /proc cases run in 'absent' mode (D39)"
+fi
+
+# PID2 (/proc present): every pid listed is a small sandbox pid — with
+# CLONE_NEWPID removed (mutant M4) the procfs would be the HOST pidns and
+# list dozens of pids, many > 2 digits.
+pid2_test() {
+    ic 'n=0; for p in /proc/[0-9]*; do n=$((n+1)); [ "${p#/proc/}" -le 50 ] || exit 1; done; [ $n -ge 2 ] && [ $n -le 8 ]'
+}
+# PROC1: /proc is THIS pidns: the payload shell sees itself as pid 2 with
+# a single NSpid level (a host-pidns procfs would show the host pid).
+proc1_test() {
+    ic 'awk "/^Pid:/{p=\$2} /^NSpid:/{n=NF} END{exit !(p==2 && n==2)}" /proc/$$/status'
+}
+# PROC2: /proc/<pid>/root of EVERY visible process is the sandbox root —
+# the /proc/self/root escape class (issue #5) stays closed with procfs on.
+proc2_test() {
+    ic 'for p in /proc/[0-9]*; do [ "$(readlink $p/root)" = / ] || exit 1; done; ls /proc/1/root/ | grep -q "^old-" && exit 1; exit 0'
+}
+# PROC3: the runtime's procfs is nosuid,nodev,noexec
+proc3_test() {
+    ic 'grep " /proc proc " /proc/mounts | grep -q nosuid, && grep " /proc proc " /proc/mounts | grep nodev | grep -q noexec'
+}
+
 run_case PID1 "payload is PID 2 behind pidns-1 signal shim" pass \
     ic '[ $$ -eq 2 ]'
-run_case PID2 "no host processes visible (ps lists none)" pass \
-    ic 'ps | tail -n +2 | grep -q . && exit 1 || exit 0'
-# NOTE(#38/D32): PID2 is vacuous w.r.t. pidns (rootfs has no /proc, so `ps`
-# lists none regardless). Direct pidns assertion = PID3 below.
+if [[ $PROC_ENV == ok ]]; then
+    run_case PID2 "/proc lists only sandbox pids (no host processes)" pass pid2_test
+else
+    run_case PID2 "no host processes visible (ps lists none)" pass \
+        ic 'ps | tail -n +2 | grep -q . && exit 1 || exit 0'
+fi
+# NOTE(#38/D32): in 'absent' mode PID2 is vacuous w.r.t. pidns (no /proc).
+# Direct pidns assertion from the host side = PID3 below.
 run_case PID3 "pidns live: shim is pidns-1, payload pidns-2 (host NSpid)" pass \
     pid3_test
 run_case UID1 "uid=0 inside, no foreign gid visible (0/overflow only)" pass uid1_test
@@ -439,14 +478,22 @@ run_case NET1 "netns isolated: only lo inside, no host iface" pass \
         | grep -Eq "^(eth|ens|enp|eno|wl|ww|bond|veth|dummy)" && exit 1 || exit 0'
 run_case NET2 "loopback is UP inside sandbox netns" pass \
     ic 'busybox ifconfig lo | grep -q "UP LOOPBACK RUNNING"'
-run_case PROC1 "/proc mount blocked by host seccomp (known gap)" xfail \
-    ic 'mount -t proc none /proc'
-# issue #5: /proc/self/root trick (host-procfs escape class) — there is no
-# procfs inside the sandbox at all (mount EPERM in pidns on dev AND runner,
-# AL4), so /proc/self/root is unreachable; netns does not change this but
-# the contract must be LOCKED by assertion, not theory.
-run_case PROC2 "/proc/self/root unreachable (no procfs mounted)" pass \
-    ic '[ ! -e /proc/self/root ]'
+if [[ $PROC_ENV == ok ]]; then
+    run_case PROC1 "/proc is the sandbox pidns view (payload = pid 2)" pass proc1_test
+    run_case PROC2 "every /proc/<pid>/root is the sandbox root" pass proc2_test
+    run_case PROC3 "runtime procfs mounted nosuid,nodev,noexec" pass proc3_test
+else
+    # host refuses procfs (D39 'absent' mode): lock the old contract
+    run_case PROC1 "/proc absent (host refuses procfs in userns)" xfail \
+        ic '[ -e /proc/self ]'
+    run_case PROC2 "/proc/self/root unreachable (no procfs mounted)" pass \
+        ic '[ ! -e /proc/self/root ]'
+    run_case PROC3 "(absent mode) no procfs in /proc/mounts either" pass \
+        ic '! grep -q " /proc proc " /proc/mounts 2>/dev/null'
+fi
+# the PAYLOAD can never mount another procfs (seccomp NR_mount + capdrop)
+run_case PROC4 "payload cannot mount a second procfs" fail \
+    ic 'mkdir -p /tmp/p && mount -t proc none /tmp/p'
 run_case CG1 "no cgroup limits (cgroups v1 only — known gap)" xfail \
     ic '[ -f /sys/fs/cgroup/cgroup.controllers ]'
 

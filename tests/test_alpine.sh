@@ -75,6 +75,17 @@ ic() { "$MINICT" "$ROOTFS" /bin/sh -c "$1"; }
 proc4_test() {
     ic '[ -e /proc/self ]'
 }
+# issue #31 / D39: minict mounts the pidns procfs now; the host probe decides
+# which contract applies (same probe as test_isolation.sh)
+if unshare --user --map-root-user --pid --fork --mount --mount-proc true \
+        >/dev/null 2>&1; then
+    PROC_ENV=ok
+else
+    PROC_ENV=blocked
+fi
+al4_present_test() {
+    ic 'awk "/^Pid:/{p=\$2} END{exit !(p==2)}" /proc/$$/status && [ -r /proc/1/status ]'
+}
 
 # AL5 helper: offline apk add, signature-verified (không --allow-untrusted).
 # Setup download failure = env-blocked (PASS + visible warning): a CDN outage
@@ -139,7 +150,11 @@ run_case AL2 "sandbox sees OUR passwd marker (not host)" pass \
     ic 'grep -q minict-sandbox /etc/passwd'
 run_case AL3 "apk-tools present and runnable in sandbox" pass \
     ic '/sbin/apk --version | grep -q apk-tools'
-run_case AL4 "mount /proc in ns EPERM (known gap — audit PR24)" xfail proc4_test
+if [[ $PROC_ENV == ok ]]; then
+    run_case AL4 "/proc = pidns view on alpine (payload pid 2) — #31" pass al4_present_test
+else
+    run_case AL4 "/proc absent: host refuses procfs (env, D39)" xfail proc4_test
+fi
 run_case AL5 "offline apk add works, signature-verified" pass al5_test
 run_case AL6 "single-uid ownership: 0:0 in ns = real uid on host" pass al6_test
 run_case AL7 "chown foreign uid: EINVAL (unmapped), sandbox alive" pass al7_test
