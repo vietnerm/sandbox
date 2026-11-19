@@ -1,0 +1,116 @@
+[
+  {
+    "cve": "CVE-2022-0847",
+    "component": "kernel(5.10)",
+    "error": "<urlopen error Tunnel connection failed: 403 Forbidden (agent proxy: no rule or ",
+    "why": "Dirty Pipe \u2014 pipe buffer flags; affects 5.8+; fixed mainline 5.10.102"
+  },
+  {
+    "cve": "CVE-2022-0185",
+    "component": "kernel(5.10)",
+    "error": "<urlopen error Tunnel connection failed: 403 Forbidden (agent proxy: no rule or ",
+    "why": "fs context heap overflow \u2014 container escape vector; fixed 5.10.87"
+  },
+  {
+    "cve": "CVE-2023-0386",
+    "component": "kernel(5.10)",
+    "error": "<urlopen error Tunnel connection failed: 403 Forbidden (agent proxy: no rule or ",
+    "why": "overlayfs userns copy-up setuid exec; fixed 5.10.179 \u2014 we AVOID overlayfs in userns (decision D2)"
+  },
+  {
+    "cve": "CVE-2024-1086",
+    "component": "kernel(5.10)",
+    "error": "<urlopen error Tunnel connection failed: 403 Forbidden (agent proxy: no rule or ",
+    "why": "nf_tables UAF LPE \u2014 requires CAP_NET_ADMIN; blocked by our capdrop (measured)"
+  },
+  {
+    "cve": "CVE-2021-22555",
+    "component": "kernel(5.10)",
+    "error": "<urlopen error Tunnel connection failed: 403 Forbidden (agent proxy: no rule or ",
+    "why": "netfilter x_tables heap OOB; fixed 5.10.42"
+  },
+  {
+    "cve": "CVE-2024-21626",
+    "component": "runc(engine)",
+    "error": "<urlopen error Tunnel connection failed: 403 Forbidden (agent proxy: no rule or ",
+    "why": "Leaky Vessels fd leak \u2014 N/A for us (no OCI runtime) but tracked as engine context"
+  },
+  {
+    "cve": "CVE-2026-98432",
+    "component": "kernel",
+    "error": "<urlopen error Tunnel connection failed: 403 Forbidden (agent proxy: no rule or ",
+    "why": "from cve-watchlist.md: **9.8 CRITICAL** (NVD) | mainline 11/2026 (sau stable point) | **unverified** (present-"
+  },
+  {
+    "cve": "CVE-2026-31431",
+    "component": "kernel",
+    "error": "<urlopen error Tunnel connection failed: 403 Forbidden (agent proxy: no rule or ",
+    "why": "from cve-watchlist.md: 7.8 HIGH (NVD) | 6.18.22+/6.19.12+ (advisory) | 5.10.134 n\u1eb1m trong range \u2192 **c\u00f3 th\u1ec3 ch\u01b0"
+  },
+  {
+    "cve": "CVE-2025-39964",
+    "component": "kernel",
+    "error": "<urlopen error Tunnel connection failed: 403 Forbidden (agent proxy: no rule or ",
+    "why": "from cve-watchlist.md: 7.8 HIGH (NVD) | sau stable point | unverified | **kh\u00f4ng v\u1edbi t\u1edbi** \u2014 c\u00f9ng surface AF_AL"
+  },
+  {
+    "cve": "CVE-2026-53266",
+    "component": "kernel",
+    "error": "<urlopen error Tunnel connection failed: 403 Forbidden (agent proxy: no rule or ",
+    "why": "from cve-watchlist.md: 8.8 HIGH (NVD) | sau stable point | unverified | **kh\u00f4ng v\u1edbi t\u1edbi**: c\u1ea7n CAP_NET_ADMIN h"
+  },
+  {
+    "cve": "CVE-2025-39682",
+    "component": "kernel",
+    "error": "<urlopen error Tunnel connection failed: 403 Forbidden (agent proxy: no rule or ",
+    "why": "from cve-watchlist.md: **9.8 CRITICAL** (NVD) | sau stable point | unverified | **host-side**: c\u1ea7n kTLS offloa"
+  },
+  {
+    "cve": "CVE-2026-124739",
+    "component": "busybox httpd",
+    "error": "<urlopen error Tunnel connection failed: 403 Forbidden (agent proxy: no rule or ",
+    "why": "from cve-watchlist.md: 7.5 HIGH | ch\u01b0a c\u00f4ng b\u1ed1 trong NVD refs | unverified (published 2026-11-11) | **kh\u00f4ng v\u1edb"
+  },
+  {
+    "cve": "CVE-2026-88829",
+    "component": "busybox httpd",
+    "error": "<urlopen error Tunnel connection failed: 403 Forbidden (agent proxy: no rule or ",
+    "why": "from cve-watchlist.md: 7.2 HIGH | ch\u01b0a c\u00f4ng b\u1ed1 | unverified (published 2026-10-14) | **kh\u00f4ng v\u1edbi t\u1edbi**: revers"
+  },
+  {
+    "cve": "CVE-2026-88837",
+    "component": "busybox httpd",
+    "error": "<urlopen error Tunnel connection failed: 403 Forbidden (agent proxy: no rule or ",
+    "why": "from cve-watchlist.md: 6.5 MEDIUM | ch\u01b0a c\u00f4ng b\u1ed1 | unverified | **kh\u00f4ng v\u1edbi t\u1edbi**: kh\u00f4ng Basic Auth"
+  },
+  {
+    "cve": "CVE-2026-88831",
+    "component": "busybox httpd",
+    "error": "<urlopen error Tunnel connection failed: 403 Forbidden (agent proxy: no rule or ",
+    "why": "from cve-watchlist.md: 5.3 MEDIUM | ch\u01b0a c\u00f4ng b\u1ed1 | unverified | **kh\u00f4ng v\u1edbi t\u1edbi**: kh\u00f4ng d\u00f9ng IP deny rules (D"
+  },
+  {
+    "cve": "CVE-2026-88834",
+    "component": "busybox httpd",
+    "error": "<urlopen error Tunnel connection failed: 403 Forbidden (agent proxy: no rule or ",
+    "why": "from cve-watchlist.md: 3.7 LOW | ch\u01b0a c\u00f4ng b\u1ed1 | unverified | **kh\u00f4ng v\u1edbi t\u1edbi**: kh\u00f4ng system password auth"
+  },
+  {
+    "cve": "CVE-2021-30139",
+    "component": "apk-tools (tarball parsi",
+    "error": "<urlopen error Tunnel connection failed: 403 Forbidden (agent proxy: no rule or ",
+    "why": "from cve-watchlist.md: 7.0 HIGH | 2.12.0 | **patched** (2.14.13 \u226b 2.12.0) | apk ch\u1ec9 \u0111\u1ecdc g\u00f3i t\u1eeb local repo do b"
+  },
+  {
+    "cve": "CVE-2021-36159",
+    "component": "apk-tools (OOB read, HTT",
+    "error": "<urlopen error Tunnel connection failed: 403 Forbidden (agent proxy: no rule or ",
+    "why": "from cve-watchlist.md: 9.8 CRITICAL | 2.12.6 | **patched** (2.14.13 \u226b 2.12.6) | HTTP-fetch path kh\u00f4ng active ("
+  },
+  {
+    "cve": "CVE-2026-39973",
+    "component": "**Apktool (Android RE to",
+    "error": "<urlopen error Tunnel connection failed: 403 Forbidden (agent proxy: no rule or ",
+    "why": "from cve-watchlist.md: 7.5 | \u2014 | **N/A \u2014 component kh\u00e1c, ch\u1ec9 tr\u00f9ng t\u00ean \"apk\"** (b\u00e0i h\u1ecdc D9 \u00e1p d\u1ee5ng l\u1ea7n n\u1eefa) | "
+  }
+]

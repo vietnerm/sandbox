@@ -140,3 +140,34 @@
 
 DAY PASS — 2026-11-19 Phiên 3: issue #57 done (merge #59, đủ cổng SCR/SIA),
 CVE 0 mới, escape suite 105 case xanh, host unchanged, main xanh.
+
+## Phiên 4 — phiên thử theo PROMPT.MD §11 (Claude, theo yêu cầu owner)
+
+### Pha A — Sync
+- main `1573d93`; PR mở: #63 (cve-gate + DoD GĐ1 — G7, chờ owner). Không nhánh lạ.
+
+### Pha B/C
+- #63 đụng workflow/PROMPT/manifest → G7, không tự gộp.
+
+### Pha D — Issue #31: /proc trong pidns (DoD GĐ1 mục 1)
+- Chọn theo §8: mục thấp nhất chưa xong của GĐ1 là mục 1 (rootfs distro) — phần
+  thiếu duy nhất có thể làm ngay là `/proc` (#31); DNS pasta bị chặn ở máy này.
+- Research 4 nguồn → `research.md` (Phiên 4). Quyết định D39 →
+  `decisions/proc-pidns.md`.
+- A/B kernel 6.18: main EPERM, fix mount được; suites: isolation 31/31, seccomp 21/21,
+  netns 7/7, alpine 8/8, escape-alpine 31/31, web 9/9, minictd 20/20. pasta
+  env-blocked ở máy này (passt.top, dl-cdn bị proxy chặn) — giống main, CI là nguồn
+  sự thật. Mutant ×4 bắt đúng. Perf PASS, không chậm hơn.
+  → `evidence/proc-pidns.txt`.
+- Sự cố: mutant M-noumount để lại 34 thư mục `/old-<pid>` trong rootfs test dùng
+  chung → FS3/PROC2 đỏ ở lần chạy evidence đầu; dọn + chạy lại xanh. Bài học: chạy
+  mutant trên **bản sao** rootfs.
+
+### CVE check
+- `cve/proc-pidns.md|.json`: NVD **unavailable** (proxy máy này chặn
+  services.nvd.nist.gov — 19/19 hàng ERR). Không claim "0 CVE mới"; CVE của ngày đã có
+  ở `cve/pasta-egress.md` (Phiên 3).
+
+### Host baseline
+- Máy khác với máy ZAI (container cloud) — không so được với baseline 2026-11-17;
+  không ghi "unchanged".
