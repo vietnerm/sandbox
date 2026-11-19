@@ -106,5 +106,17 @@ run_case SC17 "socket(AF_NETLINK) blocked (EPERM)" pass sc17
 run_case SC18 "control: netlink socket works without filter" pass sc18
 run_case SC19 "control: socket(AF_INET) still allowed (httpd)" pass sc19
 
+# ---------- SIGSYS semantics (issue #5, D33): the blocklist is ERRNO-mode —
+# a blocked syscall returns errno and the process SURVIVES; no RET_TRAP
+# (catchable SIGSYS signal) and no KILL on blocklist hits. A mutant flipping
+# ERRNO->TRAP (or KILL) makes busybox mount die by signal (rc 128+31=159 /
+# 137) instead of returning rc=1 -> this case goes red. Filter-vs-capdrop
+# attribution is already covered by the probe A/B controls (SC1 vs SC14);
+# this case locks the SURVIVAL contract on the shell path. Wrong-arch
+# SECCOMP_RET_KILL_THREAD is intentional (hard fail on non-x86_64) and out
+# of scope here.
+run_case SC20 "blocklist hit survives: rc=1 (EPERM), no SIGSYS death" pass \
+    ic 'mount -t tmpfs none /mnt5 2>/dev/null; test $? -eq 1'
+
 echo "=== summary: PASS=$PASS FAIL=$FAIL ==="
 [[ $FAIL -eq 0 ]]
