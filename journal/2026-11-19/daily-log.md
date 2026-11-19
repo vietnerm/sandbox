@@ -383,3 +383,69 @@ tiến độ GĐ2 và số issue tăng.
 DAY PASS — 2026-11-19 Phiên 7: issue #74 done (merge #76, đủ cổng SCR ×2/SIA
 CONCERNS→PASS), CVE 0 mới (gate rc=0), suite 111 case (106 PASS + 5 SKIP dev;
 pasta 9/9 thật trên runner), host unchanged, main xanh `524b87a`.
+
+## Phiên 8 — Orchestrator §11 (ZAI: SBG plan → Pha D #79 apk online → SCR/SIA PR #81)
+
+### Pha A — Sync + SBG
+- main `80a0c1f` (ledger Phiên 7 #78); CI main xanh (ci + unicode-guard).
+- PR mở đầu chu trình: 0 → Pha B/C rỗng. Remote chỉ `main`; local chỉ `main`.
+- plan.md Phiên 8. `gh` CLI 2.63.2 cài local (/home/z/.local/bin) — phiên này
+  có gh thật, không cần REST wrapper.
+
+### Issue xử lý
+- **#79** (p1 feature area:netns — mở phiên này, triage+assign luôn): apk add
+  ONLINE trong instance alpine — residual thấp nhất của GĐ1 mục 1 (HTTPS/
+  apk-tools runtime; DNS đã có #74/D42). Status: done (PR #81).
+- **#80** (p2 bug area:ci — mở khi chạy make test): rootfs-alpine tracked bị
+  mutate mỗi run + AL5 từng vacuous vì DB nhiễm acpid-openrc từ #21 (42f3273).
+  Không sửa trong #79 (1 issue/PR).
+
+### Research (D43 — 4 nguồn verify link)
+- passt.1 pin 2026_10_02 (sha256 `7b81892b…` verify lại): `--dns-forward` map
+  UDP/TCP :53/:853 → dns_host — client-agnostic (musl getaddrinfo cũng đi qua).
+- wiki.musl-libc.org (200): musl đọc ≤3 nameserver, query song song —
+  resolv.conf inject đúng 1 nameserver ⇒ deterministic.
+- apk-tools GitHub (200) + pkgs.alpinelinux.org ca-certificates-bundle (200):
+  apk 2.14 fetch qua libfetch+libcrypto; rootfs-alpine đo được ship đủ runtime
+  (libcrypto/libssl/libz/libapk + 118 certs + keys) — KHÔNG cần pre-bake thêm.
+
+### Development (nhánh feat/79-apk-online, merge #81)
+- `minict.sh up [--rootfs <dir>]` (D43): default busybox giữ nguyên; fail-
+  closed (/bin/sh symlink absolute `/bin/busybox` resolve trong ngữ cảnh
+  rootfs — đo được dangling trên host); flags bất kỳ thứ tự trước `--`.
+- `tests/test_pasta.sh` 9→11: **PT4C** control (no pasta ⇒ apk update FAIL,
+  guard PROBE_ALIVE — chạy mọi nơi, M0 caught) + **PT4** (env-gated tun:
+  apk update retry + apk add --no-cache tree signature-verified; assert 3
+  lớp: marker + apk DB P:tree + binary, host-side trước down).
+- SUFFIXES cleanup bug (pre-existing): thiếu `-` ⇒ trap không dọn instance —
+  sửa + thêm `-apk`.
+
+### CVE Check
+- `cve/apk-online.md|.json`: rc=0, 19 hàng, 0 lỗi NVD, cve-gate rc=0 → 0 CVE
+  mới ngoài watchlist. Kernel dev 5.10.134 (runner azure cho CI).
+- apk-tools CVE-2021-30139/36159: patched trong 2.14.13 (rootfs) — watchlist.
+
+### Validation "không bị nhiễm"
+- `make test` ×2 (cây chính + SCR clean-room ×3): 107 PASS + 6 SKIP / 0 FAIL
+  dev; `make test-web` 9/9 ×4; M0 caught (NET11C/PT3C/PT4C FAIL) + M-badrootfs
+  fail-closed (không tạo instance dir).
+- **CI runner @ `d41d250`: 113/113 thật — pasta 11/11 0 SKIP, PT4 PASS thật
+  (apk online HTTPS+signature qua pasta), minictd 20/20 + go test ok, web 9/9,
+  perf 1.79ms/2524kB/2.12MB PASS.**
+- Host baseline unchanged trong-ph-version (3 sha256 khớp); listeners cùng
+  tập nền. Bằng chứng: `evidence/apk-online.txt` + comment SCR/SIA PR #81.
+
+### PR
+- **#81 — đủ cổng: SCR PASS (clean-room ×3 + mutant M0/M-badrootfs) + SIA
+  PASS + CI xanh @ `d41d250`** — chi tiết trạng thái cuối phiên ở Pha C/E.
+
+### Dev-only sanity (không phải suite)
+- apk update/add online trong sandbox (MINICT_NO_NETNS=1 + resolver host
+  inject): UPDATE_RC=0, "OK: 26326 distinct packages", tree cài được, DB ghi
+  P:tree — TLS/signature không vỡ dưới seccomp kernel 5.10 (dữ liệu hỗ trợ,
+  nguồn sự thật vẫn là CI).
+
+### Kế hoạch kế tiếp
+- GĐ1 mục 4: stack web thật (nginx + API + SQLite) trên rootfs distro — cần
+  pre-bake ownership AL7 hoặc apk pre-install; #80 alpine-hygiene trước khi
+  mở rộng suite alpine; #75 port-collision test_web; from-audit #77/#62/#61.
