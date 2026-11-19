@@ -98,3 +98,40 @@ MODE=plan 06:26Z → MODE=apply 06:44Z (cửa sổ §0.4 30 phút đã qua cho 2
   main → mở issue `type:bug` riêng, không chặn PR #63.
 - Sự kiện phối hợp: phiên Claude ghi nhánh #63 song song (§0.4) — phiên ZAI nhường
   B4, giữ bằng chứng SCR/SIA @ `4afae4` làm audit trail.
+
+---
+
+# SBG Branch Plan + APPLY — 2026-11-19 (Phiên 6, ZAI — tiếp nối chỉ thị owner)
+
+MODE=plan → apply (hợp nhất tại đây). Bối cảnh: owner IM "đọc PROMPT.MD và làm
+tiếp thay việc owner" → ủy quyền các việc owner-pending (review+merge #63 G7,
+verified #31/#5, đóng #34/#52 — tiền lệ #16/#17).
+
+## Thu thập (07:19Z)
+- main `f1612ec` (PR #69 đã gộp bởi phiên Claude lúc 07:15Z, SCR/SIA của họ
+  đầy đủ — ZAI không nhảy vào); PR #70 (ledger Claude) đang mở.
+- PR #63 @ `e98a379`: đầy đủ G1–G6, G8 + SCR×2/SIA re-verdict PASS của Phiên 5,
+  thiếu duy nhất G7 → chủ đề ủy quyền owner.
+- CI main xanh mọi mốc; #34/#52/#31/#5 mở chờ owner.
+
+## Quyết định theo nhánh (apply)
+| Nhánh | PR | Quyết định | Lý do |
+|---|---|---|---|
+| docs/issue-throughput | #63 | MERGE → DELETE_MERGED | G7 via ủy quyền owner; B1 resync `eb1dbc2` (delta code #69) → SCR vòng 3 (minictd cục bộ ×3, mutant M-drain caught) + SIA PASS + comment phê duyệt G7 → squash `47023c3`; CI main xanh sau merge |
+| fix/50-execstream-drain | #69 | MERGE (bởi Claude) → DELETE_MERGED | ZAI apply xoá nhánh 07:53Z ngoài cửa sổ §0.4 |
+| chore/ledger-2026-11-19-claude-p2 | #70 | MERGE (bởi Claude) → DELETE_MERGED | ZAI apply xoá nhánh 07:53Z |
+| fix/66-web9-wait-listen | #71 | MERGE → DELETE_MERGED | Pha D của phiên: WEB9 #66 (phát hiện Phiên 5) — D41; SCR/SIA PASS @ `74f501f`; squash `1a12688`; #66 đóng + follow-up #72 |
+
+## Thực thi Pha E (07:53Z)
+- Xoá 3 nhánh merged OK; `git ls-remote`: chỉ còn `main` `1a12688` ✓
+- Owner-pending: verified + đóng #31, #5, #34, #52 (mỗi issue: bằng chứng
+  PR/CI/SCR/SIA + ghi nhận ủy quyền) ✓
+- CI main @ `1a12688`: ci + unicode-guard xanh ✓
+
+## Kết luận
+- Repo đạt trạng thái mục tiêu §11: chỉ `main`. 0 nhánh KEEP.
+- Bài học: 
+  - WEB9 flake = 2 cơ chế chồng nhau (slow-start async: đã sửa; burst rc=52
+    env-level: đã hardening budget + theo dõi #72).
+  - Phối hợp đa-agent: phiên Claude gộp #69/#70 độc lập — ZAI xác minh độc lập
+    (M-drain mutant) rồi apply dọn nhánh, không đụng PR của nhau.
