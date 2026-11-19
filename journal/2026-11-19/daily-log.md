@@ -361,9 +361,11 @@ tiến độ GĐ2 và số issue tăng.
 - Bằng chứng: `evidence/pasta-dns.txt` + comment SCR/SIA trên PR #76.
 
 ### PR
-- #76 — draft, CI xanh @ `9d7227e` (build-test ×2, perf-guard, unicode-guard,
-  scan); SCR PASS (ZAI §0b) + SIA CONCERNS @ vòng 1 (3 medium: số đếm case,
-  B6 URL, B10 daily-log — đang sửa B4) → vòng 2 sau commit fix(review).
+- **#76 — MERGED** squash `524b87a` trên main @ 09:1xZ — đủ cổng: SCR PASS
+  (vòng 1 `9d7227e` ×3 clean-room + vòng 2 `abc5a44` sau fix(review)) +
+  SIA CONCERNS → PASS re-verdict (audit:pass, 11/11) + CI xanh cả 2 SHA
+  (pasta 9/9 0 SKIP — PT3 PASS thật trên runner; minictd 20/20); nhánh xoá
+  sau merge (DELETE_MERGED); #74 auto-close; CI main xanh @ `524b87a`.
 
 ### Sự cố quy trình (ghi để sửa)
 - Edit tool trên Makefile chuyển TAB→space toàn file (`missing separator`)
@@ -377,3 +379,7 @@ tiến độ GĐ2 và số issue tăng.
   trên alpine, DNS đã có) hoặc **GĐ1 mục 4 stack web thật** (nginx+API+SQLite,
   cần pre-bake ownership AL7) — chọn theo roadmap.
 - #75 port-collision test_web; #72 residual WEB9; from-audit #76 (low).
+
+DAY PASS — 2026-11-19 Phiên 7: issue #74 done (merge #76, đủ cổng SCR ×2/SIA
+CONCERNS→PASS), CVE 0 mới (gate rc=0), suite 111 case (106 PASS + 5 SKIP dev;
+pasta 9/9 thật trên runner), host unchanged, main xanh `524b87a`.

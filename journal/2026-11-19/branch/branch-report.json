@@ -1,8 +1,8 @@
 {
   "date": "2026-11-19",
-  "mode": "apply",
+  "mode": "plan+apply (Phiên 7, ZAI)",
   "halted": false,
-  "halt_reason": "",
+  "halt_reason": null,
   "branches": [
     {
       "name": "docs/issue-throughput",
@@ -79,10 +79,21 @@
       "archive_tag": "",
       "done": true,
       "error": ""
+    },
+    {
+      "branch": "feat/74-pasta-dns",
+      "head": "abc5a442b9e432684242174b4e73614aefae4f2a",
+      "decision": "MERGE -> DELETE_MERGED",
+      "pr": 76,
+      "issue": 74,
+      "reason": "SCR PASS r1 @9d7227e + SIA CONCERNS (3 medium: counts/B6/B10) -> fix(review) abc5a44 (S1-S4, low->#77) -> SCR PASS r2 + SIA PASS re-verdict (audit:pass); CI xanh ca 2 SHA (pasta 9/9 0 SKIP runner); squash 524b87a match-head; #74 auto-close; CI main xanh sau merge"
     }
   ],
-  "remaining_branches": [
-    "main"
-  ],
-  "main_ci_after": "success"
+  "remaining_branches": [],
+  "main_ci_after": "success (ci + unicode-guard @ 524b87a)",
+  "notes": [
+    "Pha B/C dau phien rong (0 PR mo) — tiep tuc Pha D ngay",
+    "gh CLI khong co trong sandbox -> REST API scripts/ghapi.sh (token tu remote, khong echo)",
+    "Phat hien phu: #75 port-collision test_web (19006 = infra host), #77 from-audit low"
+  ]
 }
