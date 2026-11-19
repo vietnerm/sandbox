@@ -9,6 +9,7 @@
 #   CG4  NVD error row (issue #44) -> not printed, run still succeeds
 #   CG5  malformed report -> exit 2 (fail loud, never silently "nothing new")
 #   CG6  real repo watchlist + yesterday's real report shape -> nothing new
+#   CG7  CVE id not matching CVE-YYYY-NNNN (e.g. quote injection) -> exit 2
 set -u
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -48,6 +49,8 @@ check CG3 "unknown CVE with CVSS < 8 -> not printed" "" 0 \
 check CG4 "NVD error row -> not printed, rc 0" "" 0 \
   '[{"cve":"CVE-2026-77777","error":"timed out"}]'
 check CG5 "malformed report -> rc 2" "" 2 '{"not":"a list"}'
+check CG7 "malformed CVE id -> rc 2, nothing printed" "" 2 \
+  '[{"cve":"CVE-2026-1\\\" in:title x","cvss":"9.9"}]'
 
 # CG6: the repo's own watchlist must cover every CVE cve-check.py tracks
 # today, otherwise cve-daily would open an issue on the next run.

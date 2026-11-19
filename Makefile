@@ -68,7 +68,7 @@ unicode-check:
 test-unicode:
 	bash tests/test_unicode.sh
 
-# cve-daily issue gate (issue #56): 6 cases, no network
+# cve-daily issue gate (issue #56): 7 cases, no network
 test-cve-gate:
 	bash tests/test_cve_gate.sh
 

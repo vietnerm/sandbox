@@ -39,7 +39,7 @@ jobs:
       # is complete and the exit code is real (pipefail above).
       - name: test (isolation 21 + seccomp 20 + netns 7 + alpine 8, all suites)
         run: mkdir -p ci-evidence && make test 2>&1 | tee ci-evidence/test-all.txt
-      - name: test-cve-gate (cve-daily issue gate, 6 cases)
+      - name: test-cve-gate (cve-daily issue gate, 7 cases)
         run: make test-cve-gate
       - name: test-web (6 cases)
         run: mkdir -p ci-evidence && make test-web 2>&1 | tee ci-evidence/test-web.txt

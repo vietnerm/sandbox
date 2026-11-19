@@ -181,3 +181,21 @@ CVE 0 mới, escape suite 105 case xanh, host unchanged, main xanh.
   remote (403) → để ZAI/owner apply.
 - Bài học: kiểm nhãn issue (`type:security`) **trước** khi viết `Closes #N` trong PR.
 - Còn chờ owner: PR #63 (G7), `verified` cho #31 và #5, đóng #34/#52.
+
+## Phiên Claude — PR #63: cve-gate + tick lại DoD GĐ1 (issue #56, D38)
+
+Bổ sung theo SIA PR #63 (B10). Phiên này chạy trước Phiên 4, theo câu hỏi của owner về
+tiến độ GĐ2 và số issue tăng.
+
+- **Owner chốt (decision card):** giữ nguyên luật nhận việc §1/§5; chỉ (a) gom issue
+  CVE bot trùng và (b) tick lại DoD GĐ1 theo thực tế.
+- **Làm:** `tools/cve-gate.py` + `tests/test_cve_gate.sh`; `cve-daily.yml` chỉ mở
+  issue cho CVE critical ngoài watchlist, có dedupe; `make test-cve-gate` vào CI;
+  PROMPT.MD §2 đồng bộ mẫu workflow; manifest §7 DoD GĐ1 tick lại 3/6.
+- **G7:** đụng `.github/workflows/**`, `PROMPT.MD`, `idea/manifest.md` → `needs-human`,
+  không tự gộp.
+- **Sau B1 sync (main có #64):** manifest dòng `/proc` cập nhật (đã sửa, chờ
+  `verified` #31). SCR (ZAI) PASS trừ WEB9 flaky có trên main; SIA CONCERNS → sửa
+  B6 (research), B10 (mục này), claim stale, low CG7. B3 tên nhánh thiếu `<N>-` —
+  không đổi tên giữa chừng, nhớ cho lần sau.
+- **Vẫn chờ owner:** gộp #63, đóng #34/#52, `verified` #5/#31.

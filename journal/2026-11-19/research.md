@@ -158,3 +158,32 @@ Nguồn:
    bỏ root cũ. https://github.com/containers/bubblewrap
 
 Kết luận: giả thuyết SIA PR #24 đúng; sửa thứ tự là đủ, không cần quyền mới.
+
+## CVE gate (issue #56, D38) — Claude, PR #63
+
+Ghi bổ sung theo SIA PR #63 (B6). Máy phiên Claude không ra được Internet (proxy chặn
+NVD/docs) — các nguồn dưới đây là tài liệu chính thức tham chiếu, **không fetch lại
+trong phiên này**; nguồn nội bộ đã đọc trực tiếp.
+
+### Nguồn 1 — NVD CVE API 2.0 (https://nvd.nist.gov/developers/vulnerabilities)
+- `GET /rest/json/cves/2.0?cveId=…` trả một CVE; tìm theo sản phẩm cần `cpeName=` hoặc
+  `keywordSearch=` — đây chính là thứ `cve-check.py` **không** làm (chỉ chấm lại id có
+  sẵn). → Ghi giới hạn "không phát hiện CVE mới" vào D38, việc truy vấn theo CPE để
+  issue riêng.
+- Rate limit không key ~5 request / 30 s; lỗi transient trả HTTP 403/503 → hàng `error`
+  trong report (#44). → gate không bao giờ coi hàng lỗi là "mới" (CG4).
+
+### Nguồn 2 — GitHub CLI `gh issue list --search` (https://cli.github.com/manual/gh_issue_list)
+  + cú pháp tìm issue (https://docs.github.com/en/search-github/searching-on-github/searching-issues-and-pull-requests)
+- `--search` nhận cú pháp search GitHub (`in:title`, `is:open`, `label:`); chuỗi có `"`
+  làm query sai nghĩa → dedupe trượt → issue trùng. → CG7: id phải khớp
+  `CVE-\d{4}-\d{4,}` trước khi ra khỏi gate (SIA low).
+- Search index trễ vài giây–phút so với lúc tạo issue; cron chạy 1 lần/ngày nên không
+  đua.
+
+### Nguồn 3 (nội bộ) — `tools/cve-check.py`, `.github/workflows/cve-daily.yml`, issue #34/#52
+- #34 (18/11) và #52 (19/11) cùng nội dung: luật cũ "CVSS ≥ 8 → mở p0" lặp mỗi ngày
+  cho CVE đã có trong watchlist. Đo được trực tiếp trên repo.
+
+### Áp dụng
+Gate = report ∩ (CVSS ≥ 8) − watchlist, fail loud khi input hỏng (CG5/CG7).
