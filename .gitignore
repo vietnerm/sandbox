@@ -7,5 +7,9 @@ rootfs-alpine/
 instances/
 # logs
 *.log
+# pasta binary + source tarball cache (fetched+pinned by tools/fetch-pasta.sh,
+# NOT vendored into the repo — disk budget 20 MB, D34/D37)
+tools/bin/
+tools/cache/
 # CI evidence (uploaded as artifact, not committed)
 ci-evidence/
