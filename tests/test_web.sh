@@ -237,8 +237,10 @@ PY
         sleep 0.1
     done
     [[ $listening -eq 1 ]] || { echo "positive-control proxy never listened"; ok=0; }
-    # (a) positive control through the whole new resolution path
-    for _ in $(seq 1 15); do
+    # (a) positive control through the whole new resolution path — budget 50
+    # (5 s) to cover asyncio first-connection bursts on loaded container
+    # hosts (measured: direct upstream 0.00 s, proxy bursts <=1.4 s — #66, D41)
+    for _ in $(seq 1 50); do
         resp="$(curl -s -m 2 "http://127.0.0.1:$p9/" 2>/dev/null)"
         echo "$resp" | grep -q real-marker && break
         sleep 0.1
