@@ -79,12 +79,30 @@ spawn_pasta() { # <name> <shim-pid> — attach pasta to the instance netns (D37)
     fi
     bash "$REPO/tools/fetch-pasta.sh" >/dev/null
     local PASTA_BIN="$REPO/tools/bin/pasta"
+    # D42 (issue #74): DNS. pasta forwards DNS flows (UDP/TCP :53) addressed to
+    # the --dns-forward address to the host's first resolver (passt.1; conf.c
+    # add_dns_resolv4 reads it host-side at startup). Without --dns-forward a
+    # query to the gateway would fall into map-gw → 127.0.0.1:53, which only
+    # works when the host resolver listens there (this host uses public
+    # 100.100.2.x) — so --dns-forward is mandatory for determinism. Address =
+    # the host default gateway, i.e. the same GW_IP `--config-net` copies as
+    # guest_gw and that tests/test_pasta.sh NET11 uses as egress target.
+    # No default route on host → skip DNS config entirely (fail-soft; same
+    # behavior as pre-D42 — resolver stays unconfigured in the instance).
+    local DNS_ARGS=()
+    local GW
+    GW="$(ip -4 route show default 2>/dev/null | awk '{print $3; exit}')"
+    if [[ -n "$GW" ]]; then
+        DNS_ARGS=(--dns-forward "$GW")
+    else
+        echo "pasta DNS: no host default route — resolver not configured (D42 fail-soft)" >&2
+    fi
     # Explicit --userns is REQUIRED: `--netns` alone implies --netns-only
     # (passt conf.c conf_pasta_ns) and pasta could not setns into a netns
     # owned by the instance's userns. euid==owner rule makes this rootless.
     nohup "$PASTA_BIN" --foreground \
         --userns "/proc/$pid/ns/user" --netns "/proc/$pid/ns/net" \
-        --config-net ${MINICT_PASTA_FWD:-} \
+        --config-net ${DNS_ARGS[@]+"${DNS_ARGS[@]}"} ${MINICT_PASTA_FWD:-} \
         </dev/null >"$INST/$name/pasta.log" 2>&1 &
     local ppid=$!
     echo "$ppid" > "$INST/$name/pasta-pid"
@@ -113,6 +131,20 @@ spawn_pasta() { # <name> <shim-pid> — attach pasta to the instance netns (D37)
         fi
         echo "pasta attached to '$name' in $(( (t1 - t0) / 1000000 )) ms "\
              "(tap + default route + alive; log $INST/$name/pasta.log)"
+        # D42: instance resolver — write `nameserver <GW>` into the instance's
+        # private rootfs ONLY after tap + route + aliveness are confirmed
+        # (a dead pasta must not leave a resolver pointing nowhere). pasta
+        # intercepts DNS flows to this address (see --dns-forward above).
+        if [[ -n "$GW" ]]; then
+            if mkdir -p "$INST/$name/rootfs/etc" \
+               && printf 'nameserver %s\n' "$GW" \
+                    > "$INST/$name/rootfs/etc/resolv.conf"; then
+                echo "pasta DNS: nameserver $GW written to instance rootfs (--dns-forward)"
+            else
+                echo "pasta DNS: could not write resolv.conf in $INST/$name/rootfs "\
+                     "— resolve-by-name will not work" >&2
+            fi
+        fi
     else
         echo "pasta attach to '$name' FAILED (no default route in 5s) — pasta.log:" >&2
         tail -20 "$INST/$name/pasta.log" >&2 || true

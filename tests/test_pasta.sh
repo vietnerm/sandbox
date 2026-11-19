@@ -26,12 +26,24 @@
 #          --map-host-loopback) after the tap is visible (env-gated)
 #   NET12  with pasta: host→instance port-forward via MINICT_PASTA_FWD "-t
 #          FPORT:8080" → host curl hits httpd inside the sandbox (env-gated)
+#   PT3C   CONTROL: WITHOUT pasta, nslookup inside the netns-only instance
+#          FAILS (no reachable resolver in the namespace) — proves PT3's
+#          success comes from pasta DNS forwarding, not from anything else
+#          (runs everywhere, same class as NET11C)
+#   PT3    with pasta: resolve-by-name — spawn_pasta passes --dns-forward <gw>
+#          (D42: DNS flows to that address are forwarded to the host resolver,
+#          fwd.c fwd_nat_from_tap precedence over map-gw) and writes
+#          `nameserver <gw>` into the instance rootfs AFTER tap+route+alive;
+#          payload nslookups github.com in a retry loop (resolv.conf lands
+#          during the tap wait — anti-race) and asserts DNS_RESOLVED_OK;
+#          host-side asserts rootfs/etc/resolv.conf content BEFORE down
+#          (env-gated)
 #   AB1    with pasta: pasta attach latency (up --pasta → route ready + alive),
 #          measured HOST-side and reported separately from minict cold_start
 #          (env-gated)
 #
 # Env gate (D34): pasta needs /dev/net/tun. The dev container has NONE
-# (measured 2026-11-19, kernel 5.10.134) → NET10/NET11/NET12/AB1 are
+# (measured 2026-11-19, kernel 5.10.134) → NET10/NET11/NET12/PT3/AB1 are
 # SKIP(env-blocked: no /dev/net/tun), NOT fake-PASS. GitHub ubuntu-24.04
 # runners have the device → cases run for real in CI.
 #
@@ -99,7 +111,7 @@ wait_for_log() {
     return 1
 }
 
-SUFFIXES=" tap eg pf ab"
+SUFFIXES=" tap eg pf ab dns ndns"
 cleanup() {
     for s in "" $SUFFIXES; do
         bash "$REPO/sandbox/minict.sh" down "$NAME_P$s" >/dev/null 2>&1 || true
@@ -163,6 +175,29 @@ net11c_test() {
 }
 run_case NET11C "control: WITHOUT pasta, gateway unreachable" pass net11c_test
 
+# ---------- control: no pasta → no resolver inside the namespace ----------
+pt3c_test() {
+    # anti-vacuous (M0 class): PROBE_ALIVE first, then expect nslookup to FAIL
+    # — rootfs ships no /etc/resolv.conf (mkrootfs.sh, measured) and the netns
+    # has only lo (down), so even a stale nameserver entry cannot resolve.
+    bash "$REPO/sandbox/minict.sh" up "$NAME_P-ndns" -- \
+        /bin/sh -c "busybox echo PROBE_ALIVE && busybox nslookup -timeout=2 github.com && echo DNS_CONTROL_OK" \
+        >/dev/null 2>&1
+    sleep 0.5
+    local log="$REPO/instances/$NAME_P-ndns/log"
+    if ! wait_for_log "$log" "PROBE_ALIVE" 20; then
+        dump_logs "-ndns"
+        return 1
+    fi
+    if grep -q DNS_CONTROL_OK "$log"; then
+        dump_logs "-ndns"
+        return 1
+    fi
+    bash "$REPO/sandbox/minict.sh" down "$NAME_P-ndns" >/dev/null 2>&1
+    return 0
+}
+run_case PT3C "control: WITHOUT pasta, resolver unavailable" pass pt3c_test
+
 # ---------- env-gated: real pasta attachment (CI / tun present) ----------
 net10_test() {
     skip_no_tun || return $?
@@ -221,6 +256,29 @@ net12_test() {
     [[ $rc_up -eq 0 && $ok -eq 1 ]]
 }
 run_case NET12 "with pasta: host→instance port-forward (-t FPORT:8080)" skip net12_test
+
+# ---------- env-gated: DNS via pasta (--dns-forward + resolv.conf, D42) ----
+pt3_test() {
+    skip_no_tun || return $?
+    # payload waits for the tap (resolv.conf is written by spawn_pasta right
+    # after route-ready + aliveness — roughly when the tap appears), then
+    # retries nslookup (marker + retry loop, anti-race pattern NET10/NET11).
+    bash "$REPO/sandbox/minict.sh" up "$NAME_P-dns" --pasta -- \
+        /bin/sh -c 'i=0; while [ $i -lt 100 ]; do busybox ifconfig -a | grep -q "encap:Ethernet" && break; busybox sleep 0.1; i=$((i+1)); done; j=0; while [ $j -lt 15 ]; do busybox nslookup -timeout=1 github.com && echo DNS_RESOLVED_OK && break; busybox sleep 0.5; j=$((j+1)); done' \
+        >/dev/null 2>&1
+    local rc_up=$?
+    local log="$REPO/instances/$NAME_P-dns/log"
+    local ok=0 ok_resolv=0
+    wait_for_log "$log" "DNS_RESOLVED_OK" 250 && ok=1
+    # (a) resolver file injected host-side, pointing at the --dns-forward
+    #     address (= GW_IP). Assert BEFORE down — down deletes the dir.
+    grep -qx "nameserver $GW_IP" \
+        "$REPO/instances/$NAME_P-dns/rootfs/etc/resolv.conf" 2>/dev/null && ok_resolv=1
+    if [[ $ok -eq 0 || $ok_resolv -eq 0 ]]; then dump_logs "-dns"; fi
+    bash "$REPO/sandbox/minict.sh" down "$NAME_P-dns" >/dev/null 2>&1
+    [[ $rc_up -eq 0 && $ok -eq 1 && $ok_resolv -eq 1 ]]
+}
+run_case PT3 "with pasta: resolver injected + nslookup resolves" skip pt3_test
 
 ab1_test() {
     skip_no_tun || return $?

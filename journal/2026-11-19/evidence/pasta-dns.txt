@@ -1,0 +1,199 @@
+make -C sandbox
+make[1]: Entering directory '/home/z/my-project/sandbox/sandbox'
+make[1]: Nothing to be done for 'all'.
+make[1]: Leaving directory '/home/z/my-project/sandbox/sandbox'
+bash sandbox/mkrootfs.sh rootfs
+rootfs 'rootfs' already exists, skipping (rm -rf it to rebuild)
+bash tests/run-suites.sh
+### suite: test_isolation.sh
+=== minict isolation tests (2026-11-19 08:39:33) ===
+FS1   sandbox sees OUR /etc/passwd (marker)                    PASS
+FS2   host home dir /home/z unreachable                        PASS
+FS3   no /old-* escape path after pivot_root+umount            PASS
+FS4   mount --bind host / fails (no caps post-drop)            PASS
+FS5   post-capdrop tmpfs mount also fails                      PASS
+FS6   write to /home lands on-disk in rootfs (host view)       PASS
+NOTE: host refuses procfs in an unprivileged userns — /proc cases run in 'absent' mode (D39)
+PID1  payload is PID 2 behind pidns-1 signal shim              PASS
+PID2  no host processes visible (ps lists none)                PASS
+PID3  pidns live: shim is pidns-1, payload pidns-2 (host NSpid) PASS
+UID1  uid=0 inside, no foreign gid visible (0/overflow only)   PASS
+UID2  files created inside owned by real host uid              PASS
+NNP1  PR_SET_NO_NEW_PRIVS=1 verified via host /proc            PASS
+CAPD1 capdrop real: shim+payload CapEff=0 (host /proc)         PASS
+HOST1 hostname isolated ('minict')                             PASS
+FD1   fd-based escape closed: inherited host fd EBADF in payload PASS
+CHROOT1 chroot(2) EPERM post-capdrop (jail-escape primitive)     PASS
+SETUID2 suid exec: NNP=1 + CapEff=0 survive (host /proc)         PASS
+CORE1 core dump disabled: RLIMIT_CORE=0 forced in payload      PASS
+CORE2 SIGSEGV leaves no core file in rootfs/repo cwd           PASS
+SIG1  SIGKILL wrapper: PDEATHSIG+pidns teardown, no orphan     PASS
+SIG2  SIGTERM wrapper: tree exits 143 (128+15), no orphan      PASS
+SIG3  SIGINT wrapper: tree exits 130 (128+2)                   PASS
+SIG4  control: TERM to payload (non-init) delivered (143)      PASS
+SIG5  orphan grandchildren reaped by shim, no zombies          PASS
+NET1  netns isolated: only lo inside, no host iface            PASS
+NET2  loopback is UP inside sandbox netns                      PASS
+PROC1 /proc absent (host refuses procfs in userns)             PASS(expected-fail)
+PROC2 /proc/self/root unreachable (no procfs mounted)          PASS
+PROC3 (absent mode) no procfs in /proc/mounts either           PASS
+PROC4 payload cannot mount a second procfs                     PASS
+CG1   no cgroup limits (cgroups v1 only — known gap)         PASS(expected-fail)
+=== summary: PASS=31 FAIL=0 ===
+### suite: test_isolation.sh — OK
+### suite: test_seccomp.sh
+=== minict seccomp tests (2026-11-19 08:39:40) ===
+SC0   shell workload works under filter                        PASS
+SC1   keyctl blocked (EPERM)                                   PASS
+SC2   open_by_handle_at blocked (EPERM)                        PASS
+SC3   bpf blocked (EPERM)                                      PASS
+SC4   setns blocked (EPERM)                                    PASS
+SC5   unshare blocked (EPERM)                                  PASS
+SC6   io_uring_setup blocked (EPERM)                           PASS
+SC7   clone(CLONE_NEWUSER) blocked (EPERM)                     PASS
+SC8   ptrace blocked (EPERM)                                   PASS
+SC9   socket(AF_ALG) blocked (EPERM)                           PASS
+SC10  clone3 returns ENOSYS (fallback-friendly)                PASS
+SC11  control: setns NOT EPERM without filter                  PASS
+SC12  control: io_uring NOT EPERM without filter               PASS
+SC13  process_vm_readv blocked (EPERM)                         PASS
+SC14  control: keyctl works without filter                     PASS
+SC15  mount inside sandbox fails under filter (EPERM)          PASS
+SC16  control: process_vm NOT EPERM without filter             PASS
+SC17  socket(AF_NETLINK) blocked (EPERM)                       PASS
+SC18  control: netlink socket works without filter             PASS
+SC19  control: socket(AF_INET) still allowed (httpd)           PASS
+SC20  blocklist hit survives: rc=1 (EPERM), no SIGSYS death    PASS
+=== summary: PASS=21 FAIL=0 ===
+### suite: test_seccomp.sh — OK
+### suite: test_netns.sh
+=== minict netns tests (2026-11-19 08:39:40) — ports 18426/18530, host srv 18681 ===
+NS1   sandbox netns CANNOT reach host loopback listener        PASS
+NS2   control: MINICT_NO_NETNS=1 reaches the same listener     PASS
+NS3   host curl -> unix bridge -> httpd in netns (200+marker)  PASS
+NS4   relay unix socket exists on instance rootfs              PASS
+NS5   host proxy binds loopback-only (no 0.0.0.0)              PASS
+NS6   two instances: each proxy serves its OWN sandbox         PASS
+NS7   down kills proxy, frees port, removes instance           PASS
+=== summary: PASS=7 FAIL=0 ===
+### suite: test_netns.sh — OK
+### suite: test_alpine.sh
+=== minict alpine-rootfs tests (2026-11-19 08:39:42) — alpine 3.22.8, pkg acpid-openrc=2.0.34-r6 ===
+AL1   alpine rootfs boots (busybox alpine build)               PASS
+AL2   sandbox sees OUR passwd marker (not host)                PASS
+AL3   apk-tools present and runnable in sandbox                PASS
+AL4   /proc absent: host refuses procfs (env, D39)             PASS(expected-fail)
+AL5   offline apk add works, signature-verified                PASS
+AL6   single-uid ownership: 0:0 in ns = real uid on host       PASS
+AL7   chown foreign uid: EINVAL (unmapped), sandbox alive      PASS
+AL8   hostname isolated ('minict') on alpine rootfs            PASS
+=== summary: PASS=8 FAIL=0 ===
+### suite: test_alpine.sh — OK
+### suite: test_escape_alpine.sh
+=== minict isolation tests (2026-11-19 08:39:43) ===
+FS1   sandbox sees OUR /etc/passwd (marker)                    PASS
+FS2   host home dir /home/z unreachable                        PASS
+FS3   no /old-* escape path after pivot_root+umount            PASS
+FS4   mount --bind host / fails (no caps post-drop)            PASS
+FS5   post-capdrop tmpfs mount also fails                      PASS
+FS6   write to /home lands on-disk in rootfs (host view)       PASS
+NOTE: host refuses procfs in an unprivileged userns — /proc cases run in 'absent' mode (D39)
+PID1  payload is PID 2 behind pidns-1 signal shim              PASS
+PID2  no host processes visible (ps lists none)                PASS
+PID3  pidns live: shim is pidns-1, payload pidns-2 (host NSpid) PASS
+UID1  uid=0 inside, no foreign gid visible (0/overflow only)   PASS
+UID2  files created inside owned by real host uid              PASS
+NNP1  PR_SET_NO_NEW_PRIVS=1 verified via host /proc            PASS
+CAPD1 capdrop real: shim+payload CapEff=0 (host /proc)         PASS
+HOST1 hostname isolated ('minict')                             PASS
+FD1   fd-based escape closed: inherited host fd EBADF in payload PASS
+CHROOT1 chroot(2) EPERM post-capdrop (jail-escape primitive)     PASS
+SETUID2 suid exec: NNP=1 + CapEff=0 survive (host /proc)         PASS
+CORE1 core dump disabled: RLIMIT_CORE=0 forced in payload      PASS
+CORE2 SIGSEGV leaves no core file in rootfs/repo cwd           PASS
+SIG1  SIGKILL wrapper: PDEATHSIG+pidns teardown, no orphan     PASS
+SIG2  SIGTERM wrapper: tree exits 143 (128+15), no orphan      PASS
+SIG3  SIGINT wrapper: tree exits 130 (128+2)                   PASS
+SIG4  control: TERM to payload (non-init) delivered (143)      PASS
+SIG5  orphan grandchildren reaped by shim, no zombies          PASS
+NET1  netns isolated: only lo inside, no host iface            PASS
+NET2  loopback is UP inside sandbox netns                      PASS
+PROC1 /proc absent (host refuses procfs in userns)             PASS(expected-fail)
+PROC2 /proc/self/root unreachable (no procfs mounted)          PASS
+PROC3 (absent mode) no procfs in /proc/mounts either           PASS
+PROC4 payload cannot mount a second procfs                     PASS
+CG1   no cgroup limits (cgroups v1 only — known gap)         PASS(expected-fail)
+=== summary: PASS=31 FAIL=0 ===
+### suite: test_escape_alpine.sh — OK
+### suite: test_cve_check.sh
+=== cve-check tool tests (2026-11-19 08:39:50) ===
+CV1   error row renders ERR, no KeyError (#44 repro)           PASS
+CV2   parse_nvd defensive: malformed/empty NVD dicts           PASS
+CV3   normal row + cvssMetricV30 fallback                      PASS
+CV4   control: OLD renderer KeyErrors on error row             PASS
+=== summary: PASS=4 FAIL=0 ===
+### suite: test_cve_check.sh — OK
+### suite: test_pasta.sh
+=== minict pasta tests (2026-11-19 08:39:50) — host listener 19524, fwd 19796, gw 21.0.0.1 ===
+PT1     pasta binary pinned+verified+static built                PASS
+PT2     pasta --version == pin exactly (2026_10_02.cba3570)      PASS
+NET11C  control: WITHOUT pasta, gateway unreachable              PASS
+PT3C    control: WITHOUT pasta, resolver unavailable             PASS
+NET10   with pasta: tap iface + default route inside             SKIP
+        (env-blocked: no /dev/net/tun on this host — D34/D37)
+NET11   with pasta: egress wget sandbox→host via gateway       SKIP
+        (env-blocked: no /dev/net/tun on this host — D34/D37)
+NET12   with pasta: host→instance port-forward (-t FPORT:8080) SKIP
+        (env-blocked: no /dev/net/tun on this host — D34/D37)
+PT3     with pasta: resolver injected + nslookup resolves        SKIP
+        (env-blocked: no /dev/net/tun on this host — D34/D37)
+AB1     with pasta: attach latency measured (host-side)          SKIP
+        (env-blocked: no /dev/net/tun on this host — D34/D37)
+=== summary: PASS=4 SKIP=5 FAIL=0 ===
+(SKIP = pasta env-blocked on this host: no /dev/net/tun — real run happens on CI runners, D34/D37)
+### suite: test_pasta.sh — OK
+=== run-suites summary: 7 suites, failed: none ===
+make -C sandbox
+make[1]: Entering directory '/home/z/my-project/sandbox/sandbox'
+make[1]: Nothing to be done for 'all'.
+make[1]: Leaving directory '/home/z/my-project/sandbox/sandbox'
+bash sandbox/mkrootfs.sh rootfs
+rootfs 'rootfs' already exists, skipping (rm -rf it to rebuild)
+bash tests/test_web.sh
+=== minict web tests (2026-11-19 08:39:59) — port 19006 ===
+WEB1  httpd inside sandbox answers 200 with marker             FAIL
+      output:  
+WEB2  listener is loopback-only (no 0.0.0.0 bind)              FAIL
+      output:  
+WEB3  path traversal cannot read host /etc/passwd              PASS
+WEB4  probe in instance rootfs served; host cwd is not         FAIL
+      output:  
+WEB5  missing file -> 404, server stays alive                  FAIL
+      output:  
+WEB8  symlink to ATTACKER host socket -> zero leak             PASS
+WEB7  symlink at socket path -> proxy refuses (no follow)      PASS
+WEB9  resolver: ancestor symlink blocked, positive control     PASS
+WEB6  down closes port and leaves no processes                 PASS
+=== summary: PASS=5 FAIL=4 ===
+make: *** [Makefile:50: test-web] Error 1
+
+=== make test-web rerun (08:40:08) — 9/9 PASS ===
+(run 1 lúc 08:39:59 chọn port 19006 — trùng listener infra 0.0.0.0:19006
+của host → WEB1/2/4/5 đỏ giả; đã mở issue #75, không thuộc PR này)
+
+=== perf-check (08:47:27, N=20) ===
+cold_start_ms  :  2.02  (threshold 100)  — PASS
+rss_kb         :  1160   (threshold 10240) — PASS
+disk_base_mb   :  2.04   (threshold 20)  — PASS
+(D42 không đụng đường đo cold_start: ghi resolv.conf nằm ở spawn_pasta
+out-of-band sau khi `up` trả về, chỉ chạy khi --pasta)
+
+=== host baseline (08:47) ===
+/etc/passwd  21d5de2d...d412bd  => KHỚP baseline 2026-11-17/18 — UNCHANGED
+/bin/bash    223fe856...16e4c47f => KHỚP — UNCHANGED
+/usr/bin/sudo a59f393b...19ad2f0c => KHỚP — UNCHANGED
+listeners: 127.0.0.1:12600, 127.0.0.1:19001, 127.0.0.1:12700,
+           0.0.0.0:19005, 0.0.0.0:19006, *:81 — cùng tập nền infra
+
+=== CVE check (cve/pasta-dns.md|.json) ===
+rc=0, 19 hàng, 0 lỗi NVD, 0 CVE mới ngoài watchlist (cve-gate rc=0)
