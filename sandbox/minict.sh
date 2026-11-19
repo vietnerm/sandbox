@@ -101,10 +101,21 @@ spawn_pasta() { # <name> <shim-pid> — attach pasta to the instance netns (D37)
     done
     t1=$(date +%s%N)
     if [[ "$ok" == "1" ]]; then
+        # pasta may die right after configuring the tap (e.g. forward-spec
+        # problems) — route seen once is NOT enough; require it alive briefly
+        sleep 0.3
+        if ! kill -0 "$ppid" 2>/dev/null; then
+            echo "pasta attached '$name' then DIED — pasta.log:" >&2
+            tail -20 "$INST/$name/pasta.log" >&2 || true
+            kill "$pid" 2>/dev/null || true; sleep 0.2; kill -9 "$pid" 2>/dev/null || true
+            rm -rf "$INST/$name"
+            exit 1
+        fi
         echo "pasta attached to '$name' in $(( (t1 - t0) / 1000000 )) ms "\
-             "(tap + default route; log $INST/$name/pasta.log)"
+             "(tap + default route + alive; log $INST/$name/pasta.log)"
     else
-        echo "pasta attach to '$name' FAILED (no default route in 5s) — log: $INST/$name/pasta.log" >&2
+        echo "pasta attach to '$name' FAILED (no default route in 5s) — pasta.log:" >&2
+        tail -20 "$INST/$name/pasta.log" >&2 || true
         kill "$ppid" 2>/dev/null || true; sleep 0.1; kill -9 "$ppid" 2>/dev/null || true
         kill "$pid" 2>/dev/null || true; sleep 0.2; kill -9 "$pid" 2>/dev/null || true
         rm -rf "$INST/$name"

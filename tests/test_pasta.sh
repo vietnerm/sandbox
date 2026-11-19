@@ -15,25 +15,34 @@
 #          build) — runs EVERYWHERE (dev + CI)
 #   PT2    pinned version stamp matches `pasta --version` — runs everywhere
 #   NET11C CONTROL: WITHOUT pasta, an instance in its own netns CANNOT reach a
-#          host 0.0.0.0 listener via the host's IP — proves NET11's success is
+#          host 0.0.0.0 listener via the gateway IP — proves NET11's success is
 #          caused by pasta, not by leaked host connectivity (runs everywhere)
-#   NET10  with pasta: instance sees an Ethernet tap + default route (env-gated)
-#   NET11  with pasta: egress — one-shot busybox wget to a host listener via the
-#          host's IP reaches it from INSIDE the sandbox (env-gated)
+#   NET10  with pasta: instance sees an Ethernet tap (ifconfig, ioctl-based —
+#          /proc is NOT mountable inside, AL4; AF_NETLINK is seccomp-blocked,
+#          D15) + default route asserted HOST-side via the netns-scoped
+#          /proc/<pid>/net/route (env-gated)
+#   NET11  with pasta: egress — one-shot busybox wget to the host listener VIA
+#          THE GATEWAY IP (pasta maps gateway → host loopback by default,
+#          --map-host-loopback) after the tap is visible (env-gated)
 #   NET12  with pasta: host→instance port-forward via MINICT_PASTA_FWD "-t
 #          FPORT:8080" → host curl hits httpd inside the sandbox (env-gated)
-#   AB1    with pasta: pasta attach latency (up --pasta → route ready), measured
-#          HOST-side and reported separately from minict cold_start (env-gated)
+#   AB1    with pasta: pasta attach latency (up --pasta → route ready + alive),
+#          measured HOST-side and reported separately from minict cold_start
+#          (env-gated)
 #
 # Env gate (D34): pasta needs /dev/net/tun. The dev container has NONE
 # (measured 2026-11-19, kernel 5.10.134) → NET10/NET11/NET12/AB1 are
 # SKIP(env-blocked: no /dev/net/tun), NOT fake-PASS. GitHub ubuntu-24.04
 # runners have the device → cases run for real in CI.
 #
-# Anti-vacuous rules (class AL4/FS6, SIA #54): every expected-failure grep runs
-# BEFORE the instance is torn down (down deletes the instance dir); every
-# expected-success payload WAITS for the pasta attach (route poll) before
-# printing its assertions, so the log reflects the attached state.
+# Anti-vacuous + anti-race rules (class AL4/FS6, SIA #54):
+#   - every expected-failure grep runs BEFORE the instance is torn down
+#     (down deletes the instance dir);
+#   - in-instance assertions WAIT for the pasta tap (ifconfig poll — ioctl,
+#     works without /proc) before printing/asserting;
+#   - the suite polls the instance log from the HOST side for markers, so the
+#     verdict does not depend on grep timing right after `up` returns;
+#   - on FAIL, instance log + pasta.log tails are printed (CI diagnosability).
 #
 # NOTE: cases run commands INSIDE the pasta-attached instance via the `up --`
 # payload override — `exec` starts a NEW ns set (PoC limitation, poc.md) and
@@ -68,7 +77,7 @@ run_case() { # <id> <desc> <expect: pass|skip> <cmd...>
     case "$verdict" in
         PASS) PASS=$((PASS+1)) ;;
         SKIP) SKIP=$((SKIP+1)); echo "        (env-blocked: no /dev/net/tun on this host — D34/D37)" ;;
-        FAIL) FAIL=$((FAIL+1)); echo "        output: $(echo "$out" | head -3 | tr '\n' ' ')" ;;
+        FAIL) FAIL=$((FAIL+1)); echo "        output: $(echo "$out" | head -6 | tr '\n' ' ')" ;;
     esac
     return 0
 }
@@ -77,6 +86,17 @@ run_case() { # <id> <desc> <expect: pass|skip> <cmd...>
 skip_no_tun() {
     [[ -c /dev/net/tun ]] || return 125
     return 0
+}
+
+# wait_for_log <file> <pattern> [tries] — host-side poll of the instance log
+wait_for_log() {
+    local f="$1" pat="$2" tries="${3:-30}"
+    local i
+    for i in $(seq 1 "$tries"); do
+        grep -q "$pat" "$f" 2>/dev/null && return 0
+        sleep 0.1
+    done
+    return 1
 }
 
 SUFFIXES=" tap eg pf ab"
@@ -88,18 +108,29 @@ cleanup() {
 }
 trap cleanup EXIT
 
-HOST_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
-if [[ -z "$HOST_IP" ]]; then
-    echo "FATAL: cannot determine a host IP (hostname -I) — egress cases need it"; exit 1
+# egress target: the HOST's default gateway — pasta maps the gateway address to
+# host loopback by default (--map-host-loopback), so a 0.0.0.0 listener on the
+# host is reachable from inside WITHOUT any internet/DNS dependency.
+GW_IP="$(ip -4 route show default 2>/dev/null | awk '{print $3; exit}')"
+if [[ -z "$GW_IP" ]]; then
+    echo "FATAL: cannot determine the host default gateway (ip route) — egress cases need it"; exit 1
 fi
-echo "=== minict pasta tests ($(date '+%F %T')) — host listener $HPORT, fwd $FPORT, host-ip $HOST_IP ==="
+echo "=== minict pasta tests ($(date '+%F %T')) — host listener $HPORT, fwd $FPORT, gw $GW_IP ==="
 
 # host-side listener used by the NET11C control and the NET11 egress case;
-# binds 0.0.0.0 so the host's own IP (copied onto the tap by --config-net) is
-# a deterministic egress destination — no external-internet flake.
+# binds 0.0.0.0 so it catches both the loopback NAT (gateway → 127.0.0.1)
+# and any direct host-IP path.
 python3 -m http.server "$HPORT" --bind 0.0.0.0 >/dev/null 2>&1 &
 SRV_PID=$!
 sleep 0.5
+
+dump_logs() { # <suffix> — tails for CI diagnosability
+    local d="$REPO/instances/$NAME_P$1"
+    echo "        --- instance log ($d/log) ---"
+    tail -6 "$d/log" 2>/dev/null | sed 's/^/        /'
+    echo "        --- pasta.log ($d/pasta.log) ---"
+    tail -6 "$d/pasta.log" 2>/dev/null | sed 's/^/        /'
+}
 
 # ---------- acquisition (runs everywhere) ----------
 run_case PT1 "pasta binary pinned+verified+static built" pass \
@@ -108,34 +139,40 @@ run_case PT1 "pasta binary pinned+verified+static built" pass \
 run_case PT2 "pasta --version matches pin ($PASTA_VERSION)" pass \
     sh -c "'$REPO/tools/bin/pasta' --version | grep -q '$PASTA_VERSION'"
 
-# ---------- control: no pasta → host IP unreachable (runs everywhere) ----------
+# ---------- control: no pasta → gateway unreachable (runs everywhere) ----------
 net11c_test() {
     bash "$REPO/sandbox/minict.sh" up "$NAME_P" -- \
-        /bin/sh -c "busybox wget -T 2 -q -O /dev/null http://$HOST_IP:$HPORT/ && echo UNREACH_OK" \
+        /bin/sh -c "busybox wget -T 2 -q -O /dev/null http://$GW_IP:$HPORT/ && echo UNREACH_OK" \
         >/dev/null 2>&1
     sleep 0.5
     # expected: wget fails inside the private netns → NO marker (grep BEFORE down)
     if grep -q UNREACH_OK "$REPO/instances/$NAME_P/log"; then
+        dump_logs ""
         return 1
     fi
     bash "$REPO/sandbox/minict.sh" down "$NAME_P" >/dev/null 2>&1
     return 0
 }
-run_case NET11C "control: WITHOUT pasta, host IP unreachable" pass net11c_test
+run_case NET11C "control: WITHOUT pasta, gateway unreachable" pass net11c_test
 
 # ---------- env-gated: real pasta attachment (CI / tun present) ----------
 net10_test() {
     skip_no_tun || return $?
     bash "$REPO/sandbox/minict.sh" up "$NAME_P-tap" --pasta -- /bin/sh -c \
-        'for i in $(seq 1 100); do busybox route -n | grep -q "^0.0.0.0" && break; busybox sleep 0.1; done; busybox ifconfig -a; busybox route -n' \
+        'i=0; while [ $i -lt 100 ]; do busybox ifconfig -a | grep -q "encap:Ethernet" && break; busybox sleep 0.1; i=$((i+1)); done; busybox ifconfig -a' \
         >/dev/null 2>&1
     local rc_up=$?
     local log="$REPO/instances/$NAME_P-tap/log"
     local ok_tap=0 ok_route=0
-    # tap: an Ethernet interface beyond lo (lo is "Local Loopback")
-    grep -q "Link encap:Ethernet" "$log" && ok_tap=1
-    # default route: dotted-quad 0.0.0.0 destination in `route -n` output
-    grep -q "^0.0.0.0" "$log" && ok_route=1
+    # tap: wait for the payload to print ifconfig output (poll the log)
+    wait_for_log "$log" "encap:Ethernet" 30 && ok_tap=1
+    # default route: assert HOST-side via the netns-scoped procfs of the shim
+    local pid
+    pid="$(cat "$REPO/instances/$NAME_P-tap/pid" 2>/dev/null || true)"
+    if [[ -n "$pid" ]] && awk '$2 == "00000000"' "/proc/$pid/net/route" 2>/dev/null | grep -q .; then
+        ok_route=1
+    fi
+    if [[ $ok_tap -eq 0 || $ok_route -eq 0 ]]; then dump_logs "-tap"; fi
     bash "$REPO/sandbox/minict.sh" down "$NAME_P-tap" >/dev/null 2>&1
     [[ $rc_up -eq 0 && $ok_tap -eq 1 && $ok_route -eq 1 ]]
 }
@@ -144,17 +181,17 @@ run_case NET10 "with pasta: tap iface + default route inside" skip net10_test
 net11_test() {
     skip_no_tun || return $?
     bash "$REPO/sandbox/minict.sh" up "$NAME_P-eg" --pasta -- \
-        /bin/sh -c "busybox wget -T 5 -q -O /dev/null http://$HOST_IP:$HPORT/ && echo EGRESS_OK" \
+        /bin/sh -c 'i=0; while [ $i -lt 100 ]; do busybox ifconfig -a | grep -q "encap:Ethernet" && break; busybox sleep 0.1; i=$((i+1)); done; busybox wget -T 5 -q -O /dev/null http://'"$GW_IP:$HPORT"'/ && echo EGRESS_OK' \
         >/dev/null 2>&1
     local rc_up=$?
-    sleep 0.5
     local log="$REPO/instances/$NAME_P-eg/log"
     local ok=0
-    grep -q EGRESS_OK "$log" && ok=1
+    wait_for_log "$log" "EGRESS_OK" 50 && ok=1
+    if [[ $ok -eq 0 ]]; then dump_logs "-eg"; fi
     bash "$REPO/sandbox/minict.sh" down "$NAME_P-eg" >/dev/null 2>&1
     [[ $rc_up -eq 0 && $ok -eq 1 ]]
 }
-run_case NET11 "with pasta: egress wget sandbox→host listener" skip net11_test
+run_case NET11 "with pasta: egress wget sandbox→host via gateway" skip net11_test
 
 net12_test() {
     skip_no_tun || return $?
@@ -166,10 +203,11 @@ net12_test() {
     mkdir -p "$REPO/instances/$NAME_P-pf/rootfs/www"
     printf '<p>marker: pasta-port-forward</p>' > "$REPO/instances/$NAME_P-pf/rootfs/www/index.html"
     local ok=0 i
-    for i in $(seq 1 10); do
+    for i in $(seq 1 12); do
         curl -s -m 2 "http://127.0.0.1:$FPORT/" 2>/dev/null | grep -q pasta-port-forward && { ok=1; break; }
-        sleep 0.2
+        sleep 0.25
     done
+    if [[ $ok -eq 0 ]]; then dump_logs "-pf"; fi
     bash "$REPO/sandbox/minict.sh" down "$NAME_P-pf" >/dev/null 2>&1
     [[ $rc_up -eq 0 && $ok -eq 1 ]]
 }
@@ -179,7 +217,7 @@ ab1_test() {
     skip_no_tun || return $?
     # pasta attach latency, host-side metric (separate from minict cold_start —
     # pasta spawns after `up` returns, out-of-band): time up --pasta end-to-end
-    # (rootfs copy + cold start + pasta attach + route wait)
+    # (rootfs copy + cold start + pasta attach + route wait + aliveness check)
     local t0 t1 ms rc
     t0=$(date +%s%N)
     bash "$REPO/sandbox/minict.sh" up "$NAME_P-ab" --pasta >/dev/null 2>&1
