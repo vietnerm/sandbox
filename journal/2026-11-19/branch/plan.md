@@ -33,3 +33,33 @@ MODE=plan (Pha A). APPLY sẽ chạy ở Pha C và Pha E.
 - Pha D hôm nay: issue **#5** (type:security p2, area:escape-test — mục 2 GĐ1
   trong roadmap: "chroot-escape test sâu hơn"). Nhánh dự kiến
   `sec/5-deep-escape`; PR mới sẽ đi lại Pha B → C trong lần chạy này.
+
+---
+
+# SBG Branch Plan + APPLY — 2026-11-19 (Phiên 3, Orchestrator §11)
+
+MODE=plan ở Pha A → MODE=apply ở Pha C/E (ghi hợp nhất tại đây).
+
+## Thu thập cuối phiên
+- Nhánh ≠ main: **feat/3-pasta-egress** @ `47ce5d5` (PR #59, merged squash
+  `01899ee` qua API `PUT /pulls/59/merge` match-head-corrected).
+- PR mở sau merge: **0**; issue #57 auto-closed bởi merge.
+- CI main sau merge @ `01899ee`: **success** (ci + unicode-guard).
+
+## Quyết định theo nhánh
+| Nhánh | Ahead/Behind | PR | CI | retest | audit | Quyết định | Lý do |
+|---|---|---|---|---|---|---|---|
+| feat/3-pasta-egress | 5/0 | #59 | xanh ×5 vòng CI (d3e6e43 đỏ→sửa, 2571734, a80a3a7, 676332b, 47ce5d5 xanh) | SCR PASS ×5 run + mutant M0/M-pin/M-version caught (comment PR) | SIA PASS (label audit:pass @ 47ce5d5) | MERGE → DELETE_MERGED | G1–G8 PASS; không G7; squash `01899ee`; CI main xanh sau merge |
+
+- DELETE_MERGED: feat/3-pasta-egress (đã xoá remote + local sau khi PR MERGED
+  khớp head `47ce5d5a`).
+- MERGE: (đã thực hiện — #59)
+- KEEP: (rỗng) — DROP: (rỗng)
+- §0.6 dừng: không áp dụng (CI main xanh; #52/#34 đã triage 0 CVE ảnh hưởng;
+  host baseline unchanged — evidence pasta-egress.txt).
+
+## Kết luận
+- Repo về trạng thái mục tiêu: chỉ **`main`**.
+- Bài học mới ghi skills.md: flip draft→ready bằng REST PATCH no-op với PAT
+  fine-grained → dùng GraphQL `markPullRequestReadyForReview` (đối chiếu
+  precedent #47→#48 của Phiên 1).

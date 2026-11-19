@@ -36,3 +36,4 @@
 | web-ready latency (spawn→HTTP 200 curl được) | xem `journal/2026-11-17/bench.md` phiên 3 | gồm private fs copy ~25–30ms |
 | RSS instance web (wrapper + httpd) | xem cùng bảng | httpd busybox rất nhỏ |
 | disk per web instance | ~2.0MB + docroot | private copy, không overlayfs |
+| 2026-11-19 (pasta prototype, phiên 3) | 1.87 (dev perf-check N=20) / 2.02 (runner CI N=20) | 1184 (dev) / 3128 (runner) | 2.04 (dev) / 2.14 (runner) | + pasta connectivity (issue #57, D37) — pasta spawn OUT-OF-BAND sau khi `up` trả về, KHÔNG nằm trong cold_start; A/B attach latency (AB1) đo trên runner, ngưỡng < 30 s, cold_start ngưỡng ≤ 100 ms giữ nguyên PASS; tools/bin/pasta gitignored (disk repo không tăng) |
