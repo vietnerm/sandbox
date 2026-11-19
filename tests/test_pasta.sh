@@ -159,13 +159,13 @@ run_case NET11C "control: WITHOUT pasta, gateway unreachable" pass net11c_test
 net10_test() {
     skip_no_tun || return $?
     bash "$REPO/sandbox/minict.sh" up "$NAME_P-tap" --pasta -- /bin/sh -c \
-        'i=0; while [ $i -lt 100 ]; do busybox ifconfig -a | grep -q "encap:Ethernet" && break; busybox sleep 0.1; i=$((i+1)); done; busybox ifconfig -a' \
+        'i=0; while [ $i -lt 100 ]; do busybox ifconfig -a | grep -q "encap:Ethernet" && break; busybox sleep 0.1; i=$((i+1)); done; busybox ifconfig -a; busybox sleep 3' \
         >/dev/null 2>&1
     local rc_up=$?
     local log="$REPO/instances/$NAME_P-tap/log"
     local ok_tap=0 ok_route=0
     # tap: wait for the payload to print ifconfig output (poll the log)
-    wait_for_log "$log" "encap:Ethernet" 30 && ok_tap=1
+    wait_for_log "$log" "encap:Ethernet" 50 && ok_tap=1
     # default route: assert HOST-side via the netns-scoped procfs of the shim
     local pid
     pid="$(cat "$REPO/instances/$NAME_P-tap/pid" 2>/dev/null || true)"
@@ -195,13 +195,14 @@ run_case NET11 "with pasta: egress wget sandbox→host via gateway" skip net11_t
 
 net12_test() {
     skip_no_tun || return $?
+    # payload is SELF-CONTAINED: it creates the docroot and the marker BEFORE
+    # httpd starts (CI round 1: httpd died at startup because the suite wrote
+    # /www only after `up` returned — busybox httpd resolves -h at start).
     MINICT_PASTA_FWD="-t $FPORT:8080" \
         bash "$REPO/sandbox/minict.sh" up "$NAME_P-pf" --pasta -- \
-        /bin/sh -c 'exec busybox httpd -f -p 0.0.0.0:8080 -h /www' \
+        /bin/sh -c 'mkdir -p /www && printf "<p>marker: pasta-port-forward</p>" > /www/index.html && exec busybox httpd -f -p 0.0.0.0:8080 -h /www' \
         >/dev/null 2>&1
     local rc_up=$?
-    mkdir -p "$REPO/instances/$NAME_P-pf/rootfs/www"
-    printf '<p>marker: pasta-port-forward</p>' > "$REPO/instances/$NAME_P-pf/rootfs/www/index.html"
     local ok=0 i
     for i in $(seq 1 12); do
         curl -s -m 2 "http://127.0.0.1:$FPORT/" 2>/dev/null | grep -q pasta-port-forward && { ok=1; break; }
