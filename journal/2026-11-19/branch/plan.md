@@ -135,3 +135,40 @@ verified #31/#5, đóng #34/#52 — tiền lệ #16/#17).
     env-level: đã hardening budget + theo dõi #72).
   - Phối hợp đa-agent: phiên Claude gộp #69/#70 độc lập — ZAI xác minh độc lập
     (M-drain mutant) rồi apply dọn nhánh, không đụng PR của nhau.
+
+---
+
+# SBG Branch Plan — 2026-11-19 (Phiên 7, ZAI — Orchestrator §11)
+
+MODE=plan (Pha A). APPLY sẽ chạy ở Pha C/E.
+
+## Thu thập (08:14Z)
+- main `a80849e` (ledger Phiên 6 #73 đã gộp); CI main: ci #188 + unicode-guard
+  #61 = success → không dừng vì CI.
+- Remote `git ls-remote`: chỉ `main` + refs/pull — không nhánh lạ ✓.
+- PR mở: **0** (REST GET /pulls?state=open → []) → Pha B/C rỗng.
+- Issue mở (12): #72/#62/#61/#55/#30/#29 (p3, needs-repro/from-audit), #28
+  (p2 docs/ci), #27/#26 (p1 docs), #8 (p2 security track), #4 (p2 GĐ2 — luật
+  D27 không chọn).
+- Phần dư của các nhánh local (p5/p6/issue-throughput/web9/zai-phen5) đã được
+  merge trên remote trước đó — DELETE_MERGED ở cấp local để sạch workspace
+  (remote đã sạch từ Phiên 6).
+- §0.6 dừng: không áp dụng (#34/#52 đã verified+đóng Phiên 6; CI main xanh;
+  CVE check sẽ chạy Bước 6).
+
+## Kế hoạch cho từng nhánh ≠ main
+- (không có nhánh nào khác `main` ở remote; local đã dọn)
+
+| Nhánh | Quyết định plan-mode |
+|---|---|
+| — | — |
+
+- DELETE_MERGED: 5 nhánh local dư (đã xoá cục bộ — không phải nhánh remote)
+- MERGE/KEEP/DROP: (rỗng)
+
+## Pha D dự kiến
+- **DNS cho instance qua pasta** (GĐ1 mục 1 residual: "apk add online trong
+  instance chờ DNS cho pasta (mục 3)") — mục thấp nhất chưa xong của GĐ1.
+  Mở issue mới (chưa có issue riêng), nhánh dự kiến `feat/<N>-pasta-dns`.
+  Môi trường dev không tun → NET-case chạy SKIP cục bộ, nguồn sự thật = CI
+  runner (tiền lệ Phiên 3 — pasta prototype).

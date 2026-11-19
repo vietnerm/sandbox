@@ -20,8 +20,8 @@
 3. C — CVE check: `python3 tools/cve-check.py --json journal/$(date +%F)/cve/<slug>.json`
    + cập nhật `docs/cve-watchlist.md`
 4. D — No-Compromise Validation: `make test` (isolation 29 + seccomp 21 + netns 7 +
-   alpine 8 + escape-alpine 29 + cve-check tool 4 + pasta 7 = 105, pipefail thật —
-   issue #14; đếm lại 2026-11-19 phiên 3; dev: 101 PASS + 4 SKIP env-blocked) + `make test-web` +
+   alpine 8 + escape-alpine 29 + cve-check tool 4 + pasta 9 = 107, pipefail thật —
+   issue #14; đếm lại 2026-11-19 phiên 7; dev: 102 PASS + 5 SKIP env-blocked) + `make test-web` +
    `make test-minictd` (20, từ 2026-11-18) + lưu evidence vào
    `journal/YYYY-MM-DD/evidence/` + integrity check host
 5. Ghi `journal/YYYY-MM-DD/daily-log.md` (quy tắc thư mục: PROMPT.MD §10)
@@ -189,14 +189,17 @@
    mapping** (manifest §5: không dùng `newuidmap` setuid). Ghi rõ gói nào hỏng
    vì `chown` sang uid khác và phương án (bỏ qua / giả lập).
    → Alpine **xong phiên 8** (xem "Đã xong"); `/proc` trong pidns **sửa 2026-11-19
-   phiên 4 (#31, D39)**, chờ CI runner; phần còn mở: `apk add` online
-   trong instance **chờ DNS cho pasta (mục 3)** + Debian rootfs (sau).
+   phiên 4 (#31, D39)**, chờ CI runner; DNS cho pasta **xong 2026-11-19 phiên 7
+   (#74, D42 — `--dns-forward` + inject resolv.conf, PT3/PT3C)**; phần còn mở:
+   `apk add` online trong instance (lớp DNS đã có — còn HTTPS/apk-tools runtime)
+   + Debian rootfs (sau).
 2. **chroot-escape test sâu hơn** (issue #5): fd-based escape, /proc/self/root,
    setuid binary trong rootfs (NNP chặn), core dump leak; case seccomp SIGSYS;
    chạy lại cả suite trên rootfs distro thật (có `/proc`, nhiều mặt tấn công hơn busybox).
 3. ~~Connectivity qua pasta/slirp4netns~~ — **xong phiên 3** (prototype CI-gated,
-   issue #57): egress + port-forward qua pasta; DNS + `apk add online` là residual
-   (cần resolv.conf inject hoặc `--dns-forward`). D16 chỉ còn fallback loopback-only.
+   issue #57): egress + port-forward qua pasta; DNS **xong phiên 7 (#74, D42 —
+   `--dns-forward` GW + `nameserver` inject, case PT3/PT3C)**; `apk add online`
+   là residual (cần HTTPS runtime cho apk-tools). D16 chỉ còn fallback loopback-only.
 4. **Stack web thật trong 1 instance**: nginx/caddy + API + SQLite trên rootfs
    distro; `./sandbox up|down|bench` một lệnh; cold start stack < 5 s;
    signal lifecycle graceful đã có từ phiên 7 (D19).

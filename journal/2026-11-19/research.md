@@ -200,3 +200,38 @@ Nguồn (curl HEAD 200, đã mở 2026-11-19):
 
 Áp dụng (D41): wait-bind upstream (socket file xuất hiện = bind xong) →
 wait-listen proxy qua `ss` → curl. Ba lớp chờ thay `sleep 0.5` cố định.
+
+## Phiên 7 — DNS cho instance qua pasta (issue #74, D42)
+
+Vấn đề: instance `--pasta` có egress theo IP (NET11) nhưng resolver trống —
+alpine/busybox rootfs không có `/etc/resolv.conf` dùng được trong netns, pasta
+không ghi file trong namespace (chỉ DHCP — guest không chạy DHCP client).
+
+Nguồn 1 — SOURCE passt pin 2026_10_02.cba3570 (sha256 khớp pin D37, đọc cục bộ):
+- `fwd.c fwd_nat_from_tap()` (dòng 908–915): flow DNS (UDP/TCP, port đích 53/853
+  — `is_dns_flow`) tới địa chỉ `dns_match` được ưu tiên rewrite sang `dns_host`
+  TRƯỚC `nat_outbound()` → không xung đột map-gw (NET11 giữ nguyên).
+- `conf.c` (dòng 1413–1421): `--dns-forward` là cách DUY NHÂT đặt `dns_match`;
+  mặc định không có; validate: không loopback/unspecified/broadcast.
+- `conf.c add_dns_resolv4()` (dòng 117): `dns_host` = nameserver ĐẦU TIÊN từ
+  `/etc/resolv.conf` của host (pasta đọc host-side lúc khởi động, dòng 225–250).
+- Không `--dns-forward`: query tới GW:53 bị map-gw đưa về 127.0.0.1:53 → chỉ
+  đúng nếu host resolver nghe đúng 127.0.0.1:53; host của phiên này dùng
+  100.100.2.136/138 (public IP) → sẽ hỏng → `--dns-forward` là bắt buộc để
+  deterministic trên mọi loại resolver host (loopback hay public).
+
+Nguồn 2 — `passt.1` (trong cùng tarball pin): "--dns-forward addr — Map addr as
+seen from guest or namespace to the nameserver specified by --dns-host. Maps
+only UDP and TCP traffic to port 53 or port 853"; "--dns-host — By default, the
+first nameserver from the host's /etc/resolv.conf". Khớp 1:1 với đọc source.
+
+Precedent đối chiếu: slirp4netns dùng resolver built-in tại 10.0.2.3 (guest
+resolv.conf trỏ vào đó); pasta không có resolver built-in → cần trỏ guest về
+dns_forward address. RootlessKit không làm gì cho DNS (guest tự lo) — cùng
+class giải pháp "inject resolv.conf" như podman pasta docs.
+
+Áp dụng cho minict (D42): `spawn_pasta` đọc GW host-side
+(`ip -4 route show default` — cùng nguồn GW_IP mà suite NET11 đã dùng, pasta
+--config-net copy host gw làm guest_gw), truyền `--dns-forward $GW`, sau
+route-ready ghi `nameserver $GW` vào `$INST/$name/rootfs/etc/resolv.conf`.
+GW rỗng → skip cả hai (fail-soft, hành vi giữ nguyên như trước DNS).
