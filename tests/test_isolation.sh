@@ -7,7 +7,10 @@ set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/.." && pwd)"
 MINICT="$REPO/sandbox/minict"
-ROOTFS="$REPO/rootfs"
+# ISOLATION_ROOTFS: run this same suite against a DISTRO rootfs (alpine,
+# roadmap GĐ1 mục 2 residual — many more attack surfaces than busybox);
+# default stays the busybox rootfs. test_escape_alpine.sh sets it.
+ROOTFS="${ISOLATION_ROOTFS:-$REPO/rootfs}"
 
 [[ -x "$MINICT" ]] || { echo "build first: make -C sandbox"; exit 1; }
 [[ -d "$ROOTFS" ]] || bash "$REPO/sandbox/mkrootfs.sh" "$ROOTFS" >/dev/null
@@ -409,8 +412,11 @@ run_case HOST1 "hostname isolated ('minict')" pass \
 # ---------- deep escape PoCs (issue #5, D33) ----------
 run_case FD1 "fd-based escape closed: inherited host fd EBADF in payload" pass \
     fd1_test
+# /bin/busybox chroot (applet-explicit): the alpine rootfs has the chroot
+# applet compiled in but NO /bin/chroot symlink — a bare `chroot` there dies
+# rc=127 and the expect=fail case would PASS spuriously (vacuous on alpine).
 run_case CHROOT1 "chroot(2) EPERM post-capdrop (jail-escape primitive)" fail \
-    ic 'mkdir -p /c && chroot /c /bin/true'
+    ic 'mkdir -p /c && /bin/busybox chroot /c /bin/true'
 run_case SETUID2 "suid exec: NNP=1 + CapEff=0 survive (host /proc)" pass \
     setuid2_test
 run_case CORE1 "core dump disabled: RLIMIT_CORE=0 forced in payload" pass \
