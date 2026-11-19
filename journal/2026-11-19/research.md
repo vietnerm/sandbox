@@ -187,3 +187,16 @@ trong phiên này**; nguồn nội bộ đã đọc trực tiếp.
 
 ### Áp dụng
 Gate = report ∩ (CVSS ≥ 8) − watchlist, fail loud khi input hỏng (CG5/CG7).
+
+## Phiên 6 — WEB9 positive-control race (issue #66, D41)
+
+Nguồn (curl HEAD 200, đã mở 2026-11-19):
+1. `ss(8)` — iproute2: liệt kê socket listen của host; dùng poll listener trước
+   khi assert https://man7.org/linux/man-pages/man8/ss.8.html — cùng pattern nửa
+   (b) của web9_test (assert refusal chỉ hợp lệ khi proxy đang listen).
+2. `curl(1)` manpage — `-m` (max-time) và hành vi connection-refused trả mã lỗi
+   khác HTTP: retry loop dựa trên grep marker chứ không phải exit code
+   https://curl.se/docs/manpage.html
+
+Áp dụng (D41): wait-bind upstream (socket file xuất hiện = bind xong) →
+wait-listen proxy qua `ss` → curl. Ba lớp chờ thay `sleep 0.5` cố định.
