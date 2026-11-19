@@ -11,11 +11,7 @@
 set -u
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-<<<<<<< HEAD
 SUITES=(test_isolation.sh test_seccomp.sh test_netns.sh test_alpine.sh test_escape_alpine.sh test_cve_check.sh)
-=======
-SUITES=(test_isolation.sh test_seccomp.sh test_netns.sh test_alpine.sh test_cve_check.sh)
->>>>>>> origin/main
 
 rc_total=0
 failed=()
