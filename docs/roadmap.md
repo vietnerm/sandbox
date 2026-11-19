@@ -20,12 +20,29 @@
 3. C — CVE check: `python3 tools/cve-check.py --json journal/$(date +%F)/cve/<slug>.json`
    + cập nhật `docs/cve-watchlist.md`
 4. D — No-Compromise Validation: `make test` (isolation 29 + seccomp 21 + netns 7 +
-   alpine 8, pipefail thật — issue #14; đếm lại 2026-11-19) + `make test-web` +
+   alpine 8 + escape-alpine 29 + cve-check tool 4 = 98, pipefail thật —
+   issue #14; đếm lại 2026-11-19 phiên 2) + `make test-web` +
    `make test-minictd` (20, từ 2026-11-18) + lưu evidence vào
    `journal/YYYY-MM-DD/evidence/` + integrity check host
 5. Ghi `journal/YYYY-MM-DD/daily-log.md` (quy tắc thư mục: PROMPT.MD §10)
 
 ## Đã xong
+- [x] 2026-11-19 (phiên 2, SDDA — chu trình tăng tốc theo chỉ thị owner
+  "đẩy nhanh tiến độ để kịp qua giai đoạn 2", D35): **(a) #44 — cve-check.py
+  đỡ crash khi NVD lỗi transient** (D35: parse_nvd defensive + render_cvss
+  error-first; suite tool offline 4 case + control CV4; mutant caught);
+  **(b) residual #5 — trọn isolation suite trên rootfs distro thật (D36)**:
+  29 case chạy trên alpine qua `ISOLATION_ROOTFS`, suite thứ 5 của
+  `make test` (98 tổng); phát hiện + sửa CHROOT1 vacuous trên alpine
+  (rc=127 vì thiếu /bin/chroot symlink — class "expect=fail + lệnh không có
+  trong rootfs"); flake #55 (rootfs-alpine thiếu empty-dir 2/4 build) —
+  mitigation mkdir vô điều kiện + self-heal; **(c) D34 pasta research** —
+  `/dev/net/tun` không có ở máy dev (đo được) → pasta env-blocked dev,
+  thiết kế + issue #57 cho prototype CI-gated phiên kế; triage #52 (cve-daily
+  p0 — 0 CVE mới ngoài watchlist, giống #34) + mở chore #56. Merge:
+  #53 → `07d016e` (LỖI QUY TRÌNH: thiếu SCR/SIA khi merge — khắc phục bằng
+  post-hoc audit sau-merge, minh bạch trong PR #53 + daily-log), #54 →
+  `c2b9f0e` (đủ cổng). (#44/#53, #5-residual/#54)
 - [x] 2026-11-19 (phiên 1, SDDA): **deep escape PoC #5 — fd/core hardening + 7 test**
   (issue #5, type:security p2, mục 2 GĐ1): `harden_payload_fds()` trong
   `sandbox/minict.c` payload path — `close_range(3, ~0U, 0)` (syscall 436,

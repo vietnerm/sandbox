@@ -131,3 +131,20 @@ python3 -c 'import subprocess,time; t=time.monotonic_ns(); subprocess.run([...])
   rộng (SC1 cũng match SC10-SC19) và suite có thể có SC0 (tái hiện 2026-11-19:
   tưởng seccomp kết thúc ở SC19, thực ra có SC0 → SC20 vẫn tự do, nhưng tổng
   số case lệch 1 nếu không kiểm).
+- **Phiên tăng tốc (owner override 1-issue/ngày) = rủi ro sót cổng**: PR #53 đã
+  merge thiếu SCR/SIA (G3/G4) — khắc phục bằng post-hoc audit sau-merge nhưng
+  đó là khắc phục, KHÔNG phải ngoại lệ. Check-list bắt buộc trước lệnh merge:
+  (1) comment SCR với đúng head sha, (2) comment SIA + label audit:pass, (3)
+  `git rev-parse` head == sha trong comment. Phiên tăng tốc càng phải chạy đủ.
+- Resolve git conflict phải đọc NGUYÊN khối `<<<<<<< … >>>>>>>` và thay trọn
+  khối — replace một dòng regex để sót markers, script chết tại runtime (tái
+  hiện 2026-11-19 phiên 2, commit đầu PR #54). Sau MỌI merge: `bash -n` cho
+  script shell changed + `make -n build` cho Makefile trước khi push.
+- `curl -d @- <<EOF` (delimiter KHÔNG quote): bash ăn `$()` và backtick trong
+  body — body issue #56 bị thực thi lệnh (stderr noise, body hỏng). Quy tắc:
+  body đa dòng có backtick ghi ra FILE bằng `<<'EOF'` (quoted) rồi inject qua
+  `python3 -c json.dumps(open(file).read())`.
+- Suite chạm mount/tmpfs (FS6/UID2) phải rebuild rootfs khi build script đổi —
+  rootfs-alpine stale cache làm đỏ giả. Flake #55 (build rc=0 nhưng thiếu
+  empty-dir của tarball, 2/4 lần): mitigation mkdir vô điều kiện + self-heal
+  precondition trong wrapper; root-cause theo issue #55.
