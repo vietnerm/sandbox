@@ -1,3 +1,8 @@
-{"date": "2026-11-20", "mode": "plan", "halted": false, "halt_reason": "",
- "branches": [],
+{"date": "2026-11-20", "mode": "apply", "halted": false, "halt_reason": "",
+ "branches": [
+  {"name": "fix/80-alpine-hygiene", "head_sha": "689f17161180f53d185a4c3baa1ed7b0adebdae4",
+   "decision": "MERGE", "reason": "G1-G8 PASS @ 689f171 — SCR PASS x3 + M-CONTAM/M-FLOW caught + SIA PASS (audit:pass) + CI xanh run #206; squash 282234a match-head; #80 auto-close",
+   "pr": 83, "issue": 80, "gates": {"G1": true, "G2": true, "G3": true, "G4": true, "G5": true, "G6": true, "G7": true, "G8": true},
+   "archive_tag": "", "done": true, "error": ""}
+ ],
  "remaining_branches": ["main"], "main_ci_after": "success"}
