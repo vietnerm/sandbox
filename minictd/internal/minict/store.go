@@ -630,3 +630,54 @@ func (s *Store) killBestEffort(pid int, grace time.Duration) {
 func childEnv() []string {
 	return []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}
 }
+
+// ReconcileAll proactively runs the lazy liveness check (alive) over every
+// instance dir: a state=running instance whose payload died outside a query
+// (kernel OOM-kill, payload exit, operator kill -9) is healed to stopped
+// right here instead of on the next Inspect. A3 (issue #91, D47). Never
+// spawns anything — Start/autostart are explicit daemon decisions; broken
+// state files are skipped (Inspect surfaces them per instance later).
+func (s *Store) ReconcileAll() ([]string, error) {
+	names, err := s.ListByNamePrefix(context.Background(), "")
+	if err != nil {
+		return nil, err
+	}
+	var healed []string
+	for _, name := range names {
+		st, err := s.loadState(name)
+		if err != nil {
+			s.Log.Warn("minictd reconcile: unreadable state, skipping", "name", name, "err", err.Error())
+			continue
+		}
+		if st.State == StateRunning && !s.pidAlive(st.PID, st.StartTicks) {
+			s.alive(st)
+			healed = append(healed, name)
+		}
+	}
+	return healed, nil
+}
+
+// AutostartNames lists instances that were running when the daemon went
+// away (state=running in state.json): the reboot / daemon-restart recovery
+// set for --autostart (issue #91, D47). Includes dead-but-marked-running
+// instances on purpose: Start() heals then spawns from spec.json
+// (wake-recreate). Instances stopped by the operator stay stopped — a
+// policy choice recorded in D47, matching docker's --restart=unless-stopped
+// semantics observed from the daemon's point of view.
+func (s *Store) AutostartNames() ([]string, error) {
+	names, err := s.ListByNamePrefix(context.Background(), "")
+	if err != nil {
+		return nil, err
+	}
+	var want []string
+	for _, name := range names {
+		st, err := s.loadState(name)
+		if err != nil {
+			continue
+		}
+		if st.State == StateRunning {
+			want = append(want, name)
+		}
+	}
+	return want, nil
+}

@@ -38,6 +38,8 @@ func main() {
 		baseRootfs = flag.String("base-rootfs", "", "base rootfs dir backing Image \"base\" (sandbox/rootfs from mkrootfs.sh)")
 		subnet     = flag.String("sandbox-subnet", "10.200.0.0/24", "defensive stub subnet reported by NetworkSubnets")
 		gateway    = flag.String("sandbox-gateway", "10.200.0.1", "defensive stub gateway reported by NetworkSubnets")
+		autostart  = flag.Bool("autostart", false, "on boot, Start() every instance that was running when the daemon went away (wake-recreate from spec.json; issue #91, D47)")
+		reconcile  = flag.Int("reconcile-interval", 0, "proactive A3 reconcile loop interval in seconds (0 = off): heal state.json for instances whose payload died outside a query (issue #91, D47)")
 		showVer    = flag.Bool("version", false, "print version and exit")
 	)
 	flag.Parse()
@@ -107,11 +109,66 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
+	ctx, cancelCtx := context.WithCancel(context.Background())
+	defer cancelCtx()
+
+	// A3 (issue #91, D47): proactive reconcile — compare state dir vs
+	// /proc every N seconds and heal instances whose payload died
+	// outside a query. Off by default; the lazy path (alive on query)
+	// stays as the fallback when this flag is 0.
+	if *reconcile > 0 {
+		go func() {
+			t := time.NewTicker(time.Duration(*reconcile) * time.Second)
+			defer t.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-t.C:
+					healed, err := store.ReconcileAll()
+					if err != nil {
+						log.Warn("minictd reconcile", "err", err.Error())
+						continue
+					}
+					for _, n := range healed {
+						log.Info("minictd reconcile: healed (payload died)", "name", n)
+					}
+				}
+			}
+		}()
+		log.Info("minictd: reconcile loop on", "interval_s", *reconcile)
+	}
+
+	// Autostart (issue #91, D47): recreate instances that were running
+	// when the daemon went away (reboot, daemon crash, unit restart).
+	// Start() is idempotent for live instances and heals then spawns
+	// from spec.json for dead ones. Operator-stopped instances stay
+	// stopped (state=stopped -> not in the recovery set).
+	if *autostart {
+		go func() {
+			want, err := store.AutostartNames()
+			if err != nil {
+				log.Warn("minictd autostart: scan failed", "err", err.Error())
+				return
+			}
+			for _, n := range want {
+				sctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+				if err := store.Start(sctx, n); err != nil {
+					log.Warn("minictd autostart: start failed", "name", n, "err", err.Error())
+				} else {
+					log.Info("minictd autostart: started", "name", n)
+				}
+				cancel()
+			}
+		}()
+	}
+
 	shutdown := make(chan os.Signal, 1)
 	signal.Notify(shutdown, syscall.SIGTERM, syscall.SIGINT)
 	go func() {
 		<-shutdown
 		log.Info("minictd: shutting down (instances keep running; re-attach with Start)")
+		cancelCtx()
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = httpServer.Shutdown(ctx)
