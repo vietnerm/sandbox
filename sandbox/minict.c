@@ -1350,7 +1350,10 @@ int main(int argc, char **argv)
          * wrapper's fail-closed check (D43). */
         snprintf(path, sizeof(path), "%s/bin/sh", rootfs);
         {
-                char lpath[512];
+                /* jbuf sized for the worst join: rootfs(511) + "/bin/"(5) +
+                 * lpath(511) + NUL = 1028 — SCR R2 builds with -Werror and
+                 * gcc format-truncation proves lpath (known 512 buffer) */
+                char lpath[512], jbuf[1100];
                 ssize_t n;
                 for (;;) {
                         n = readlink(path, lpath, sizeof(lpath) - 1);
@@ -1358,15 +1361,14 @@ int main(int argc, char **argv)
                                 break; /* regular file or error: stat below */
                         lpath[n] = '\0';
                         if (lpath[0] == '/')
-                                snprintf(path, sizeof(path), "%s%s", rootfs,
+                                snprintf(jbuf, sizeof(jbuf), "%s%s", rootfs,
                                          lpath);
-                        else {
-                                /* relative target: resolve against /bin/ */
-                                char dir[512];
-                                snprintf(dir, sizeof(dir), "%s/bin", rootfs);
-                                snprintf(path, sizeof(path), "%s/%s", dir,
-                                         lpath);
-                        }
+                        else
+                                snprintf(jbuf, sizeof(jbuf), "%s/bin/%s",
+                                         rootfs, lpath);
+                        if (strlen(jbuf) >= sizeof(path))
+                                break; /* too long: final stat fails anyway */
+                        memcpy(path, jbuf, strlen(jbuf) + 1);
                 }
         }
         if (stat(path, &st) < 0 || access(path, X_OK) != 0) {
