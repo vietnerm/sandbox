@@ -1,0 +1,46 @@
+# minictd.service.in — systemd --user unit template (issue #91, D47).
+#
+# install.sh renders @HOME@ (and optionally @BINDIR@) at install time —
+# the same generate-then-install pattern Podman quadlet uses — because
+# systemd user units require ABSOLUTE ExecStart paths and %h would bind the
+# unit file to the installing user's home only implicitly (and breaks
+# systemd-analyze verify outside the user context).
+#
+# Do NOT use this file directly: run deploy/install.sh. If you must, sed
+# the placeholder: sed "s|@HOME@|$HOME|g" minictd.service.in > minictd.service
+#
+# Enable for boot-time start (user manager must exist):
+#   systemctl --user enable --now minictd
+#   loginctl enable-linger "$USER"    # keeps the user manager alive after logout / at boot
+#
+# Rootless notes (D47):
+#   - user manager only, never a system unit (no root, no setuid)
+#   - the daemon itself does NOT need restarting for instance survival:
+#     payloads run Setsid and survive daemon restarts ("instances keep
+#     running"); --autostart covers the reboot case (state=running at boot
+#     is healed + wake-recreated from spec.json).
+#   - hardening kept deliberately minimal: only cgroup-free options that
+#     never break the minict payload (which shares this cgroup and needs
+#     unshare/mount syscalls). No ProtectSystem/ProtectHome (mount
+#     namespaces), no RestrictSUIDSGID (syscall filter is per-cgroup and
+#     would also cover the payload; the daemon's own seccomp blocklist
+#     already enforces the sandbox posture per D13/D25).
+[Unit]
+Description=minictd — rootless sandbox control-plane daemon (minict runtime)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=@HOME@/@BINDIR@/minictd --listen 127.0.0.1:7601 --token-file @HOME@/.config/minictd/token --autostart --state-dir @HOME@/.local/state/minictd
+Restart=on-failure
+RestartSec=2
+# options that apply only to the daemon process itself (no mount ns, no
+# syscall filters shared with the payload cgroup):
+NoNewPrivileges=yes
+MemoryDenyWriteExecute=yes
+LockPersonality=yes
+UMask=0077
+
+[Install]
+WantedBy=default.target
