@@ -591,3 +591,83 @@ SCR clean-room ×2 + delta; mutants ×9 caught; SIA CONCERNS → RE-ASSESSED →
 PASS; CI-fix 8 vòng root-cause đủ — minh bạch), CVE gate rc=0 0 mới, suite
 10 suites none failed (dev 124 PASS + 13 SKIP; runner 127/127 thật — CG 6/6
 v2 thật lần đầu), host unchanged, main xanh `a9e1898`, remote chỉ `main`.
+
+---
+
+## Phiên 14 — Orchestrator §11 (ZAI: Pha A sync → Pha D #97 G3 preview routing → Pha B SCR/SIA → merge)
+
+### Pha A — Sync + SBG (MODE=plan)
+- main `8291da8` (ledger Phiên 13 #96); CI main xanh (ci + unicode-guard).
+- PR mở đầu chu trình: 0 → Pha B/C rỗng. Remote chỉ `main`.
+- plan.md Phiên 14 + SBG: không dừng (CI xanh, không security p0, host unchanged).
+- Môi trường: gh 2.105.0 cài mới (~/.local/bin), Go 1.27.4 cài mới (~/.go/bin —
+  GOPATH=~/.go tránh đụng GOROOT), kernel 5.10.134 dev, uid 1001.
+
+### Issue xử lý
+- **#97** (mới tạo phiên này — type:feature p1 area:minictd phase:2): G3 preview
+  routing — Traefik file provider + wake probe (GĐ2 mục 1 residual, gộp mục 4;
+  kế hoạch kế tiếp của Phiên 13). Tự assign + status:in-progress. Status: done
+  (PR #98 — merge ở Pha C, chờ CI xanh).
+- Triage 24h: không có issue mới chưa gán label (#93 from-audit phiên 13 đã có
+  labels đầy đủ; các #55–#77 đã triage phiên trước).
+
+### Research (Phiên 14 — 2 nguồn verified 200)
+- **Traefik file provider docs v3.5** (raw.githubusercontent.com .../docs/content/providers/file.md):
+  file provider nhận dynamic config qua directory `.yml`/`.toml`; shape
+  `http.routers.{rule,entryPoints,service}` + `loadBalancer.servers[].url`.
+- **Traefik pkg/provider/file/file.go v3.5.0**: directory mode → fsnotify watch
+  từng entry; chỉ load `.yml`/`.toml` → atomic temp+rename an toàn (temp suffix
+  không `.yml` không bao giờ load).
+- Áp dụng: D49 — renderer YAML deterministic + hooks Run/Start/Stop/Remove +
+  SyncAllRoutes (boot + reconcile) + Wake endpoint.
+
+### Development
+- Nhánh: `feat/97-g3-preview-routing` (commit `5ef0e51` → amend `e77001b`).
+- Thay đổi: `minictd/internal/minict/routes.go` + `routes_test.go` (mới);
+  hooks runtime.go ×4; `SyncAllRoutes` side-effect-free (measured: heal trong
+  boot-sync phá `--autostart` MD21 → probe `pidAlive` thay `alive()` +
+  anti-regression unit assert); `POST .../wake` + `HTTPClient.Wake` (non-contract
+  extra) + CLI `sandbox wake`; flags `--traefik-dir/--traefik-domain`; systemd
+  unit + install.sh; docs GAPS/API/README; MD23–MD25 (suite 23→26).
+- Mutant dev-loop: MD21 đỏ lần đầu (boot-sync heal) — root cause đo được, sửa
+  trước khi push (ghi D49 §Quyết định).
+- Perf: cold_start=2.01 ms, rss=1184 kB, disk=2.04 MB — PASS mọi ngưỡng (gate
+  không đổi; cold path minict không đụng).
+
+### CVE Check
+- Kernel: `5.10.134-013.15.kangaroo.al8.x86_64`
+- `cve/g3-preview-routing.{md,json}`: cve-check rc=0 (17 rows) + **cve-gate rc=0
+  → 0 CVE mới ngoài watchlist**; SCR clean-room chạy độc lập rc=0/rc=0.
+- Watchlist không thêm dòng (Traefik KHÔNG được ship trong repo — operator
+  binary, residual ghi rõ trong GAPS.md §G3).
+
+### Validation "không bị nhiễm"
+- `make test`: **10 suites, failed: none** (dev env-gated cg SKIP như baseline);
+  `make test-web` 9/9; `make test-minictd` **26/26 ×2 không flake**.
+- SCR clean-room (e77001b): R1–R7 đầy đủ — **26/26 ×2 byte-identical; mutants
+  5/5 caught, 0 vacuous** (M1 no-write, M2 no-remove, M3 wake-lying→unit,
+  M4 heal-in-sync→MD21+unit, M5 disabled-ignored); bench p50 2.3 ms / 1204 kB /
+  2.04 MB; host 3/3 sha256 unchanged; CVE độc lập rc=0/rc=0.
+- Host baseline: 3/3 sha256 khớp Phiên 13 (unchanged); listeners nền đã biết
+  (12600/12700/19001/19005/19006/81/3000-next-server dev tooling); 0 process
+  minict/busybox còn sống; bằng chứng `evidence/g3-preview-routing.txt`.
+
+### PR + Pha B (lại)
+- **#98** draft @ `e77001b` (B1: nhánh từ main mới nhất — up-to-date).
+- SCR comment `=== SCR RETEST — e77001b ... ===` Verdict PASS (comment #7037620644).
+- SIA comment Verdict **CONCERNS** (comment #7037645873, label `audit:concerns`):
+  1 medium (B10 daily-log thiếu Phiên 14 — chính mục này), 1 low (MD25 không có
+  negative control wake-lying ở tầng e2e → issue `from-audit`).
+- B4: daily-log bổ sung (commit này) + issue from-audit; push → SCR chạy lại +
+  SIA delta (chỉ journal) → flip ready khi CI xanh.
+
+### Kế hoạch kế tiếp
+- **GĐ2 tiếp**: A2 `oci:` test (đã code chưa test), S3–S6, systemd-real
+  (env-gated), template (mục 2), storage overlayfs + snapshot (mục 3),
+  port-forward pasta khai báo trong config (mục 4 residual — G3 đã nối routing
+  side, pasta config-side còn), Landlock (mục 6), đo control plane ≤30MB RSS
+  (mục 7).
+- **GD3 (Web UI + console) CHƯA chạm** — per chỉ thị owner: khi mọi mục GĐ2
+  hoàn thành và GD3 sẵn sàng mở code → DỪNG + nhắc owner trước khi viết dòng
+  code UI đầu tiên. Trạng thái GĐ2: mục 1 còn A2-test + S3–S6 + systemd-real;
+  mục 2–7 chưa mở — còn nhiều phiên trước điều kiện mở GD3.

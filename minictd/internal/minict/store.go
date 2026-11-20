@@ -48,6 +48,14 @@ type Store struct {
 	// (/proc/self/cgroup); on hosts without a delegated subtree the
 	// probe fails soft and enforcement degrades to notes + rlimit.
 	CgroupRoot string
+	// TraefikDir is the directory receiving generated Traefik
+	// file-provider routes (G3, issue #97). Empty = feature off
+	// (fail-soft, CG1 pattern). One sandbox-<name>.yml per running
+	// instance; managed files all carry the "sandbox-" prefix.
+	TraefikDir string
+	// TraefikDomain is the Host() rule suffix for generated routes
+	// (s-<name>.<domain>). Empty falls back to "localhost".
+	TraefikDomain string
 	// cg is the lazily-resolved cgroup manager (CG1). Guarded by cgMu
 	// because Run/Start can run concurrently for different instances.
 	cg   *cgroupManager
@@ -738,6 +746,11 @@ func (s *Store) ReconcileAll() ([]string, error) {
 			healed = append(healed, name)
 		}
 		unlock()
+	}
+	// G3 (issue #97): a healed instance must lose its route; rebuild the
+	// whole route dir from current reality (idempotent, cheap).
+	if err := s.SyncAllRoutes(); err != nil {
+		s.Log.Warn("minictd routes: sync failed", "err", err.Error())
 	}
 	return healed, nil
 }

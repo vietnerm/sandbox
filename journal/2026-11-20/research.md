@@ -175,3 +175,23 @@ subtree) → cùng subtree → OK; nếu write fail EACCES → fail-soft + note 
    ENOENT) — chết rồi mới dọn, không rò rỉ mount/proc.
 5. Test env-gated probe-based (pattern pasta/alpine): SKIP khi không có cgroups
    v2 writable; mutation trên code enforcement (go unit) + shell suite.
+
+## Phiên 14 — G3 preview routing (issue #97)
+
+**Vấn đề**: minictd unix-socket bridge hoạt động per-port nhưng preview routing chưa nối — Traefik chưa biết `s-<id>.<domain>` → `127.0.0.1:<port>`, wake probe chưa có surface daemon-side (BridgeIP() luôn rỗng — MERGE-GUIDE delta).
+
+**Nguồn 1 — Traefik file provider docs (v3.5, verified 200 raw.githubusercontent.com/traefik/traefik/v3.5/docs/content/providers/file.md)**:
+- File provider nhận dynamic config qua **1 file hoặc 1 directory** các file `.yml`/`.toml` (`providers.file.directory`).
+- Shape: `http.routers.<name>.{rule, entryPoints, service}` + `http.services.<name>.loadBalancer.servers[].url`.
+- Router rule dạng `Host(\`s-x.localhost\`)`.
+
+**Nguồn 2 — Traefik provider source (v3.5.0 pkg/provider/file/file.go, verified 200)**:
+- Directory mode: `os.ReadDir` → watch từng entry bằng fsnotify (`addWatcher`); event Create/Write/Rename → reload dynamic config.
+- Chỉ load `.yml`/`.toml` → **atomic write bằng temp + rename an toàn**: temp có suffix khác `.yml` không bao giờ được load; rename sang `.yml` trigger reload đúng 1 lần.
+
+**Áp dụng cho minict (thiết kế D49)**:
+- Daemon sinh **1 file `.yml`/instance** (`sandbox-<name>.yml`) trong `--traefik-dir`: router `s-<name>` (1 port) hoặc `s-<name>-p<port>` (multi-port D24) → `http://127.0.0.1:<port>` (webproxy bridge giữ port host-reachable).
+- Hooks sau saveState ở Run/Start (+file), Stop/Remove (−file); ReconcileAll heal cả route dir (syncAllRoutes: remove file stale); daemon boot sync lại từ state dir.
+- **Wake endpoint** `POST /v1/sandboxes/{name}/wake`: dial `127.0.0.1:<port>` (dialTimeout sẵn có store.go:602), trả per-port TCP-ready; 409 khi stopped, 404 khi không tồn tại — đúng contract BridgeIP()=="" của MERGE-GUIDE Step 5.
+- `traefik.*` labels giữ nguyên round-trip qua Inspect (không dịch DSL docker-label — chỉ honor `traefik.enable=false` để opt-out; residual ghi rõ).
+- Fail-soft: `--traefik-dir` rỗng = feature off, zero overhead (pattern CG1).

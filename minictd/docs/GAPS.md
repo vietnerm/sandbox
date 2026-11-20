@@ -46,14 +46,24 @@ Notes into native mappings. Interim mitigations for the control plane: the
 idle/pressure reapers still work (RSS-based), admission control still
 bounds aggregate memory by host MemTotal.
 
-### G3 — preview routing & Traefik
+### G3 — preview routing & Traefik — **SHIPPED 2026-11-20 (issue #97, D49)**
 
-The unix-socket bridge works per-port (verified) but Traefik integration is
-not wired: on a minict node, use a Traefik file provider mapping
-`s-<id>.<domain>` → `127.0.0.1:<port>`, and teach the wake probe to dial
-`127.0.0.1:<webPort>` when `BridgeIP()` is empty (minictd sandboxes have no
-bridge IP). `traefik.*` labels are already faithfully round-tripped by
-Inspect, so domain-staleness checks keep working unchanged.
+The unix-socket bridge works per-port (verified) and G3 wires the routing +
+probe now: the daemon generates a **Traefik file provider** route per
+running instance when `--traefik-dir` is set — `sandbox-<name>.yml` maps
+`s-<name>.<domain>` → `127.0.0.1:<port>` (multi-port D24 →
+`s-<name>-p<port>.<domain>`), written atomically (temp+rename — Traefik v3.5
+loads every .yml in the directory and fsnotify-watches it), removed on
+Stop/Remove, rebuilt at daemon boot and reconcile (SyncAllRoutes; heal paths
+drop routes of dead instances). **Wake probe**: `POST /v1/sandboxes/{name}/wake`
+dials `127.0.0.1:<webPort>` when `BridgeIP()` is empty (always, for minictd) —
+per-port TCP-ready map, 409 when stopped, 404 when gone. `traefik.*` labels are
+still faithfully round-tripped by Inspect so domain-staleness checks keep
+working unchanged; the daemon honors `traefik.enable=false` as opt-out.
+**Residual**: full docker-label DSL translation (traefik.http.routers.* rules,
+middlewares) is NOT implemented — native webport routing covers the G3 scope;
+Traefik itself is an operator-deployed binary (not pinned/fetched by this repo).
+Deploy: `--traefik-dir` default in the systemd unit + install.sh mkdir.
 
 ### A1 — egress identity
 

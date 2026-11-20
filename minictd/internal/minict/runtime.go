@@ -109,6 +109,9 @@ func (s *Store) Run(ctx context.Context, spec contract.RunSpec) (string, error) 
 		return "", err
 	}
 	ok = true
+	// G3 (issue #97): route file for the fresh instance (after saveState,
+	// outside the ok=false rollback scope — TraefikDir is outside Root).
+	s.syncRouteFile(spec.Name, ports, parseLabels(spec.Labels))
 	for _, n := range notes {
 		s.Log.Info("minictd note", "name", spec.Name, "note", n)
 	}
@@ -222,6 +225,8 @@ func (s *Store) Remove(ctx context.Context, name string) error {
 	if err := os.RemoveAll(s.dir(name)); err != nil {
 		return err
 	}
+	// G3 (issue #97): instance identity is gone — route must go too.
+	s.syncRouteFile(name, nil, nil)
 	s.Log.Info("minictd remove", "name", name)
 	return nil
 }
@@ -289,6 +294,8 @@ func (s *Store) Start(ctx context.Context, name string) error {
 	if err := s.saveState(name, st); err != nil {
 		return err
 	}
+	// G3 (issue #97): route file back on (ports from the saved state).
+	s.syncRouteFile(name, st.Ports, parseLabels(spec.Labels))
 	s.Log.Info("minictd start", "name", name, "pid", pid)
 	return nil
 }
@@ -347,6 +354,8 @@ func (s *Store) Stop(ctx context.Context, name string, timeoutSec int) error {
 	if err := s.saveState(name, st); err != nil {
 		return err
 	}
+	// G3 (issue #97): instance is stopped — its route must go.
+	s.syncRouteFile(name, nil, nil)
 	s.Log.Info("minictd stop", "name", name, "timeout_sec", timeoutSec)
 	return nil
 }

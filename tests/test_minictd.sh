@@ -35,6 +35,12 @@
 #         (issue #91, D47)
 #   MD22  deploy: install.sh renders the --user unit; systemd-analyze
 #         verify passes (SKIP without systemd-analyze)
+#   MD23  G3 routes: run with webport -> Traefik file-provider YAML written
+#         (router s-<name> -> 127.0.0.1:<port>); traefik.enable=false -> no
+#         file (issue #97)
+#   MD24  G3 routes: stop -> route file removed; wake stopped -> 409
+#   MD25  G3 routes: start -> route file back + wake 200 (port TCP-ready);
+#         remove -> wake 404 + file gone
 #
 # Exit code: 0 if all expected results hold, 1 otherwise.
 set -u
@@ -57,6 +63,8 @@ TOKEN="tok-$$-$RANDOM"
 API_PORT=$(( 17600 + RANDOM % 300 ))
 WEB_PORT=$(( 19000 + RANDOM % 900 ))
 API="http://127.0.0.1:$API_PORT"
+TRAEFIK_DIR="$WORK/traefik"
+WEB_PORT_T=$(( WEB_PORT + 7 ))
 DPID=""
 
 PASS=0; FAIL=0; SKIPPED=0
@@ -81,7 +89,7 @@ run_case() { # <id> <desc> <expect: pass|fail|skip> <cmd...>
 }
 
 cleanup() {
-    for n in md-a md-b md-c md-auto; do
+    for n in md-a md-b md-c md-auto md-t md-f; do
         curl -s -m 5 -X POST -H "Authorization: Bearer $TOKEN" \
             "$API/v1/sandboxes/$n/remove" >/dev/null 2>&1 || true
     done
@@ -154,6 +162,7 @@ LEAKME="leak-$$" MINICTD_TOKEN="$TOKEN" "$MINICTD" \
     --listen "127.0.0.1:$API_PORT" --state-dir "$STATE" \
     --minict-bin "$MINICT" --minict-exec-bin "$MEXEC" \
     --base-rootfs "$REPO/rootfs" --webproxy "$REPO/tools/webproxy.py" \
+    --traefik-dir "$TRAEFIK_DIR" \
     > "$WORK/daemon.log" 2>&1 &
 DPID=$!
 for _ in $(seq 1 50); do
@@ -340,11 +349,13 @@ md21() {
     kill "$old" 2>/dev/null
     sleep 0.6
     pgrep -f "$STATE/md-auto" >/dev/null 2>&1 && return 1
-    # fresh daemon with --autostart (+ A3 reconcile ticker)
+    # fresh daemon with --autostart (+ A3 reconcile ticker); --traefik-dir
+    # keeps route sync on across the restart (G3 boot sync, issue #97)
     MINICTD_TOKEN="$TOKEN" "$MINICTD" \
         --listen "127.0.0.1:$API_PORT" --state-dir "$STATE" \
         --minict-bin "$MINICT" --minict-exec-bin "$MEXEC" \
         --base-rootfs "$REPO/rootfs" --webproxy "$REPO/tools/webproxy.py" \
+        --traefik-dir "$TRAEFIK_DIR" \
         --autostart --reconcile-interval 5 \
         > "$WORK/daemon2.log" 2>&1 &
     DPID=$!
@@ -380,6 +391,50 @@ md22() {
     systemd-analyze verify "$WORK/home/.config/systemd/user/minictd.service" || return 1
 }
 run_case MD22 "deploy: install.sh renders --user unit, systemd-analyze verify" skip md22
+
+# ---------- G3 preview routing (issue #97) ----------
+# Daemon (daemon2 after MD21) runs with --traefik-dir; default domain is
+# localhost. md-t: webport -> route file; md-f: traefik.enable=false.
+md23() {
+    api POST /v1/run "{\"name\":\"md-t\",\"image\":\"base\",\"labels\":[\"minict.webport=$WEB_PORT_T\"],\"cmd\":[\"/bin/sh\",\"-c\",\"mkdir -p /www && echo g3-web > /www/index.html; httpd -f -p 127.0.0.1:$WEB_PORT_T -h /www & sleep 600\"]}" >/dev/null || return 1
+    sleep 0.5
+    local rf="$TRAEFIK_DIR/sandbox-md-t.yml"
+    [[ -f "$rf" ]] || return 1
+    grep -q "rule: 'Host(\`s-md-t.localhost\`)'" "$rf" || return 1
+    grep -q "url: http://127.0.0.1:$WEB_PORT_T" "$rf" || return 1
+    grep -q "service: s-md-t" "$rf" || return 1
+    # disabled opt-out: webport present but traefik.enable=false -> no file
+    api POST /v1/run "{\"name\":\"md-f\",\"image\":\"base\",\"labels\":[\"minict.webport=$(( WEB_PORT_T + 1 ))\",\"traefik.enable=false\"],\"cmd\":[\"/bin/sleep\",\"600\"]}" >/dev/null || return 1
+    sleep 0.5
+    [[ ! -e "$TRAEFIK_DIR/sandbox-md-f.yml" ]]
+}
+run_case MD23 "G3 routes: run -> Traefik YAML written; disabled -> no file" pass md23
+
+md24() {
+    api POST /v1/sandboxes/md-t/stop '{"timeout_sec":1}' >/dev/null || return 1
+    sleep 0.3
+    [[ ! -e "$TRAEFIK_DIR/sandbox-md-t.yml" ]] || return 1
+    api POST /v1/sandboxes/md-t/wake >/dev/null && return 1
+    [[ "$(code)" == 409 ]]
+}
+run_case MD24 "G3 routes: stop -> route removed; wake stopped -> 409" pass md24
+
+md25() {
+    api POST /v1/sandboxes/md-t/start >/dev/null || return 1
+    sleep 1.5
+    [[ -f "$TRAEFIK_DIR/sandbox-md-t.yml" ]] || return 1
+    # wake on a running instance: webproxy holds the host port -> TCP-ready
+    api POST /v1/sandboxes/md-t/wake >/dev/null || return 1
+    [[ "$(jget "d['ports'].get(str($WEB_PORT_T), False)")" == True ]] || return 1
+    api POST /v1/sandboxes/md-t/remove >/dev/null || return 1
+    sleep 0.3
+    [[ ! -e "$TRAEFIK_DIR/sandbox-md-t.yml" ]] || return 1
+    api POST /v1/sandboxes/md-t/wake >/dev/null && return 1
+    [[ "$(code)" == 404 ]] && [[ ! -e "$TRAEFIK_DIR/sandbox-md-f.yml" ]]
+}
+run_case MD25 "G3 routes: start -> route back + wake 200; remove -> 404" pass md25
+
+api POST /v1/sandboxes/md-f/remove >/dev/null 2>&1 || true
 
 echo "=== summary: PASS=$PASS SKIP=$SKIPPED FAIL=$FAIL ==="
 if [[ $FAIL -ne 0 ]]; then

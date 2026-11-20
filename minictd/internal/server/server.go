@@ -50,6 +50,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/sandboxes/{name}/remove", s.handleRemove)
 	mux.HandleFunc("POST /v1/sandboxes/{name}/start", s.handleStart)
 	mux.HandleFunc("POST /v1/sandboxes/{name}/stop", s.handleStop)
+	mux.HandleFunc("POST /v1/sandboxes/{name}/wake", s.handleWake)
 	mux.HandleFunc("POST /v1/sandboxes/{name}/exec", s.handleExec)
 	mux.HandleFunc("POST /v1/sandboxes/{name}/execv2", s.handleExecV2)
 	mux.HandleFunc("POST /v1/sandboxes/{name}/execstream", s.handleExecStream)
@@ -216,6 +217,18 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleWake probes the preview ports of a running instance over host
+// loopback (G3, issue #97 — non-contract extra; BridgeIP() is always ""
+// for minictd so the probe dials 127.0.0.1:<port> per MERGE-GUIDE Step 5).
+func (s *Server) handleWake(w http.ResponseWriter, r *http.Request) {
+	ports, err := s.store.Wake(r.Context(), nameOf(r))
+	if err != nil {
+		mapErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ports": ports})
 }
 
 func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
