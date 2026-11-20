@@ -134,6 +134,10 @@ func TestCgEnsureAppsFull(t *testing.T) {
 	if got := readFileStr(t, filepath.Join(base, "cgroup.subtree_control")); !strings.Contains(got, "+memory") {
 		t.Fatalf("memory controller not enabled: %q", got)
 	}
+	// second hop: apps must distribute the controllers to sandbox-*
+	if got := readFileStr(t, filepath.Join(m.Apps, "cgroup.subtree_control")); !strings.Contains(got, "+memory") {
+		t.Fatalf("apps subtree_control missing +memory: %q", got)
+	}
 	if len(m.Enabled) != 3 {
 		t.Fatalf("Enabled = %v, want memory+cpu+pids", m.Enabled)
 	}

@@ -187,12 +187,13 @@ done
 sudo sh -c "echo $DPID > '$CGROOT/cgroup.procs'" || true
 
 cgboot() {
-    # Infra-only asserts here: the enforcement-note assert lives in cgmem
-    # because instance cg-a is created there (ordering bug caught by CI
-    # round 2 — this case ran before the first Run).
-    [[ -d "$CGROOT/minictd-apps" && -d "$CGROOT/minictd-daemon" ]] || { echo "cgboot: apps/daemon dir missing: $(ls "$CGROOT" 2>&1)"; return 1; }
-    # controllers enabled on the base
-    grep -q '+memory' "$CGROOT/cgroup.subtree_control" || { echo "cgboot: subtree_control=$(cat "$CGROOT/cgroup.subtree_control" 2>&1)"; return 1; }
+    # Bootstrap-precondition asserts only: the daemon-managed dirs
+    # (minictd-apps/minictd-daemon) are created lazily on the first Run —
+    # their asserts live in cgmem (CI round 3 lesson: this case runs
+    # BEFORE the first Run, so the dirs legitimately do not exist yet).
+    [[ -d "$CGROOT" ]] || { echo "cgboot: CGROOT gone"; return 1; }
+    grep -qw memory "$CGROOT/cgroup.controllers" || { echo "cgboot: controllers=$(cat "$CGROOT/cgroup.controllers" 2>&1)"; return 1; }
+    grep -qw pids "$CGROOT/cgroup.controllers" || return 1
 }
 run_case CG-BOOT "bootstrap + probe: enforced + apps/daemon dirs" pass cgboot
 
@@ -204,6 +205,9 @@ cgmem() {
     # the enforcement note records the true posture (moved from CG-BOOT)
     api GET /v1/sandboxes/cg-a/state >/dev/null || return 1
     python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); notes=" ".join(d.get("notes") or []); print(notes); sys.exit(0 if "cgroups v2 enforced" in notes else 1)' "$WORK/resp" || { echo "cgmem: notes missing enforced claim: $(cat "$WORK/resp" | head -c 400)"; return 1; }
+    # daemon-managed tree + second-hop controller enable (moved from cgboot)
+    [[ -d "$CGROOT/minictd-apps" && -d "$CGROOT/minictd-daemon" ]] || { echo "cgmem: apps/daemon dir missing: $(ls "$CGROOT" 2>&1)"; return 1; }
+    grep -q '+memory' "$CGROOT/minictd-apps/cgroup.subtree_control" || { echo "cgmem: apps subtree_control=$(cat "$CGROOT/minictd-apps/cgroup.subtree_control" 2>&1)"; return 1; }
     local dir="$CGROOT/minictd-apps/sandbox-cg-a"
     local i
     for i in $(seq 1 10); do

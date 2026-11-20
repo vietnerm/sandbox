@@ -230,6 +230,17 @@ func (m *cgroupManager) ensureApps(selfPID int) error {
 		}
 		m.Enabled = append(m.Enabled, want)
 	}
+	// Second hop (measured on the CI runner, run 44702053556): interface
+	// files like memory.max appear in a cgroup only when the controller is
+	// enabled on ITS PARENT's subtree_control. Enabling on base alone gives
+	// minictd-apps the files; the per-instance sandbox-* cgroups need the
+	// same set enabled on minictd-apps/cgroup.subtree_control. apps holds
+	// no processes directly, so no-internal-process is satisfied there.
+	for _, want := range m.Enabled {
+		if err := writeCgroupFile(filepath.Join(m.Apps, "cgroup.subtree_control"), "+"+want); err != nil {
+			return fmt.Errorf("enable controller %s on %s: %w", want, m.Apps, err)
+		}
+	}
 	return nil
 }
 
