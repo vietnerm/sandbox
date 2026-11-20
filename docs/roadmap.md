@@ -27,6 +27,20 @@
 5. Ghi `journal/YYYY-MM-DD/daily-log.md` (quy tắc thư mục: PROMPT.MD §10)
 
 ## Đã xong
+- [x] 2026-11-20 (phiên 14, SDDA): **G3 — preview routing: Traefik file provider + wake probe
+  (issue #97, D49, GĐ2 mục 1 residual / mục 4 routing-side)**: `minictd/internal/minict/routes.go`
+  — renderer YAML deterministic (stdlib-only) + atomic temp+rename (Traefik v3.5 directory
+  mode load mọi .yml + fsnotify — 2 nguồn verified); hooks Run/Start (+file) / Stop/Remove
+  (−file); `SyncAllRoutes` boot + reconcile heal, side-effect-free trên state.json (measured:
+  heal trong boot-sync phá --autostart wake-recreate, MD21 đỏ → probe pidAlive + anti-regression
+  unit assert); `POST /v1/sandboxes/{name}/wake` + CLI `sandbox wake` + HTTPClient.Wake
+  (non-contract extra, Runtime 14-op giữ nguyên); flags `--traefik-dir` (off = fail-soft CG1
+  pattern) / `--traefik-domain` (mặc định localhost); systemd unit + install.sh; namespace file
+  `sandbox-` không đụng file operator; honor traefik.enable=false (full docker-label DSL =
+  residual GAPS.md); e2e MD23–MD25 (test-minictd 23→26) + go unit routes_test.go; SCR PASS ×2
+  SHA (26/26 ×2 byte-identical; mutants 5/5 caught 0 vacuous; bench 2.3ms/1204kB/2.04MB PASS;
+  host 3/3 unchanged); SIA CONCERNS (B10 daily-log) → fix → **PASS** (1 low → #99); CVE gate
+  rc=0; perf 2.01ms/1184kB/2.04MB PASS; squash `23cf249` @ e8ec847; #97 auto-close. (#97)
 - [x] 2026-11-20 (phiên 13, SDDA): **CG1/S2 — cgroups v2 resource enforcement
   (issue #4, D48, GĐ2 mục 5)**: `minictd/internal/minict/cgroup.go` — islands
   model (daemon self-park `minictd-daemon/` + enable `+memory +cpu +pids` trên
@@ -264,8 +278,8 @@
      chỉ verify cú pháp được (MD22); cần host có systemd thật.
    - **CG1** quota qua cgroups v2 (Memory/CPUs/pids — hiện chỉ Notes + rlimit nproc
      theo uid, S2) → gộp với mục 5.
-   - **G3** preview: Traefik file provider `s-<id>.<domain>` → `127.0.0.1:<port>` +
-     wake probe theo port host (BridgeIP luôn rỗng) → gộp với mục 4.
+   - **G3 preview: XONG phiên 14 (#97, D49)** — Traefik file provider + wake endpoint;
+     còn residual mục 4 là pasta config-side (khai báo port-forward trong config instance).
    - **A2** image `oci:` (crane) đã code, **chưa test**.
    - **S2–S6** còn mở (S1 FIXED #41; A3 reconcile proactive đã có — heartbeat P4 mở).
 2. Template: instance từ template; lưu instance thành template.
