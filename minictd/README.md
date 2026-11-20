@@ -1,8 +1,8 @@
 # minictd — control-plane daemon cho minict (GĐ2 seed)
 
-> **Trạng thái (owner chốt 2026-11-18, D27):** GĐ1 vẫn là giai đoạn hiện tại.
-> minictd là "GĐ2 seed gộp sớm": chỉ sửa bảo mật và giữ `make test-minictd` xanh,
-> chưa mở tính năng GĐ2 mới cho tới khi DoD GĐ1 xong.
+> **Trạng thái (cập nhật 2026-11-20, #91/D47):** GĐ1 đã đóng cả 5 mục nền
+> (Phiên 11, #88) — GĐ2 mở theo roadmap. Seed daemon đủ 14 op; #91 thêm
+> CLI `sandbox` + systemd --user unit + `--autostart` + A3 reconcile.
 
 Daemon rootless (Go, chỉ stdlib) quản lý nhiều instance minict qua HTTP API, theo
 đúng interface 14 op + `RunSpec` của control-plane sandboxd (`contract/`), để
@@ -36,11 +36,42 @@ curl -s -H "Authorization: Bearer $MINICTD_TOKEN" -X POST localhost:7601/v1/sand
 Token bắt buộc (`$MINICTD_TOKEN` hoặc `--token-file`; `--insecure-no-auth` chỉ cho dev).
 Image: `base`, `dir:<abs>`, `tar:<abs>`, `oci:<ref>` (cần `crane`, **chưa test** — A2).
 
+## CLI `sandbox` (#91, D47)
+
+Client đầy đủ cùng binary API, không thêm logic (NO MAGIC DEFAULTS):
+
+```bash
+sandbox --addr 127.0.0.1:7601 --token "$MINICTD_TOKEN" list
+sandbox --addr 127.0.0.1:7601 --token "$MINICTD_TOKEN" up s1 base \
+    --cmd "/bin/sh,-c,sleep 300" --webport 8125
+sandbox --addr 127.0.0.1:7601 --token "$MINICTD_TOKEN" exec s1 /bin/hostname
+sandbox --addr 127.0.0.1:7601 --token "$MINICTD_TOKEN" stop s1 --sec 10
+sandbox --addr 127.0.0.1:7601 --token "$MINICTD_TOKEN" rm s1
+```
+
+Token resolve theo thứ tự: `--token` → `$MINICTD_TOKEN` → `$MINICTD_TOKEN_FILE`
+→ `~/.config/minictd/token` (install.sh ghi).
+
 ## Test
 
-`make test-minictd` → `tests/test_minictd.sh`, 20 case (MD0–MD19): parity seccomp
+`make test-minictd` → `tests/test_minictd.sh`, 23 case (MD0–MD22): parity seccomp
 minict.c ↔ minict-exec.c, auth, lifecycle, exec setns, env không rò, timeout, stdin,
-NDJSON, preview, path traversal, stop/start, bind-symlink, 404/409, remove sạch.
+NDJSON, preview, path traversal, stop/start, bind-symlink, 404/409, remove sạch,
+CLI round-trip (MD20), autostart wake-recreate (MD21), deploy unit verify (MD22).
+
+## Service người dùng thường (systemd --user, #91 D47)
+
+```bash
+bash minictd/deploy/install.sh          # render unit + copy binary + tạo token (0600)
+systemctl --user daemon-reload
+systemctl --user enable --now minictd
+loginctl enable-linger "$USER"          # user manager sống qua boot/logout
+```
+
+Daemon flags mới: `--autostart` (recreate instance state=running lúc boot —
+instance operator-stopped vẫn stopped) và `--reconcile-interval N` (A3: heal
+proactive mỗi N giây; 0 = chỉ heal-lazy khi query). Payload sống qua daemon
+restart (Setsid); autostart chỉ phục vụ reboot/daemon-restart.
 
 ## Bảo mật — điều luôn đúng
 
@@ -53,7 +84,9 @@ Trường RunSpec không thực thi được (Memory/CPUs/User/Network/…) đư
 ## Còn mở
 
 CG1 (cgroups: Memory/CPUs/pids), G3 (Traefik + wake probe theo port host), A2 (oci),
-S1–S6 từ review tích hợp — chi tiết `docs/GAPS.md`.
+S2–S6 từ review tích hợp (S1 FIXED #41) — chi tiết `docs/GAPS.md`.
+A3 reconcile: proactive ĐÃ CÓ (#91, `--reconcile-interval`); fleet-agent heartbeat
+(P4) vẫn mở.
 
 ## Tài liệu
 
