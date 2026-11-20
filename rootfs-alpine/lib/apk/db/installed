@@ -1,27 +1,3 @@
-C:Q1W3l08syrWte8EZFGBkkCod+mfrU=
-P:acpid-openrc
-V:2.0.34-r6
-A:noarch
-S:2147
-I:758
-T:The ACPI Daemon (acpid) With Netlink Support (OpenRC init scripts)
-U:https://sourceforge.net/projects/acpid2/
-L:GPL-2.0-or-later
-o:acpid
-m:Jakub Jirutka <jakub@jirutka.cz>
-t:1727733827
-c:cd88ee24529bffeed9c215c1a3bed70770eacd9c
-i:openrc acpid=2.0.34-r6
-r:busybox-openrc
-F:etc
-F:etc/conf.d
-R:acpid
-Z:Q1GLU+wsutsWAW4zzh5D0l8tOtRtI=
-F:etc/init.d
-R:acpid
-a:0:0:755
-Z:Q1L7CL3fF70CM7pkTA1icaX7AD5Io=
-
 C:Q1KfmXSO6h/+AfcLNAJNxFxG0hH40=
 P:alpine-baselayout
 V:3.7.0-r0
