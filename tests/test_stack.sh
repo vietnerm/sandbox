@@ -147,12 +147,14 @@ st6_down_test() { # ST6: teardown leaves nothing behind (runs in MAIN shell —
     bash "$SND" down "$NAME" >/dev/null 2>&1 || return 1
     sleep 0.4
     (ss -tln 2>/dev/null | grep -q "127.0.0.1:$PORT ") && return 1
-    # leaks: nginx/fcgiwrap from THIS instance — identify by the rootfs path
-    # of the pidfile-carrying wrapper is gone; simplest robust check: no
-    # nginx master/worker at all (this host runs no other nginx) AND no
-    # fcgiwrap AND no webproxy bound to our port
-    pgrep -f "/usr/sbin/nginx" >/dev/null 2>&1 && return 1
-    pgrep -f "usr/bin/fcgiwrap" >/dev/null 2>&1 && return 1
+    # leak probe scoped to THIS instance's paths only: a global nginx/fcgiwrap
+    # pgrep would see processes of OTHER suites/rooms on the same host
+    # (cross-contamination measured on the dev host, 2026-11-20 — a mutant
+    # room that stripped the name guard left an instance behind). If the
+    # wrapper + shim (cmdline carries the instance rootfs path) are gone,
+    # the pidns is gone too, and pidns teardown SIGKILLs nginx/fcgiwrap
+    # (D19 + kernel pidns semantics) — nothing can survive with no wrapper.
+    pgrep -f "$REPO/instances/$NAME/rootfs" >/dev/null 2>&1 && return 1
     pgrep -f "webproxy.py --root $REPO/instances/$NAME" >/dev/null 2>&1 && return 1
     [[ ! -d "$REPO/instances/$NAME" ]]
 }
@@ -166,6 +168,12 @@ st8_name_guard_test() { # ST8: traversal/hostile instance names are rejected
     # nothing was created outside instances/: the traversal name must not exist
     [[ ! -d "$REPO/instances/.." ]]
     [[ ! -e "$REPO/evil-name" ]] && [[ ! -e "$REPO/instances/evil-name" ]]
+    # best-effort cleanup for a guard-stripped MUTANT run (M-STACK-3): it can
+    # create instances/../evil-name before this guard exists — kill the
+    # wrapper so later cross-checks on this host stay clean
+    pkill -f "instances/../evil-name" 2>/dev/null || true
+    sleep 0.3
+    rm -rf "$REPO/evil-name"
 }
 
 st7_bench_test() { # ST7: median stack cold start < 5000 ms (3 runs)
