@@ -20,6 +20,9 @@
 #        instance dir removed
 #   ST7  stack cold start (spawn -> HTTP 200 + API 200) median of 3 runs
 #        < 5000 ms (roadmap GĐ1 mục 4 threshold)
+#   ST8  instance name guard (SIA audit PR #86 low finding): names that are
+#        not safe path components (traversal, slashes) are rejected by
+#        sandbox.sh up/down — nothing is created outside instances/
 #
 # Port selection re-checks `ss` listeners to dodge the issue #75 collision
 # class (random port already taken by infra).
@@ -154,6 +157,17 @@ st6_down_test() { # ST6: teardown leaves nothing behind (runs in MAIN shell —
     [[ ! -d "$REPO/instances/$NAME" ]]
 }
 
+st8_name_guard_test() { # ST8: traversal/hostile instance names are rejected
+    local out
+    out="$(bash "$SND" up '../evil-name' 2>&1)" && return 1
+    echo "$out" | grep -q "invalid instance name" || return 1
+    out="$(bash "$SND" up 'a/b' 2>&1)" && return 1
+    out="$(bash "$SND" up '.../x' 2>&1)" && return 1
+    # nothing was created outside instances/: the traversal name must not exist
+    [[ ! -d "$REPO/instances/.." ]]
+    [[ ! -e "$REPO/evil-name" ]] && [[ ! -e "$REPO/instances/evil-name" ]]
+}
+
 st7_bench_test() { # ST7: median stack cold start < 5000 ms (3 runs)
     local times=() i ms
     for i in 1 2 3; do
@@ -198,6 +212,7 @@ if [[ "$STACK_ENV" == ok ]]; then
     run_case ST5 "SQL metachars sanitized (D45 allowlist)" pass st5_sanitize_test
     run_case ST6 "down -> port closed, zero leaks, fs gone" pass st6_down_test
     run_case ST7 "stack cold start median < 5000 ms" pass st7_bench_test
+    run_case ST8 "name guard rejects traversal (SIA #86)" pass st8_name_guard_test
 else
     run_case ST2 "stack up (env-blocked)" env true
     run_case ST3 "api health (env-blocked)" env false
@@ -205,6 +220,7 @@ else
     run_case ST5 "sanitize guard (env-blocked)" env false
     run_case ST6 "down teardown (env-blocked)" env false
     run_case ST7 "cold start < 5s (env-blocked)" env false
+    run_case ST8 "name guard (env-blocked)" env false
 fi
 
 echo "=== summary: PASS=$PASS FAIL=$FAIL SKIP=$SKIPPED ==="

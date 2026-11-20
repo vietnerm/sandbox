@@ -47,6 +47,12 @@ STACK_THRESHOLD_MS=5000      # roadmap GĐ1 mục 4: cold start stack < 5 s
 
 die() { echo "sandbox.sh: $*" >&2; exit 1; }
 
+valid_name() { # <name> — instance name must be a safe path component
+    # (SIA audit PR #86 low finding — same class as issue #61 on minict.sh:
+    #  no '/', no '..' as a path traversal, printable ascii only)
+    [[ "${1:-}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]
+}
+
 ensure_minict() { [[ -x "$MINICT" ]] || make -C "$HERE/sandbox" >/dev/null; }
 
 ensure_alpine_stack() {
@@ -154,7 +160,13 @@ hdr() {
     printf 'Cache-Control: no-store\r\n'
     printf '\r\n'
 }
-notfound() { hdr; printf '{"error":"not found","path":"%s"}\n' "$pi"; }
+json_esc() { # JSON escaping via busybox ash pattern substitution
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    printf '%s' "$s"
+}
+notfound() { hdr; printf '{"error":"not found","path":"%s"}\n' "$(json_esc "$pi")"; }
 
 qsel() { # numeric-only id
     printf '%s' "$1" | tr -cd '0-9'
@@ -213,6 +225,7 @@ CGI
 
 cmd_up() {
     local name="${1:?usage: sandbox.sh up <name> [--port <host-port>]}"
+    valid_name "$name" || die "invalid instance name '$name' (allowed: [A-Za-z0-9][A-Za-z0-9._-]*)"
     shift
     local port=""
     while [[ $# -gt 0 ]]; do
@@ -278,6 +291,7 @@ cmd_up() {
 
 cmd_down() {
     local name="${1:?usage: sandbox.sh down <name>}"
+    valid_name "$name" || die "invalid instance name '$name'"
     local d="$INST/$name"
     [[ -d "$d" ]] || { echo "sandbox.sh: no instance '$name'"; return 0; }
     # second teardown layer from HOST side: kill the whole process tree of
