@@ -86,6 +86,15 @@ cleanup() {
             "$API/v1/sandboxes/$n/remove" >/dev/null 2>&1 || true
     done
     [[ -n "$DPID" ]] && kill "$DPID" 2>/dev/null
+    # Catch-all (issue #91 dev session, measured leak): when this script's
+    # stdout is a short-lived pipe consumer (grep/tail) the shell can die
+    # by SIGPIPE BEFORE the EXIT trap runs — daemon2 (MD21) then outlives
+    # the run. Nothing may outlive this run's unique state dir: daemon(s),
+    # payload shims (cmdline carries $STATE/<name>/rootfs), webproxies
+    # (--sock under $STATE). pkill pattern is per-run unique (mktemp -d).
+    pkill -TERM -f -- "$STATE" 2>/dev/null || true
+    sleep 0.3
+    pkill -KILL -f -- "$STATE" 2>/dev/null || true
     wait 2>/dev/null
     rm -rf "$WORK"
 }
