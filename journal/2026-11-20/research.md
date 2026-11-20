@@ -75,3 +75,49 @@ rootfs chính thức của image `debian:bookworm` Docker, build bởi debuerreo
 **Nguồn 3 — images.linuxcontainers.org (lxc distrobuilder):** nguồn thay thế có date-pinned dirs + SHA256SUMS GPG-signed; rootfs ~100MB+, kèm systemd/openrc. Chọn debuerreotype vì nhỏ hơn (slim 28MB nén) + digest OCI pin được + đúng rootfs của image `debian` chính thức.
 
 **Trade-off / quyết định:** (1) rootfs-debian **gitignored** (83MB unpacked) — khác rootfs-alpine (13.3MB tracked) vì quá nặng cho git; fetch CI mỗi run ~28MB ~10-20s. (2) Sanity check binary đổi `/bin/busybox` → `/bin/sh` executable resolve symlink (minict.sh đã có logic chuẩn D43) — busybox/alpine vẫn pass; fail-closed giữ nguyên (không rootfs → không boot). (3) Suite 8 case mirror các class đã có: AL4 (proc env-aware), AL7 (chown EINVAL), AL9 (pristine), PT4/PT4C (online + control anti-vacuous PROBE_ALIVE + 2-step anti-vacuous #80).
+
+---
+
+## Phiên 12 — daemon service hoàn thiện (issue #91, GĐ2 mục 1)
+
+**Vấn đề:** seed minictd có REST API nhưng chỉ dùng được qua curl thủ công trong
+test; daemon không có cách chạy như service người dùng thường (systemd --user),
+không tự sống lại qua reboot, không có proactive reconcile (A3 — chỉ self-heal
+khi query).
+
+**Nguồn 1 — systemd.unit (freedesktop.org/man/latest/systemd.unit.html, 200):**
+User Unit Search Path xác nhận `~/.config/systemd/user/*` là vị trí chuẩn unit
+của user service manager (per-user, không phải system manager). Unit user
+`WantedBy=default.target` (không phải multi-user.target — đó là system).
+→ Áp dụng: `minictd/deploy/` ship template + `install.sh` render `%h`/`$HOME`
+tại install time (quadlet pattern) — không hardcode user; verify bằng
+`systemd-analyze verify` (có trên máy dev + runner ubuntu-24.04, đo được exit 0
+với stub binary).
+
+**Nguồn 2 — Podman quadlet (docs.podman.io podman-systemd.unit.5.html, 200):**
+pattern chuẩn cho runtime rootless chạy như user service: unit được GENERATE
+từ template tại install/enable time (không edit unit tay); generated service
+defaults `Restart=on-failure` + `WantedBy=default.target`. Rootless runtime
+(podman/minict) chỉ cần binary người dùng + state dir `$HOME`-scoped.
+→ Áp dụng: `Restart=on-failure`, `RestartSec=2`, `ExecStart` render path
+`$HOME/.local/bin/minictd`; autostart instance là việc của DAEMON (flag
+`--autostart`) chứ không phải của unit — unit chỉ bảo đảm daemon sống.
+
+**Nguồn 3 — loginctl (freedesktop.org/man/latest/loginctl.html, 200):**
+`enable-linger`: "a user manager is spawned for the user at boot and kept
+around after logouts. This allows users who are not logged in to run
+long-running services." ⇒ điều kiện tiên quyết bắt buộc để autostart qua reboot
+hoạt động (không linger → daemon chỉ chạy khi có session login).
+→ Áp dụng: `install.sh` hướng dẫn/attempt `loginctl enable-linger` (best-effort,
+gần sudo; ghi docs rõ + cảnh báo). Test CI không kiểm linger (runner không có
+systemd user instance đầy đủ trong job) — chỉ verify unit cú pháp + cờ daemon.
+
+**Trade-off / quyết định:** (1) CLI `sandbox` tái dùng `contract.NewHTTPClient`
+đã implement đủ Runtime interface — không viết client riêng lẻ lặp logic;
+(2) autostart policy: chỉ recreate instance đang `state=running` lúc daemon
+start (instance `stopped` do operator vẫn stopped — tôn trọng ý đồ stop);
+(3) A3 reconcile dùng `--reconcile-interval N` (giây, 0=off) — goroutine ticker
+gọi `ReconcileAll()` (quét state dir, `alive()` self-heal đã có — đổi từ lazy
+sang proactive); Go unit test không cần spawn payload thật (state.json PID chết
+giả → heal); (4) daemon restart không phải restart instance (units/log ghi
+"instances keep running" — autostart của reboot riêng biệt).
