@@ -671,3 +671,18 @@ v2 thật lần đầu), host unchanged, main xanh `a9e1898`, remote chỉ `main
   hoàn thành và GD3 sẵn sàng mở code → DỪNG + nhắc owner trước khi viết dòng
   code UI đầu tiên. Trạng thái GĐ2: mục 1 còn A2-test + S3–S6 + systemd-real;
   mục 2–7 chưa mở — còn nhiều phiên trước điều kiện mở GD3.
+
+### Pha C + E — kết thúc Phiên 14
+- #98 flip ready (GraphQL) khi CI xanh ×4 checks @ `e8ec847` → **squash `23cf249`**
+  match-head-commit → #97 auto-close; nhánh xoá (local + remote).
+- SCR chạy lại 2 (e8ec847): 10 suites rc=0 + web rc=0 + minictd 26/26 rc=0; SIA
+  re-assessed **PASS** (11/11 — B10 fixed); ledger #100 squash `ad7cd7b`;
+  roadmap bổ sung #101 squash `a708092` (docs-only, minh bạch trong entry này).
+- Remote sau Phiên 14: **chỉ `main`** @ `a708092`; local chỉ `main`.
+- CI main: xanh (unicode-guard + ci + issue-triage success).
+
+DAY PASS — 2026-11-20 Phiên 14: issue #97 done (merge #98 `23cf249` @ e8ec847;
+SCR clean-room ×2 SHA — 26/26 ×2 byte-identical, mutants 5/5 caught 0 vacuous;
+SIA CONCERNS → fix B10 → PASS; test-minictd 23→26 cases), CVE gate rc=0 ×2,
+make test 10 suites none failed, host unchanged 3/3, perf 2.01/1184/2.04 PASS,
+main xanh `a708092`, remote chỉ `main`.
