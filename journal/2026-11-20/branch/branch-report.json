@@ -1,0 +1,3 @@
+{"date": "2026-11-20", "mode": "plan", "halted": false, "halt_reason": "",
+ "branches": [],
+ "remaining_branches": ["main"], "main_ci_after": "success"}
