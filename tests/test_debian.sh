@@ -131,19 +131,24 @@ db3_absent_test() {
 }
 
 # content manifest of the shared rootfs (gitignored dir — no git churn probe,
-# so hash file paths + content + symlink targets; AL9 equivalent for D46)
-rootfs_manifest() {
-    find "$1" \( -type f -o -type l \) -printf '%P\n' 2>/dev/null \
+# so hash file paths + content + symlink targets; AL9 equivalent for D46).
+# Prints the digest; full manifest is written to OUT (2nd arg) when given —
+# CI lesson 2026-11-20: diffing only the digest names no file.
+rootfs_manifest() { # <dir> [out-file]
+    local dir="$1" out="${2:-}" mf
+    mf="$(find "$dir" \( -type f -o -type l \) -printf '%P\n' 2>/dev/null \
         | LC_ALL=C sort | while IFS= read -r p; do
-            f="$1/$p"
+            f="$dir/$p"
             if [[ -L "$f" ]]; then
                 printf 'L %s -> %s\n' "$p" "$(readlink "$f")"
             else
                 printf 'F %s %s\n' "$p" "$(sha256sum "$f" | awk '{print $1}')"
             fi
-        done | sha256sum | awk '{print $1}'
+        done)"
+    [[ -n "$out" ]] && printf '%s\n' "$mf" > "$out"
+    printf '%s\n' "$mf" | sha256sum | awk '{print $1}'
 }
-MANIFEST_BEFORE="$(rootfs_manifest "$DROOTFS")"
+MANIFEST_BEFORE="$(rootfs_manifest "$DROOTFS" /tmp/db8-before.txt)"
 
 PASS=0; SKIP=0; FAIL=0
 run_case() { # <id> <desc> <expect: pass|skip|xfail> <cmd...>
@@ -248,11 +253,11 @@ db7_test() {
     # --no-install-recommends tree, marker ONLY when dpkg agrees. Signature
     # verification is mandatory in apt (gpgv) — no --allow-untrusted exists.
     up "$NAME_D-apt" --pasta --rootfs "$DROOTFS" -- /bin/sh -c \
-        'i=0; while [ $i -lt 240 ]; do getent hosts deb.debian.org >/dev/null 2>&1 && { echo DNS_READY; break; }; sleep 0.25; i=$((i+1)); done; if /usr/bin/dpkg -s tree >/dev/null 2>&1; then echo APT_VACUOUS; exit 1; fi; j=0; while [ $j -lt 15 ]; do timeout 30 apt-get update >/dev/null 2>&1 && { echo APT_UP_OK; break; }; sleep 1; j=$((j+1)); done; timeout 240 apt-get install -y --no-install-recommends tree >/dev/null 2>&1 && /usr/bin/dpkg -s tree >/dev/null 2>&1 && echo APT_ONLINE_OK' \
+        'i=0; while [ $i -lt 240 ]; do getent hosts deb.debian.org >/dev/null 2>&1 && { echo DNS_READY; break; }; sleep 0.25; i=$((i+1)); done; if /usr/bin/dpkg -s tree >/dev/null 2>&1; then echo APT_VACUOUS; exit 1; fi; j=0; APT_UP=1; while [ $j -lt 5 ]; do echo "APT_TRY $j"; if timeout 120 apt-get update >/tmp/apt-up.log 2>&1; then APT_UP=0; echo APT_UP_OK; break; fi; echo APT_UP_FAIL; tail -4 /tmp/apt-up.log; sleep 1; j=$((j+1)); done; [ $APT_UP -eq 0 ] || { echo APT_UP_GAVEUP; exit 1; }; timeout 240 apt-get install -y --no-install-recommends tree >/tmp/apt-inst.log 2>&1 && /usr/bin/dpkg -s tree >/dev/null 2>&1 && echo APT_ONLINE_OK || { echo APT_INST_FAIL; tail -6 /tmp/apt-inst.log; }' \
         >/dev/null 2>&1
     local rc_up=$? log="$REPO/instances/$NAME_D-apt/log"
     local ok=0 ok_dns=0 ok_db=0 ok_bin=0
-    wait_for_log "$log" "APT_ONLINE_OK" 2400 && ok=1
+    wait_for_log "$log" "APT_ONLINE_OK" 3600 && ok=1
     grep -q DNS_READY "$log" 2>/dev/null && ok_dns=1
     # host-side STATE asserts BEFORE down (down deletes the instance dir)
     grep -q "^Package: tree$" \
@@ -278,11 +283,10 @@ db8_test() {
     after="$(rootfs_manifest "$DROOTFS")"
     if [[ "$after" != "$MANIFEST_BEFORE" ]]; then
         echo "       (content manifest of shared rootfs-debian changed in suite run)"
-        # diagnostics: NAME the differing files (SIA class — a bare mismatch
-        # is not debuggable; CI 2026-11-20 run #1 hit this with no diff shown)
-        rootfs_manifest "$DROOTFS" > /tmp/db8-after.txt 2>/dev/null || true
-        rootfs_manifest "$DROOTFS" > /tmp/db8-after2.txt 2>/dev/null || true
-        diff <(printf '%s\n' "$MANIFEST_BEFORE" | sort) <(sort /tmp/db8-after.txt) | head -12 | sed 's/^/        /'
+        # diagnostics: NAME the differing files (CI 2026-11-20 run 1+2 hit
+        # this; run 2's diff printed only the digest — manifest now materialized)
+        rootfs_manifest "$DROOTFS" /tmp/db8-after.txt >/dev/null
+        diff /tmp/db8-before.txt /tmp/db8-after.txt | head -14 | sed 's/^/        /'
         bad=1
     fi
     return $bad
