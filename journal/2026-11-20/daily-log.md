@@ -97,3 +97,112 @@ DAY PASS — 2026-11-20 Phiên 9: issue #80 done (merge #83 `282234a`, đủ c�
 SCR ×3 + mutant ×2 caught + SIA PASS), CVE 0 mới (gate rc=0), suite 114 case
 (108 PASS + 6 SKIP dev; 114/114 thật trên runner), host unchanged, main xanh
 `282234a`, remote chỉ `main`.
+
+## Phiên 10 — Orchestrator §11 (ZAI: SBG plan → Pha D #85 web stack → SCR/SIA PR #86 → merge → ledger)
+
+### Pha A — Đồng bộ + kế hoạch nhánh
+- `git pull --ff-only` main: up to date (`66a4f09`); issues mở 14, **PR mở 0**;
+  roadmap đọc; cve-watchlist đọc; daily-log Phiên 9 đọc.
+- SBG MODE=plan: remote chỉ `main` (sau Phiên 9), CI main success @ `66a4f09`,
+  điều kiện dừng §0.6 không có → `branch/plan.md` ghi "không nhánh nào cần xử
+  lý". Pha B/C lượt 1: bỏ qua (0 PR).
+
+### Pha D — Việc mới
+
+#### Issue xử lý
+- #85 (mới mở phiên này) — feat(web-stack): GĐ1 mục 4 — stack web thật
+  (nginx + API + SQLite, ./sandbox up|down|bench) — status: done (merged).
+
+#### Research
+- Nguồn 1: https://nginx.org/en/docs/http/ngx_http_fastcgi_module.html —
+  fastcgi_pass unix + fastcgi_param SCRIPT_FILENAME/PATH_INFO là 2 biến quyết
+  định script cho fcgiwrap; CGI thuần không nói chuyện được với nginx.
+- Nguồn 2: https://github.com/gnosek/fcgiwrap (README.rst, master) — wrapper
+  ~84 KB/instance, launcher chuẩn spawn-fcgi (-s sock -M mode -P pidfile);
+  mode (1) SCRIPT_FILENAME trực tiếp; CGI scripts nhận HTTP env từ FastCGI
+  params. Thêm: sqlite3 CLI `-json` ≥ 3.33 (Alpine 3.49.2) cho API JSON.
+- Ghi: `research.md` (trade-off: loại python3/node/caddy vì ngân sách disk).
+
+#### Development
+- Nhánh: `feat/85-web-stack` (commits: journal D45/research/plan → feature →
+  evidence/CVE → SIA fixes → test scoping).
+- Tóm tắt thay đổi:
+  - `sandbox.sh` (mới, root repo): `up|down|ps|shell|bench` một lệnh —
+    `./sandbox` không khả thi vì `sandbox/` là thư mục từ PoC (D45 §1);
+    per-instance config (nginx.conf/index.html/api.cgi/DB seed) ghi vào
+    PRIVATE rootfs copy (pristine D44); payload `spawn-fcgi + sqlite seed +
+    exec nginx`; host bridge webproxy.py (S1-hardened, không đổi); down =
+    kill_tree + D19 pidns teardown.
+  - `mkrootfs-alpine.sh`: pre-install `nginx sqlite fcgiwrap spawn-fcgi`
+    tại BUILD TIME — apk của chính rootfs qua musl loader + `apk add --root`
+    như calling uid (fakeroot-by-single-uid D20); **`--no-scripts` bắt buộc**
+    — không có nó apk chạy trigger qua chroot → EPERM trên host →
+    busybox/fcgiwrap/nginx bị mark BROKEN trong DB → mọi `apk add` sau trong
+    sandbox rc=3 (AL5 bắt được — đo được; đây là root cause thật, không phải
+    sửa test); CDN fail → rootfs vẫn dùng được không stack → test
+    SKIP(env-blocked) (AL5 pattern, không đỏ giả CI).
+  - nginx `user root` trong ns: apk non-root không tạo được user "nginx"
+    (scripts không chạy); setuid uid unmapped = EPERM sau capdrop → workers
+    root-IN-NS (uid 0 = calling uid, D20) — mọi file stack viết thuộc uid đó.
+  - api.cgi: CGI → `sqlite3 -json`; name allowlist `[a-zA-Z0-9 _.-]` trước
+    SQL (class injection khai trong D45; production API = GĐ2); json_esc
+    ash param-substitution cho PATH_INFO echo (SIA low #2).
+  - `valid_name()` guard up/down (SIA low #1, class #61).
+  - Seccomp blocklist KHÔNG đụng → minict-exec.c sync giữ nguyên (MD0 PASS).
+- Perf: perf-guard busybox **1.78 ms / 1196–1228 kB / 2.04 MB** PASS (không
+  đổi); rootfs-alpine **8.6 → 13.3 MB** (≤ 20 ngưỡng); **stack cold start
+  median 124–127 ms, max 233** (N=5 ×2 + ST7 suite) — ngưỡng roadmap < 5000 ms
+  (dư ~39×); bench N=50 (SCR): p50 1.8 ms, rss 1156 kB.
+
+#### CVE Check
+- `cve/web-stack.md|.json`: cve-check.py rc=0 (19 hàng NVD live), **cve-gate
+  rc=0 → 0 CVE mới ngoài watchlist**. NVD keyword API cho component mới
+  rate-limited (HTTP rỗng ×3) — khai minh bạch; **OSV.dev thay thế: 0 CVE mở**
+  cho nginx 1.28.3-r8 / sqlite 3.49.2-r1 / fcgiwrap 1.1.0-r8 / spawn-fcgi.
+- Watchlist thêm mục "Web stack packages" (bảng per-component + exposure note).
+
+#### Validation "không bị nhiễm"
+- `make test`: **8 suites, failed: none** (dev 121 case: isolation 31 +
+  seccomp 21 + netns 7 + alpine 9 + escape-alpine 31 + cve-check 4 + pasta
+  5 PASS/6 SKIP env-blocked + **stack 8/8**); `make test-web` 9/9;
+  `make test-minictd` env-blocked dev (Go thiếu) — CI runner: `go test ok` +
+  MD0–MD19 20/20.
+- Mutants: M-STACK-1 (sanitize strips) → ST5 CAUGHT; M-STACK-2 (fake API) →
+  ST4+ST5 CAUGHT; M-STACK-3 (name guard strips) → ST8 CAUGHT; SCR M0 (no
+  start) → 24 FAIL CAUGHT; M2 (no-capdrop) → 7 FAIL CAUGHT (CAPD1 chủ lực;
+  FS4/FS5 giữ PASS là đúng defense-in-depth — mount chặn độc lập bởi seccomp
+  NR_mount).
+- **Bài học negative control bắt lỗi của chính test**: bản đầu ST5/ST4 của
+  suite bị vacuous (PORT không propagate từ subshell run_case + assertion
+  không short-circuit) — M-STACK-1 đã KHÔNG bị bắt lần chạy đầu → sửa
+  `|| return 1` từng assertion + PORT_FILE trước khi push. ST6 leak-probe
+  global bị cross-contamination giữa rooms (mutant room để lại process) →
+  scope theo instance rootfs path (pidns teardown = kernel SIGKILL).
+- Host baseline: sha256 /etc/passwd, /bin/bash, /usr/bin/sudo **3/3 khớp
+  journal 2026-11-19** (unchanged); listeners cùng tập nền infra; instances/
+  rỗng sau teardown. Bằng chứng: `evidence/web-stack.txt`.
+
+#### PR
+- **#86 — MERGED** squash `75fa1a6` match-head-commit @ `11e3d3a` — đủ cổng:
+  SCR PASS ×3 SHA (`33b6c36` ×2 runs, `ca7e0b8`, `11e3d3a`) + SIA PASS (label
+  audit:pass @ ca7e0b8, 2 low → FIXED vòng này) + CI xanh ×3 SHA (build-test
+  + perf + scan; stack 8/8 + pasta 11/11 0 SKIP + minictd 20/20 trên runner);
+  ready flip sau audit; #85 auto-close; nhánh xoá sau merge; remote chỉ `main`.
+
+#### SBG (Pha C + E)
+- MODE=apply: PR #86 gộp squash; nhánh feat/85-web-stack DELETE_MERGED (PR
+  MERGED + headRefOid = HEAD nhánh — squash nên không ancestor trực tiếp,
+  §2 đối chiếu PR state); ledger dòng mới appended qua PR ledger này;
+  remote sau dọn: chỉ `main`.
+
+### Kế hoạch kế tiếp
+- GĐ1 mục 4 residual: caddy thật (hiện nginx), API production-grade (GĐ2),
+  SQLite WAL/concurrency — đã ghi roadmap.
+- #75 (port-collision test_web) + #72 (WEB9 residual) khi đụng web suite;
+  from-audit #77/#62/#61 (low); #55 flake instrumentation; #26/#27 docs CI.
+- NVD keyword scan cho stack packages retry lần sau (rate-limited hôm nay).
+
+DAY PASS — 2026-11-20 Phiên 10: issue #85 done (merge #86 `75fa1a6`, đủ cổng
+SCR ×3 SHA + mutants ×5 caught + SIA PASS 2 low fixed), CVE 0 mới (gate rc=0 +
+OSV 0), suite 8 suites none failed (121 case dev; runner 114/114 thật + stack
+8/8 + minictd 20/20), host unchanged, main xanh `75fa1a6`, remote chỉ `main`.
