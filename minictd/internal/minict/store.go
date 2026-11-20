@@ -637,6 +637,14 @@ func childEnv() []string {
 // right here instead of on the next Inspect. A3 (issue #91, D47). Never
 // spawns anything — Start/autostart are explicit daemon decisions; broken
 // state files are skipped (Inspect surfaces them per instance later).
+//
+// SIA PR #92 (medium): the whole heal holds the same per-instance flock as
+// Run/Start/Stop/Remove. Without it, a concurrent Start could spawn a fresh
+// payload while reconcile read the stale state.json and our saveState(stopped)
+// would overwrite the just-written running state — leaving the daemon with a
+// wrong liveness view (exec/stop 409) and a possible second spawn from
+// autostart. A busy lock means an op is in flight: skip + warn, the next
+// tick re-checks.
 func (s *Store) ReconcileAll() ([]string, error) {
 	names, err := s.ListByNamePrefix(context.Background(), "")
 	if err != nil {
@@ -644,8 +652,16 @@ func (s *Store) ReconcileAll() ([]string, error) {
 	}
 	var healed []string
 	for _, name := range names {
+		lctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+		unlock, err := s.lock(lctx, name)
+		cancel()
+		if err != nil {
+			s.Log.Warn("minictd reconcile: lock busy, skipping", "name", name)
+			continue
+		}
 		st, err := s.loadState(name)
 		if err != nil {
+			unlock()
 			s.Log.Warn("minictd reconcile: unreadable state, skipping", "name", name, "err", err.Error())
 			continue
 		}
@@ -653,6 +669,7 @@ func (s *Store) ReconcileAll() ([]string, error) {
 			s.alive(st)
 			healed = append(healed, name)
 		}
+		unlock()
 	}
 	return healed, nil
 }

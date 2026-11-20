@@ -254,6 +254,12 @@ func resolveToken(flagVal, flagFile string) string {
 	if err != nil {
 		return ""
 	}
+	// SIA PR #92 (low): shared-host hygiene — a token readable by
+	// group/other defeats the whole point of the bearer token. Warn, do
+	// not fail: the operator may have a reason, but they must see it.
+	if fi, statErr := os.Stat(f); statErr == nil && fi.Mode().Perm()&0o077 != 0 {
+		fmt.Fprintf(os.Stderr, "sandbox: warning: token file %s is group/other readable (chmod 600 advised)\n", f)
+	}
 	return strings.TrimSpace(strings.SplitN(string(b), "\n", 2)[0])
 }
 

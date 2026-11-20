@@ -34,7 +34,11 @@ SRC="$HERE/minictd.service.in"
 [[ -f "$SRC" ]] || { echo "install.sh: template missing: $SRC" >&2; exit 1; }
 
 # Render with a single sed pass; refuse partial renders (placeholder check).
-UNIT="$(sed -e "s|@HOME@|${HOME_DIR}|g" -e "s|@BINDIR@|${BINDIR}|g" "$SRC")"
+# SIA PR #92 (low): escape sed-special chars in the replacement — a home
+# dir containing & or | would otherwise corrupt the render silently.
+esc_sed() { printf '%s' "$1" | sed -e 's/[&|\\]/\\&/g'; }
+UNIT="$(sed -e "s|@HOME@|$(esc_sed "${HOME_DIR}")|g" \
+              -e "s|@BINDIR@|$(esc_sed "${BINDIR}")|g" "$SRC")"
 if printf '%s' "$UNIT" | grep -q '@HOME@\|@BINDIR@'; then
     echo "install.sh: unresolved placeholder after render — abort" >&2
     exit 1
