@@ -221,22 +221,29 @@ db5_test() {
 }
 run_case DB5 "chown foreign uid: EINVAL (unmapped), alive" pass db5_test
 
-# DB6 — CONTROL: no pasta → apt update unreachable (PT4C pattern)
+# DB6 — CONTROL: no pasta → apt cannot fetch/install (PT4C pattern).
+# State-based (CI run 3 lesson): `apt-get update` returns rc=0 WITH ONLY
+# WARNINGS when all sources are unreachable ("Temporary failure resolving";
+# measured on dev 2026-11-20 — apt 2.6.2), so a marker keyed on the update
+# rc would be VACUOUS. The control now asserts the real end state: without
+# the pasta egress path the lists stay empty, so `apt-get install tree`
+# ("Unable to locate package tree") MUST FAIL. DB7 proves the same install
+# SUCCEEDS with pasta — the pair pins the success to the network path.
 db6_test() {
     up "$NAME_D-ctl" --rootfs "$DROOTFS" -- /bin/sh -c \
-        "echo PROBE_ALIVE && timeout 60 apt-get update >/dev/null 2>&1 && echo APT_CONTROL_OK" \
+        "echo PROBE_ALIVE; timeout 60 apt-get -o APT::Sandbox::User=root update >/dev/null 2>&1; timeout 60 apt-get -o APT::Sandbox::User=root install -y --no-install-recommends tree >/dev/null 2>&1 && echo APT_CONTROL_OK" \
         >/dev/null 2>&1
     local rc_up=$? log="$REPO/instances/$NAME_D-ctl/log" alive=0
     wait_for_log "$log" "PROBE_ALIVE" 50 && alive=1
     if [[ $alive -eq 0 ]]; then return 1; fi
-    # payload may run up to ~60 s: wait for EXIT before trusting the absence
-    wait_for_exit "$REPO/instances/$NAME_D-ctl/pid" 320 || return 1
+    # payload may run up to ~120 s: wait for EXIT before trusting the absence
+    wait_for_exit "$REPO/instances/$NAME_D-ctl/pid" 500 || return 1
     local clean=1
     grep -q APT_CONTROL_OK "$log" 2>/dev/null && clean=0
     down "$NAME_D-ctl"
     [[ $rc_up -eq 0 && $alive -eq 1 && $clean -eq 1 ]]
 }
-run_case DB6 "control: WITHOUT pasta, apt update unreachable" pass db6_test
+run_case DB6 "control: WITHOUT pasta, apt cannot fetch/install" pass db6_test
 
 # DB7 — with pasta: apt update + install tree, signature-verified (PT4 pattern)
 db7_test() {
@@ -252,8 +259,15 @@ db7_test() {
     # (dpkg -s tree FAILS first — #80 class), then RETRIES apt update, install
     # --no-install-recommends tree, marker ONLY when dpkg agrees. Signature
     # verification is mandatory in apt (gpgv) — no --allow-untrusted exists.
+    # APT::Sandbox::User=root: apt's http method drops privileges to _apt
+    # (setgroups(0)+setuid 42) — both EPERM in the single-uid userns
+    # (unmapped gid/uid; CI run 3: "Method http has died unexpectedly", rc 112),
+    # so methods run as ns-root = the payload uid — NO privilege change
+    # (capdrop + NNP + seccomp blocklist still apply; ns-root has no host
+    # caps, D20). Alternative rejected: removing _apt from passwd would
+    # mutate the upstream rootfs (pristine semantics).
     up "$NAME_D-apt" --pasta --rootfs "$DROOTFS" -- /bin/sh -c \
-        'i=0; while [ $i -lt 240 ]; do getent hosts deb.debian.org >/dev/null 2>&1 && { echo DNS_READY; break; }; sleep 0.25; i=$((i+1)); done; if /usr/bin/dpkg -s tree >/dev/null 2>&1; then echo APT_VACUOUS; exit 1; fi; j=0; APT_UP=1; while [ $j -lt 5 ]; do echo "APT_TRY $j"; if timeout 120 apt-get update >/tmp/apt-up.log 2>&1; then APT_UP=0; echo APT_UP_OK; break; fi; echo APT_UP_FAIL; tail -4 /tmp/apt-up.log; sleep 1; j=$((j+1)); done; [ $APT_UP -eq 0 ] || { echo APT_UP_GAVEUP; exit 1; }; timeout 240 apt-get install -y --no-install-recommends tree >/tmp/apt-inst.log 2>&1 && /usr/bin/dpkg -s tree >/dev/null 2>&1 && echo APT_ONLINE_OK || { echo APT_INST_FAIL; tail -6 /tmp/apt-inst.log; }' \
+        'i=0; while [ $i -lt 240 ]; do getent hosts deb.debian.org >/dev/null 2>&1 && { echo DNS_READY; break; }; sleep 0.25; i=$((i+1)); done; if /usr/bin/dpkg -s tree >/dev/null 2>&1; then echo APT_VACUOUS; exit 1; fi; j=0; APT_UP=1; while [ $j -lt 5 ]; do echo "APT_TRY $j"; if timeout 120 apt-get -o APT::Sandbox::User=root update >/tmp/apt-up.log 2>&1; then APT_UP=0; echo APT_UP_OK; break; fi; echo APT_UP_FAIL; tail -4 /tmp/apt-up.log; sleep 1; j=$((j+1)); done; [ $APT_UP -eq 0 ] || { echo APT_UP_GAVEUP; exit 1; }; timeout 240 apt-get -o APT::Sandbox::User=root install -y --no-install-recommends tree >/tmp/apt-inst.log 2>&1 && /usr/bin/dpkg -s tree >/dev/null 2>&1 && echo APT_ONLINE_OK || { echo APT_INST_FAIL; tail -6 /tmp/apt-inst.log; }' \
         >/dev/null 2>&1
     local rc_up=$? log="$REPO/instances/$NAME_D-apt/log"
     local ok=0 ok_dns=0 ok_db=0 ok_bin=0

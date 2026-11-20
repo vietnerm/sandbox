@@ -43,6 +43,10 @@ DEB_SIZE="28247934"
 STAMP="$DEST/.debian-stamp"
 if [[ -f "$STAMP" && -e "$DEST/bin/sh" ]] \
    && [[ "$(cat "$STAMP")" == "$DEB_SHA256" ]]; then
+    # still ensure device placeholders exist (older fetches predating the
+    # placeholder step — idempotent, mirrors mkrootfs.sh)
+    touch "$DEST"/dev/{null,zero,urandom,random}
+    chmod 0666 "$DEST"/dev/{null,zero,urandom,random} 2>/dev/null || true
     exit 0  # already fetched + verified
 fi
 
@@ -89,6 +93,14 @@ if [[ ! -x "$DEST/usr/bin/dpkg" ]]; then
     echo "fetch-debian-rootfs: /usr/bin/dpkg missing — not a usable Debian rootfs" >&2
     exit 1
 fi
+
+# device placeholder files — mirror mkrootfs.sh (busybox): mknod is EPERM in
+# userns, so minict bind-mounts host /dev/{null,zero,random,urandom} over
+# empty placeholders (O_CREAT fallback measured 2026-11-20: without them the
+# FIRST one-shot run creates them in a shared rootfs and DB8 pristine fails
+# — CI run 3 diff named exactly these four files)
+touch "$DEST"/dev/{null,zero,urandom,random}
+chmod 0666 "$DEST"/dev/{null,zero,urandom,random} 2>/dev/null || true
 
 printf '%s\n' "$DEB_SHA256" > "$STAMP"
 echo "fetch-debian-rootfs: OK — $DEST ($(du -sk "$DEST" | awk '{print $1}') KB, sha256 verified)"
