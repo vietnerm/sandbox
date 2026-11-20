@@ -79,6 +79,16 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# diagnostics on FAIL (pasta pattern): instance log + pasta.log tails — CI
+# diagnosability (SIA class: a bare FAIL with no output is not debuggable)
+dump_logs() { # <suffix>
+    local s="$1"
+    echo "        --- instance $NAME_D$s log tail:"
+    tail -12 "$REPO/instances/$NAME_D$s/log" 2>/dev/null | sed 's/^/        /' || true
+    echo "        --- pasta.log tail:"
+    tail -8 "$REPO/instances/$NAME_D$s/pasta.log" 2>/dev/null | sed 's/^/        /' || true
+}
+
 # wait_for_log <file> <pattern> [tries] — host-side poll (pasta pattern)
 wait_for_log() {
     local f="$1" pat="$2" tries="${3:-30}"
@@ -226,25 +236,31 @@ run_case DB6 "control: WITHOUT pasta, apt update unreachable" pass db6_test
 # DB7 — with pasta: apt update + install tree, signature-verified (PT4 pattern)
 db7_test() {
     [[ -c /dev/net/tun ]] || return 125
-    # payload: wait for tap (via /sys probe — debian has no busybox ifconfig;
-    # sysfs is visible in the sandbox since NET10 asserts route through the
-    # shim's /proc — fallback: just retry apt, a pre-tap failure is harmless),
-    # 2-step anti-vacuous (dpkg -s tree FAILS first — #80 class), then
-    # retry apt-get update, install --no-install-recommends tree, marker only
-    # when dpkg agrees. Signature verification is mandatory in apt (gpgv) —
-    # no --allow-untrusted equivalent exists.
+    # pasta must be BUILT BEFORE the measured window (CI lesson 2026-11-20:
+    # the first build — download + make static — ran inside DB7's 90 s wait
+    # and starved the apt attempts; the pasta suite builds it at PT1, but the
+    # debian suite runs BEFORE the pasta suite in run-suites order)
+    bash "$REPO/tools/fetch-pasta.sh" >/dev/null 2>&1 || return 125
+    # payload: wait for DNS readiness via glibc getent (the slim rootfs ships
+    # resolv.conf 1.1.1.1 — unreachable pre-attach; glibc DNS timeouts would
+    # eat the first apt attempts — measured on CI), 2-step anti-vacuous
+    # (dpkg -s tree FAILS first — #80 class), then RETRIES apt update, install
+    # --no-install-recommends tree, marker ONLY when dpkg agrees. Signature
+    # verification is mandatory in apt (gpgv) — no --allow-untrusted exists.
     up "$NAME_D-apt" --pasta --rootfs "$DROOTFS" -- /bin/sh -c \
-        'i=0; while [ $i -lt 100 ]; do [ -e /sys/class/net/tap0 ] && break; sleep 0.1; i=$((i+1)); done; if /usr/bin/dpkg -s tree >/dev/null 2>&1; then echo APT_VACUOUS; exit 1; fi; j=0; while [ $j -lt 20 ]; do timeout 30 apt-get update >/dev/null 2>&1 && break; sleep 1; j=$((j+1)); done; timeout 180 apt-get install -y --no-install-recommends tree >/dev/null 2>&1 && /usr/bin/dpkg -s tree >/dev/null 2>&1 && echo APT_ONLINE_OK' \
+        'i=0; while [ $i -lt 240 ]; do getent hosts deb.debian.org >/dev/null 2>&1 && { echo DNS_READY; break; }; sleep 0.25; i=$((i+1)); done; if /usr/bin/dpkg -s tree >/dev/null 2>&1; then echo APT_VACUOUS; exit 1; fi; j=0; while [ $j -lt 15 ]; do timeout 30 apt-get update >/dev/null 2>&1 && { echo APT_UP_OK; break; }; sleep 1; j=$((j+1)); done; timeout 240 apt-get install -y --no-install-recommends tree >/dev/null 2>&1 && /usr/bin/dpkg -s tree >/dev/null 2>&1 && echo APT_ONLINE_OK' \
         >/dev/null 2>&1
     local rc_up=$? log="$REPO/instances/$NAME_D-apt/log"
-    local ok=0 ok_db=0 ok_bin=0
-    wait_for_log "$log" "APT_ONLINE_OK" 900 && ok=1
+    local ok=0 ok_dns=0 ok_db=0 ok_bin=0
+    wait_for_log "$log" "APT_ONLINE_OK" 2400 && ok=1
+    grep -q DNS_READY "$log" 2>/dev/null && ok_dns=1
     # host-side STATE asserts BEFORE down (down deletes the instance dir)
     grep -q "^Package: tree$" \
         "$REPO/instances/$NAME_D-apt/rootfs/var/lib/dpkg/status" 2>/dev/null && ok_db=1
     [[ -x "$REPO/instances/$NAME_D-apt/rootfs/usr/bin/tree" ]] && ok_bin=1
+    if [[ $ok -eq 0 || $ok_db -eq 0 || $ok_bin -eq 0 ]]; then dump_logs "-apt"; fi
     down "$NAME_D-apt"
-    [[ $rc_up -eq 0 && $ok -eq 1 && $ok_db -eq 1 && $ok_bin -eq 1 ]]
+    [[ $rc_up -eq 0 && $ok -eq 1 && $ok_dns -eq 1 && $ok_db -eq 1 && $ok_bin -eq 1 ]]
 }
 run_case DB7 "with pasta: apt update+install tree ONLINE — #88" skip db7_test
 
@@ -261,7 +277,13 @@ db8_test() {
     local after
     after="$(rootfs_manifest "$DROOTFS")"
     if [[ "$after" != "$MANIFEST_BEFORE" ]]; then
-        echo "       (content manifest of shared rootfs-debian changed in suite run)"; bad=1
+        echo "       (content manifest of shared rootfs-debian changed in suite run)"
+        # diagnostics: NAME the differing files (SIA class — a bare mismatch
+        # is not debuggable; CI 2026-11-20 run #1 hit this with no diff shown)
+        rootfs_manifest "$DROOTFS" > /tmp/db8-after.txt 2>/dev/null || true
+        rootfs_manifest "$DROOTFS" > /tmp/db8-after2.txt 2>/dev/null || true
+        diff <(printf '%s\n' "$MANIFEST_BEFORE" | sort) <(sort /tmp/db8-after.txt) | head -12 | sed 's/^/        /'
+        bad=1
     fi
     return $bad
 }
