@@ -231,19 +231,19 @@ cgmem() {
     [[ "$(cat "$dir/memory.max" | tr -d '[:space:]')" == "67108864" ]] || { echo "cgmem: memory.max=$(cat "$dir/memory.max")"; return 1; }
     # shim pid really migrated (anti-vacuous). NOTE: kernfs files always
     # stat size=0 — -s would be a vacuous FAIL; read content instead.
-    local procs
-    procs="$(cat "$dir/cgroup.procs" 2>/dev/null | tr -d '[:space:]')"
-    [[ -n "$procs" ]] || { echo "cgmem: cgroup.procs empty (launcher migration failed?)"; cg_diag cgmem; return 1; }
-    local pid
-    pid="$(echo "$procs" | head -1)"
-    [[ -n "$pid" && -d "/proc/$pid" ]] || { echo "cgmem: procs=[$procs] pid=$pid dead"; cg_diag cgmem; return 1; }
+    local procs pid
+    procs="$(cat "$dir/cgroup.procs" 2>/dev/null)"
+    pid="$(echo "$procs" | head -1 | tr -d '[:space:]')"
+    [[ -n "$pid" && "$pid" =~ ^[0-9]+$ && -d "/proc/$pid" ]] || {
+        echo "cgmem: procs=[$(echo "$procs" | tr '\n' ' ')] pid=[$pid] (launcher migration failed?)"; cg_diag cgmem; return 1
+    }
 }
 run_case CG-MEM "memory.max file == 67108864 + shim pid inside" pass cgmem
 
 # CG2: kernel OOM — payload allocates 96m > 64m cap; daemon (reconcile 1s)
 # must heal the dead payload to stopped.
 cgoom() {
-    api POST /v1/run '{"name":"cg-oom","image":"base","memory":"64m","cmd":["/bin/sh","-c","a=$(dd if=/dev/zero bs=1M count=96 2>/dev/null); echo alloc-done"]}' >/dev/null || return 1
+    api POST /v1/run '{"name":"cg-oom","image":"base","memory":"64m","cmd":["/bin/sh","-c","a=$(dd if=/dev/zero bs=1024k count=96 2>/dev/null); echo alloc-done"]}' >/dev/null || return 1
     local i state
     for i in $(seq 1 20); do
         sleep 1
@@ -268,6 +268,12 @@ run_case CG-OOM "kernel OOM kills 96m alloc under 64m cap -> exited" pass cgoom
 # marker written by the PAYLOAD inside the cgroup, read via exec).
 cgpids() {
     api POST /v1/run '{"name":"cg-pids","image":"base","pids_limit":16,"cmd":["/bin/sh","-c","n=0; for i in $(seq 1 64); do if sleep 300 & then n=$((n+1)); fi; done; echo FORKED=$n > /tmp/forkcount; wait"]}' >/dev/null || return 1
+    sleep 0.5
+    api GET /v1/sandboxes/cg-pids >/dev/null && [[ "$(jget 'd["State"]["Status"]')" == running ]] || {
+        echo "cgpids: instance not running right after Run"; cg_diag cgpids
+        api GET "/v1/sandboxes/cg-pids/logs" >/dev/null 2>&1 && echo "cgpids: instance log: $(head -c 500 "$WORK/resp")"
+        return 1
+    }
     # poll for the marker: the payload writes it only after the loop ends
     local i forked=""
     for i in $(seq 1 16); do
@@ -277,7 +283,12 @@ cgpids() {
             [[ -n "$forked" ]] && break
         fi
     done
-    [[ -n "$forked" ]] || { echo "cgpids: forkcount marker never appeared (last resp: $(head -c 200 "$WORK/resp" 2>/dev/null))"; cg_diag cgpids; return 1; }
+    [[ -n "$forked" ]] || {
+        echo "cgpids: forkcount marker never appeared (last resp: $(head -c 200 "$WORK/resp" 2>/dev/null))"
+        api GET "/v1/sandboxes/cg-pids/logs" >/dev/null 2>&1 && echo "cgpids: instance log: $(head -c 500 "$WORK/resp")"
+        cg_diag cgpids
+        return 1
+    }
     [[ "$forked" -lt 64 ]] || { echo "cgpids: FORKED=$forked — enforcement vacuous"; cg_diag cgpids; return 1; }
     # teeth: pids.max file really says 16
     [[ "$(cat "$CGROOT/minictd-apps/sandbox-cg-pids/pids.max" | tr -d '[:space:]')" == "16" ]] || { echo "cgpids: pids.max=$(cat "$CGROOT/minictd-apps/sandbox-cg-pids/pids.max" 2>&1)"; return 1; }
