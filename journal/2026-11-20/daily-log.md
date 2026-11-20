@@ -444,3 +444,150 @@ failed (dev 124 PASS + 7 SKIP; minictd 23/23 lần đầu local + runner; host
 unchanged), main xanh `7803730`, remote chỉ `main`. Bug mới ghi nhận + fix:
 daemon-leak SIGPIPE-before-EXIT-trap (catch-all cleanup) + Makefile tabs
 lesson lặp lại.
+
+## Phiên 13 — Orchestrator (2026-11-20, ZAI — tiếp tục theo chỉ thị owner "pull PROMPT làm tiếp, khi tới GD3 phải dừng nhắc")
+
+### Pha A — Sync + SBG plan
+- Sync main `d3b0605`; issues mở 14 → sau triage giữ nguyên tập; **PR mở 0**; CI main
+  success; remote chỉ `main`. Host baseline đầu phiên 3/3 khớp Phiên 12 → UNCHANGED.
+- SBG MODE=plan (`branch/plan.md` mục Phiên 13): remote chỉ `main`; 2 nhánh local
+  thừa (ledger-12, feat/91) = DELETE_MERGED (headRefOid khớp PR #92/#94 MERGED) —
+  xoá ở Pha E. 0 điều kiện dừng §0.6.
+- Env: `gh` 2.63.2 cài binary + PAT auth (khác Phiên 11: REST-only); kernel 5.10.134
+  (cgroups **v1** dev); Go 1.27.4; PID1=tini (không systemd user manager).
+
+### Pha B/C (lượt 1) — không có PR nào đang mở (bỏ qua).
+
+### Pha D — Issue #4 — CG1/S2 cgroups v2 resource enforcement (D48, GĐ2 mục 5)
+
+#### Triage + chọn việc
+- §8: không security p0/p1 / web p1 / netns p1 / perf breach → mục thấp nhất chưa
+  xong của GĐ2 = CG1 (S2 — gap số 1 theo GAPS "ordered by integration risk",
+  issue #4 p2 feature). Triage: assign + `status:in-progress` + comment thiết kế.
+- **GD3 WATCH**: GĐ2 còn nhiều mục (systemd-real env-gated, CG1→làm hôm nay,
+  G3 Traefik, A2 test, template mục 2, storage mục 3, port-forward mục 4,
+  Landlock mục 6, đo mục 7, S3–S6) → **GD3 CHƯA tới** — đúng chỉ thị owner
+  "khi tới GD3 phải dừng nhắc": không có việc nào của phiên này đưa roadmap
+  qua GD3; nhắc owner trạng thái ở báo cáo §9.
+
+#### Research (journal/2026-11-20/research.md Phiên 13 — 3 nguồn verified 200)
+- systemd.io/CGROUP_DELEGATION: delegation chỉ EXPOSE controllers; delegatee
+  tự enable qua cgroup.subtree_control; islands model + no-processes-in-inner-nodes.
+- podman rootless.md: rootless resource limits CHỈ có trên cgroups v2.
+- kernel cgroup-v2.rst: no-internal-process constraint + delegation containment
+  (common-ancestor write access) — căn cứ launcher migrate-before-exec.
+
+#### Development (nhánh `feat/4-cgroups-v2`, 12 commits, merge #95 `a9e1898`)
+- `minictd/internal/minict/cgroup.go` (mới): cgResolveBase (override
+  `--cgroup-root`/$MINICTD_CGROUP_ROOT phải chứa cgroup v2 + daemon phải nằm
+  TRONG base — containment) > /proc/self/cgroup `0::`; manager cache once;
+  ensureApps (self-park `minictd-daemon/` + enable 2 CẤP `+memory +cpu +pids`
+  trên base VÀ apps subtree_control — memory.max chỉ xuất hiện ở con khi parent
+  enabled — đo được CI vòng 4); cgPrepareInto (mkdir + limits TRƯỚC spawn);
+  cleanup Stop/Remove.
+- **migrate-before-exec launcher** (SIA-informed): sh launcher tự migrate
+  `$$` vào instance cgroup rồi `exec minict` — payload SINH TRONG cgroup
+  (post-spawn migration thua fork của minict — đo được CI run
+  #44702053556/#44703016076: limits apply cho cgroup rỗng, OOM không xảy ra).
+- Map: Memory→memory.max · CPUs→cpu.max (period 100000) · CPUShares→cpu.weight
+  (tuyến tính 1024→100, D48) · PidsLimit→pids.max; **rlimit nproc per-uid
+  DROP khi cgAvail** (S2 measured: runner nproc=16 giết shim — instance log
+  "can't fork" — chính là gap S2); rlimit giữ khi không-enforce.
+- Stats: cgroup reads ưu tiên (memory.current/pids.current/cpu.stat 250ms
+  window), fallback /proc; MemLimitBytes đọc memory.max thật; `CgroupPath`
+  persist trong state.json (cleanup qua Stop/Remove).
+- **alive() heal KHÔNG rmdir cgroup** (SIA medium → RE-ASSESSED trên evidence
+  run 44711850479: heal-time rmdir XÓA post-mortem counters trước khi đọc —
+  docker-parity giữ cgroup exited tới Remove; dir rỗng 0 process).
+- renderSpec(spec, ports, cgAvail): notes posture thật (enforced vs fallback).
+- Suite `tests/test_cg.sh` CG-BOOT/CG-MEM/CG-OOM/CG-PIDS/CG-STATS/CG-RM vào
+  `make test` (9→10 suites); self-build binary Go khi thiếu (CI chạy make test
+  trước step minictd); asserts kernfs-aware (**cgroupfs files stat size=0
+  luôn — `-s` fail ảo; cat-content thay thế**) + teeth kernel-recorded:
+  CG-OOM peak==max + max-hits (tmpfs shmem charge-fail INLINE — ENOMEM, KHÔNG
+  oom_kill — kernel truth đo được); CG-PIDS pids.peak≤cap + shell-death
+  (busybox ash exit ngay khi fork bị chặn — instance log trích).
+- Docs: GAPS S2 FIXED, README minictd section cgroups, roadmap mục 5 GĐ2 +
+  "Đã xong" Phiên 13 + số suite 129 case.
+
+#### CI lessons (11 run đỏ → root-cause đủ, không guess — minh bạch theo §6)
+1. Run 1: test_cg.sh thiếu binary Go (CI make test chạy trước make minictd) → self-build.
+2. Run 2: CG-BOOT assert notes instance chưa tồn tại (ordering) → split asserts.
+3. Run 3: python multi-line `-c` fragile → single-line; bootstrap subshell mất
+   CGROOT (biến subshell) → bỏ subshell; **nproc=16 per-uid giết shim trên
+   runner** → rlimit nproc drop khi cgAvail (S2 evidence).
+4. Run 4: controllers phải enable 2 cấp (base + apps) — memory.max chỉ xuất
+   hiện ở con khi parent subtree_control enabled (kernel doc + đo được).
+5. Run 5-6: post-spawn migration race → launcher migrate-before-exec;
+   kernfs `-s` luôn FAIL (size=0) → cat-based asserts; OOM teeth sai cơ chế
+   (shmem charge-fail ≠ oom_kill) → peak==max + max-hits.
+6. Run 7-8: cgmem pid-parse tr -d dính pids; busybox `dd bs=1M` không đáng tin
+   trên runner → bs=1024k; cg-pids assert running-at-0.5s sai thời điểm
+   (shell chết ~50ms khi fork bị chặn là hành vi ĐÚNG) → poll exited + peak teeth.
+7. SIA delta (store.go alive()): medium fix 4406c25 → RE-ASSESSED revert 3ac46bc
+   (post-mortem counters) — 2 vòng SIA minh bạch trong comment.
+
+#### Mutants (negative controls)
+- 9 mutants caught tổng: M0 (24 FAIL), M2 (CAPD1+SETUID2 — SCR clean-room),
+  M-CG-1 (skip controller enable), M-CG-2 (skip memory.max), M-CG-4 (limits
+  empty), M-CG-5 (cleanup no-op) — go unit fake FS ×2 (dev + clean-room);
+  M-CG-3 (launcher skip pid write) unit-immune — phủ bởi CG-MEM trên runner
+  (PASS thật); M-CG-4b/M-CG-2b bằng SCR delta. 0 vacuous.
+
+#### CVE Check
+- `cve/cgroups-v2.md|.json`: cve-check rc=0 (19 rows; NVD transient timeout
+  CVE-2024-21626 — not-scored, minh bạch); **cve-gate rc=0 → 0 CVE mới ngoài
+  watchlist**. Watchlist không thêm dòng (không component mới trong rootfs).
+- Bổ sung: commit kèm 2 file cve/daemon-service.{md,json} còn untracked từ
+  Phiên 12 (bổ sung minh bạch trong PR #95).
+
+#### Validation "không bị nhiễm"
+- `make test` ×3 (dev working tree + SCR clean-room ×2 @ 3e5613d + delta
+  @ 3ac46bc): **10 suites, failed: none** — dev 124 PASS + 13 SKIP env-gated
+  (127 case); `make test-web` 9/9 ×4; `make test-minictd` 23/23 ×3 + go test ok.
+- **CI runner @ 3ac46bc (run #44712685802)**: build-test + perf-guard +
+  unicode-guard success — **127/127 thật trên runner** (CG 6/6 thật v2 —
+  bootstrap sudo + migrate-before-exec + peak-based teeth đều PASS thật);
+  main sau merge @ a9e1898 xanh.
+- Host baseline: 3/3 sha256 khớp Phiên 12 (unchanged); listeners nền đã biết;
+  0 process minict/busybox còn sống sau suite (pgrep self-match loại trừ);
+  bằng chứng `evidence/cgroups-v2.txt`.
+- Perf: perf-guard **2.15 ms / 1128 kB / 2.04 MB** PASS (gate không đổi);
+  SCR bench độc lập 2.01/1244/2.04 — lệch < 2× (nhiễu runner).
+
+#### PR + Pha B (lại)
+- **#95** draft tạo @ 08fab27. Pha B vòng 1-8: CI đỏ ×9 với root-cause đo được
+  mỗi vòng (minh bạch trong commit messages + comment suite) → CI xanh @
+  3e5613d → SCR clean-room ×2 (mutants ×7 caught) → **SIA CONCERNS** (1 medium:
+  heal path không reclaim cgroup) → fix(review) `4406c25` → CI đỏ (heal-cleanup
+  phá post-mortem reads) → **SIA RE-ASSESSED** → revert `3ac46bc` kèm rationale
+  → CI xanh @ 3ac46bc → SCR delta PASS (store.go comment-only + behavior
+  identical) → **SIA delta PASS** (`audit:pass` label, 3 low chấp nhận có lý
+  do). Số vòng Pha B: CI-fix 8 vòng + SIA 2 vòng — ghi minh bạch; mỗi vòng đều
+  root-cause đo được, không guess, không xoá/skip test.
+
+#### Pha C + E — SBG apply
+- PR #95 flip ready (GraphQL markPullRequestReadyForReview — REST PATCH draft
+  read-only) @ CI xanh + audit pass → **squash `a9e1898`** match-head-commit
+  `3ac46bc` (full-SHA) → #4 auto-CLOSED → nhánh DELETE_MERGED (local + remote
+  tự xoá) → local dọn ledger-12 + feat/91 → remote chỉ `main`.
+- Ledger: dòng Phiên 13 appended qua PR ledger này. G1–G8 PASS đủ cổng.
+
+### Kế hoạch kế tiếp
+- **GĐ2 tiếp**: G3 Traefik preview + wake probe (mục 4), A2 `oci:` test
+  (đã code chưa test), systemd unit chạy THẬT dưới user manager (env-gated —
+  cần host có systemd thật), template (mục 2), storage overlayfs + snapshot
+  (mục 3), Landlock (mục 6), đo control plane ≤ 30MB RSS (mục 7), S3–S6.
+- #26/#27 docs p1; #75 port-collision web suite; from-audit #93/#77/#62/#61.
+- **GD3 (Web UI + console) CHƯA chạm** — per chỉ thị owner: khi mọi mục GĐ2
+  trước GD3 hoàn thành và GD3 sẵn sàng mở code → **DỪNG + nhắc owner trước
+  khi viết dòng code UI đầu tiên** (ghi rõ trong roadmap mục GD3). Trạng thái
+  GĐ2 hiện tại: mục 1 (daemon) còn systemd-real env-gated + G3 + A2-test +
+  S3–S6; mục 2–7 chưa mở — còn tối thiểu nhiều phiên nữa mới tới điều kiện
+  mở GD3.
+
+DAY PASS — 2026-11-20 Phiên 13: issue #4 done (merge #95 `a9e1898` @ 3ac46bc;
+SCR clean-room ×2 + delta; mutants ×9 caught; SIA CONCERNS → RE-ASSESSED →
+PASS; CI-fix 8 vòng root-cause đủ — minh bạch), CVE gate rc=0 0 mới, suite
+10 suites none failed (dev 124 PASS + 13 SKIP; runner 127/127 thật — CG 6/6
+v2 thật lần đầu), host unchanged, main xanh `a9e1898`, remote chỉ `main`.
