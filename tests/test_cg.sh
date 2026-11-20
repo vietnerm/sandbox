@@ -188,15 +188,12 @@ done
 sudo sh -c "echo $DPID > '$CGROOT/cgroup.procs'" || true
 
 cgboot() {
-    api GET /v1/sandboxes/cg-a/state >/dev/null || return 1
-    python3 -I -c "
-import json,sys
-d=json.load(open(sys.argv[1]))
-notes=' '.join(d.get('notes') or [])
-sys.exit(0 if 'cgroups v2 enforced' in notes else 1)" "$WORK/resp" || return 1
-    [[ -d "$CGROOT/minictd-apps" && -d "$CGROOT/minictd-daemon" ]] || return 1
+    # Infra-only asserts here: the enforcement-note assert lives in cgmem
+    # because instance cg-a is created there (ordering bug caught by CI
+    # round 2 — this case ran before the first Run).
+    [[ -d "$CGROOT/minictd-apps" && -d "$CGROOT/minictd-daemon" ]] || { echo "cgboot: apps/daemon dir missing: $(ls "$CGROOT" 2>&1)"; return 1; }
     # controllers enabled on the base
-    grep -q '+memory' "$CGROOT/cgroup.subtree_control" || return 1
+    grep -q '+memory' "$CGROOT/cgroup.subtree_control" || { echo "cgboot: subtree_control=$(cat "$CGROOT/cgroup.subtree_control" 2>&1)"; return 1; }
 }
 run_case CG-BOOT "bootstrap + probe: enforced + apps/daemon dirs" pass cgboot
 
@@ -205,14 +202,26 @@ cgmem() {
     api POST /v1/run '{"name":"cg-a","image":"base","memory":"64m","cmd":["/bin/sh","-c","sleep 600"]}' >/dev/null || return 1
     sleep 0.5
     api GET /v1/sandboxes/cg-a >/dev/null && [[ "$(jget 'd["State"]["Status"]')" == running ]] || return 1
+    # the enforcement note records the true posture (moved from CG-BOOT)
+    api GET /v1/sandboxes/cg-a/state >/dev/null || return 1
+    python3 -I -c "
+import json,sys
+d=json.load(open(sys.argv[1]))
+notes=' '.join(d.get('notes') or [])
+sys.exit(0 if 'cgroups v2 enforced' in notes else 1)" "$WORK/resp" || { echo "cgmem: notes missing enforced claim: $(python3 -I -c "import json;print(' | '.join(json.load(open(sys.argv[1])).get('notes') or []))" "$WORK/resp")"; return 1; }
     local dir="$CGROOT/minictd-apps/sandbox-cg-a"
-    [[ -f "$dir/memory.max" ]] || return 1
-    [[ "$(cat "$dir/memory.max" | tr -d '[:space:]')" == "67108864" ]] || return 1
+    local i
+    for i in $(seq 1 10); do
+        [[ -f "$dir/memory.max" ]] && break
+        sleep 0.3
+    done
+    [[ -f "$dir/memory.max" ]] || { echo "cgmem: memory.max missing in $dir: $(ls "$CGROOT/minictd-apps" 2>&1)"; return 1; }
+    [[ "$(cat "$dir/memory.max" | tr -d '[:space:]')" == "67108864" ]] || { echo "cgmem: memory.max=$(cat "$dir/memory.max")"; return 1; }
     # shim pid really migrated (anti-vacuous)
-    [[ -s "$dir/cgroup.procs" ]] || return 1
+    [[ -s "$dir/cgroup.procs" ]] || { echo "cgmem: cgroup.procs empty"; return 1; }
     local pid
     pid=$(cat "$dir/cgroup.procs" | head -1 | tr -d '[:space:]')
-    [[ -n "$pid" && -d "/proc/$pid" ]] || return 1
+    [[ -n "$pid" && -d "/proc/$pid" ]] || { echo "cgmem: procs=[$(cat "$dir/cgroup.procs" | tr '\n' ' ')] pid=$pid dead"; return 1; }
 }
 run_case CG-MEM "memory.max file == 67108864 + shim pid inside" pass cgmem
 
@@ -237,13 +246,19 @@ run_case CG-OOM "kernel OOM kills 96m alloc under 64m cap -> exited" pass cgoom
 # marker written by the PAYLOAD inside the cgroup, read via exec).
 cgpids() {
     api POST /v1/run '{"name":"cg-pids","image":"base","pids_limit":16,"cmd":["/bin/sh","-c","n=0; for i in $(seq 1 64); do if sleep 300 & then n=$((n+1)); fi; done; echo FORKED=$n > /tmp/forkcount; wait"]}' >/dev/null || return 1
-    sleep 1
-    xv2 cg-pids '{"cmd":["/bin/cat","/tmp/forkcount"],"timeout_s":8}' || return 1
-    local forked
-    forked="$(jget 'd["stdout"].strip().split("=")[-1]')"
-    [[ -n "$forked" && "$forked" -lt 64 ]] || return 1
+    # poll for the marker: the payload writes it only after the loop ends
+    local i forked=""
+    for i in $(seq 1 16); do
+        sleep 0.5
+        if xv2 cg-pids '{"cmd":["/bin/cat","/tmp/forkcount"],"timeout_s":8}' 2>/dev/null; then
+            forked="$(jget 'd["stdout"].strip().split("=")[-1]' 2>/dev/null || true)"
+            [[ -n "$forked" ]] && break
+        fi
+    done
+    [[ -n "$forked" ]] || { echo "cgpids: forkcount marker never appeared"; return 1; }
+    [[ "$forked" -lt 64 ]] || { echo "cgpids: FORKED=$forked — enforcement vacuous"; return 1; }
     # teeth: pids.max file really says 16
-    [[ "$(cat "$CGROOT/minictd-apps/sandbox-cg-pids/pids.max" | tr -d '[:space:]')" == "16" ]] || return 1
+    [[ "$(cat "$CGROOT/minictd-apps/sandbox-cg-pids/pids.max" | tr -d '[:space:]')" == "16" ]] || { echo "cgpids: pids.max=$(cat "$CGROOT/minictd-apps/sandbox-cg-pids/pids.max" 2>&1)"; return 1; }
     api POST /v1/sandboxes/cg-pids/remove >/dev/null
 }
 run_case CG-PIDS "pids.max=16 blocks the 64-fork burst" pass cgpids
