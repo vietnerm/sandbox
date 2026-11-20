@@ -74,10 +74,12 @@ images churn.
 ### A3 — state & telemetry
 
 minictd state machine (creating/running/stopped, self-heal on payload
-death, pid-reuse-safe liveness) is in. Not yet built: periodic full
-reconcile loop (compare state dir vs /proc every N seconds — cheap, do it
-in the daemon when the control plane asks for fleet-scale), and the
-fleet-agent heartbeat (P4).
+death, pid-reuse-safe liveness) is in. **2026-11-20 (#91, D47): the periodic
+full reconcile loop IS BUILT now** — `--reconcile-interval N` runs a
+heal-only `Store.ReconcileAll()` ticker (compare state dir vs /proc; heal
+to stopped; never spawns — Start/autostart stay explicit daemon decisions),
+plus `--autostart` wake-recreate from spec.json for state=running instances
+at boot (MD21). Still not built: the fleet-agent heartbeat (P4).
 
 ## Explicit non-goals carried over from minict (unchanged)
 

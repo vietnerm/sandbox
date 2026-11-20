@@ -62,7 +62,7 @@ test-debian: build rootfs-debian
 test-web: build rootfs
 	bash tests/test_web.sh
 
-# minictd: go unit tests (issue #50 regression) + e2e (20 cases): real daemon -> patched minict -> minict-exec
+# minictd: go unit tests (issue #50 regression + #91 reconcile) + e2e (23 cases): real daemon -> patched minict -> minict-exec
 test-minictd: build rootfs minictd
 	cd minictd && $(or $(GO),go) test -count=1 ./...
 	bash tests/test_minictd.sh
@@ -104,7 +104,7 @@ help:
 	@echo "make test-escape-alpine - isolation suite re-run on alpine rootfs (29 cases)"
 	@echo "make test-web     - web service suite (6 cases)"
 	@echo "make minictd      - build minictd daemon + minict-exec (needs Go >= 1.23)"
-	@echo "make test-minictd - minictd e2e suite (19 cases)"
+	@echo "make test-minictd - minictd e2e suite (23 cases MD0-MD22)"
 	@echo "make test-seccomp - seccomp blocklist suite (20 cases)"
 	@echo "make test-netns   - netns isolation suite (7 cases)"
 	@echo "make test-alpine  - alpine rootfs suite (8 cases)"

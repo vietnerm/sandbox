@@ -1,0 +1,40 @@
+=== evidence — issue #91 daemon service (feat/91-daemon-service) ===
+date: 2026-11-20 (Phiên 12) — host: kernel 5.10.134 (container, uid 1001), Go 1.27.4 (~/.local/go, sha256-verified tarball)
+
+--- suite trên HEAD (make test-minictd, dev) ---
+go test ./...: ok (internal/minict reconcile tests + internal/server)
+MD0–MD22: PASS=23 SKIP=0 FAIL=0 (đo 3 lần: HEAD, post-mutant-revert, post-cleanup-fix)
+
+--- mutants (negative controls, mỗi mutant bị đúng test mới bắt) ---
+M-CLI-1      CLI exec nuốt stdout           → MD20 FAIL (CAUGHT), revert
+M-AUTO-1     daemon bỏ --autostart          → MD21 FAIL (CAUGHT), revert
+M-RECONCILE-1 ReconcileAll return nil, nil  → go test FAIL (CAUGHT), revert
+             (attempt 1 compile-fail = mutant không sạch, làm lại early-return)
+M-DEPLOY-1   install.sh render bỏ BINDIR    → MD22 FAIL (CAUGHT), revert
+Sau revert: 23/23 PASS lại.
+
+--- make test (9 suites, dev) ---
+isolation 31 PASS · seccomp 21 · netns 7 · alpine 9 · debian 8P/1S(DB7 tun-gated)
+· escape-alpine 31 · cve-check 4 · pasta 5P/6S(tun-gated) · stack 8
+=> run-suites: 9 suites, failed: none (124 PASS + 7 SKIP env-blocked — khớp Phiên 11)
+make test-web: 9/9 PASS
+
+--- perf (perf-guard gate) ---
+cold_start_ms 2.00 (≤100) · rss_kb 1188 (≤10240) · disk_base_mb 2.04 (≤20) → PASS
+(minictd CLI/unit không đụng cold path của minict runtime — gate busybox không đổi)
+
+--- CVE ---
+cve-check rc=0 (19 hàng NVD live), cve-gate rc=0 → 0 CVE mới ngoài watchlist
+journal/2026-11-20/cve/daemon-service.md|.json
+
+--- host integrity ---
+sha256 /etc/passwd 21d5de2d… /bin/bash 223fe856… /usr/bin/sudo a59f393b… —
+3/3 KHỚP journal 2026-11-19 → UNCHANGED
+
+--- bug đo được trong phiên (fix ngay trên nhánh) ---
+Leak daemon2: runner pipe (grep/tail) thoát sớm → SIGPIPE → bash EXIT trap
+KHÔNG chạy → daemon --autostart (MD21) sống sót sau run. 6 daemon sót đo được
+(ps aux) từ 6 lần chạy suite trước fix. Fix: cleanup catch-all
+`pkill -TERM/-KILL -f -- "$STATE"` (state dir là mktemp -d unique per run —
+không đụng process của run khác). Post-fix: 0 process sót (pgrep) sau suite
+PASS. Root cause ghi D47 residual.

@@ -27,6 +27,14 @@
 #   MD17  bind target symlink planted in rootfs -> Start refuses, host untouched
 #   MD18  exec on stopped -> 409, unknown instance -> 404
 #   MD19  Remove -> dir gone, no instance processes left
+#   MD20  CLI sandbox round-trip: list/up/inspect/exec/stop/rm via the CLI
+#         binary over the same API (issue #91, D47)
+#   MD21  --autostart: daemon killed -> payload killed (reboot semantics,
+#         state.json still running) -> fresh daemon --autostart heals +
+#         wake-recreates from spec.json, NEW pid, rootfs changes kept
+#         (issue #91, D47)
+#   MD22  deploy: install.sh renders the --user unit; systemd-analyze
+#         verify passes (SKIP without systemd-analyze)
 #
 # Exit code: 0 if all expected results hold, 1 otherwise.
 set -u
@@ -36,8 +44,9 @@ REPO="$(cd "$HERE/.." && pwd)"
 MINICT="$REPO/sandbox/minict"
 MINICTD="$REPO/minictd/bin/minictd"
 MEXEC="$REPO/minictd/bin/minict-exec"
+SANDBOX="$REPO/minictd/bin/sandbox"
 
-for b in "$MINICT" "$MINICTD" "$MEXEC"; do
+for b in "$MINICT" "$MINICTD" "$MEXEC" "$SANDBOX"; do
     [[ -x "$b" ]] || { echo "missing $b — run: make build minictd"; exit 1; }
 done
 [[ -d "$REPO/rootfs" ]] || bash "$REPO/sandbox/mkrootfs.sh" "$REPO/rootfs" >/dev/null
@@ -50,31 +59,42 @@ WEB_PORT=$(( 19000 + RANDOM % 900 ))
 API="http://127.0.0.1:$API_PORT"
 DPID=""
 
-PASS=0; FAIL=0
-run_case() { # <id> <desc> <expect: pass|fail> <cmd...>
+PASS=0; FAIL=0; SKIPPED=0
+run_case() { # <id> <desc> <expect: pass|fail|skip> <cmd...>
     local id="$1" desc="$2" expect="$3"; shift 3
     local out rc verdict
     out="$("$@" 2>&1)"; rc=$?
     case "$expect" in
         pass) [[ $rc -eq 0 ]] && verdict=PASS || verdict=FAIL ;;
         fail) [[ $rc -ne 0 ]] && verdict=PASS || verdict=FAIL ;;
+        skip) if [[ $rc -eq 125 ]]; then verdict=SKIP
+              elif [[ $rc -eq 0 ]]; then verdict=PASS
+              else verdict=FAIL; fi ;;
     esac
     printf '%-5s %-60s %s\n' "$id" "$desc" "$verdict"
-    if [[ "$verdict" == FAIL* ]]; then
-        echo "      output: $(echo "$out" | head -4 | tr '\n' ' ')"
-        FAIL=$((FAIL+1))
-    else
-        PASS=$((PASS+1))
-    fi
+    case "$verdict" in
+        FAIL*) echo "      output: $(echo "$out" | head -4 | tr '\n' ' ')"; FAIL=$((FAIL+1)) ;;
+        SKIP)  echo "      (env-blocked: see case)"; SKIPPED=$((SKIPPED+1)) ;;
+        *)     PASS=$((PASS+1)) ;;
+    esac
     return 0
 }
 
 cleanup() {
-    for n in md-a md-b; do
+    for n in md-a md-b md-c md-auto; do
         curl -s -m 5 -X POST -H "Authorization: Bearer $TOKEN" \
             "$API/v1/sandboxes/$n/remove" >/dev/null 2>&1 || true
     done
     [[ -n "$DPID" ]] && kill "$DPID" 2>/dev/null
+    # Catch-all (issue #91 dev session, measured leak): when this script's
+    # stdout is a short-lived pipe consumer (grep/tail) the shell can die
+    # by SIGPIPE BEFORE the EXIT trap runs — daemon2 (MD21) then outlives
+    # the run. Nothing may outlive this run's unique state dir: daemon(s),
+    # payload shims (cmdline carries $STATE/<name>/rootfs), webproxies
+    # (--sock under $STATE). pkill pattern is per-run unique (mktemp -d).
+    pkill -TERM -f -- "$STATE" 2>/dev/null || true
+    sleep 0.3
+    pkill -KILL -f -- "$STATE" 2>/dev/null || true
     wait 2>/dev/null
     rm -rf "$WORK"
 }
@@ -290,8 +310,81 @@ md19() {
 }
 run_case MD19 "Remove -> dir gone, no instance processes" pass md19
 
-echo "=== summary: PASS=$PASS FAIL=$FAIL ==="
+# ---------- CLI + autostart + deploy (issue #91, D47) ----------
+sb() { "$SANDBOX" --addr "$API" --token "$TOKEN" "$@"; }
+
+md20() {
+    sb list | grep -qv md-c || return 1            # starts empty-ish, md-c absent
+    sb up md-c base --cmd "/bin/sh,-c,echo cli-marker > /tmp/cli.txt; sleep 600" >/dev/null || return 1
+    sleep 0.5
+    sb list | grep -q md-c || return 1
+    sb inspect md-c | python3 -I -c \
+        "import json,sys; d=json.load(sys.stdin); assert d['State']['Status']=='running'" || return 1
+    sb exec md-c /bin/cat /tmp/cli.txt | grep -q cli-marker || return 1
+    sb stop md-c --sec 1 || return 1
+    sb inspect md-c | python3 -I -c \
+        "import json,sys; d=json.load(sys.stdin); assert d['State']['Status']=='exited'" || return 1
+    sb rm md-c || return 1
+}
+run_case MD20 "CLI sandbox round-trip: list/up/inspect/exec/stop/rm" pass md20
+
+md21() {
+    sb up md-auto base --cmd "/bin/sh,-c,echo auto-marker > /tmp/auto.txt; sleep 600" >/dev/null || return 1
+    sleep 0.5
+    local old new st
+    old=$(sb inspect md-auto | python3 -I -c "import json,sys; print(json.load(sys.stdin)['State']['Pid'])")
+    [[ -n "$old" ]] || return 1
+    # reboot semantics: daemon dies first (payload is Setsid -> survives),
+    # then the payload shim is killed — state.json still says running.
+    kill "$DPID"; wait "$DPID" 2>/dev/null; DPID=""
+    kill "$old" 2>/dev/null
+    sleep 0.6
+    pgrep -f "$STATE/md-auto" >/dev/null 2>&1 && return 1
+    # fresh daemon with --autostart (+ A3 reconcile ticker)
+    MINICTD_TOKEN="$TOKEN" "$MINICTD" \
+        --listen "127.0.0.1:$API_PORT" --state-dir "$STATE" \
+        --minict-bin "$MINICT" --minict-exec-bin "$MEXEC" \
+        --base-rootfs "$REPO/rootfs" --webproxy "$REPO/tools/webproxy.py" \
+        --autostart --reconcile-interval 5 \
+        > "$WORK/daemon2.log" 2>&1 &
+    DPID=$!
+    for _ in $(seq 1 50); do
+        curl -s -m 1 -H "Authorization: Bearer $TOKEN" "$API/healthz" >/dev/null 2>&1 && break
+        sleep 0.1
+    done
+    st=none
+    for _ in $(seq 1 15); do
+        st=$(sb inspect md-auto 2>/dev/null | python3 -I -c "import json,sys; print(json.load(sys.stdin)['State']['Status'])" 2>/dev/null || echo none)
+        [[ "$st" == running ]] && break
+        sleep 0.3
+    done
+    [[ "$st" == running ]] || return 1
+    new=$(sb inspect md-auto | python3 -I -c "import json,sys; print(json.load(sys.stdin)['State']['Pid'])")
+    [[ -n "$new" && "$new" != "$old" ]] || return 1
+    sb exec md-auto /bin/cat /tmp/auto.txt | grep -q auto-marker || return 1
+    sb rm md-auto >/dev/null || return 1
+}
+run_case MD21 "--autostart heals + wake-recreates running-after-reboot" pass md21
+
+md22() {
+    command -v systemd-analyze >/dev/null 2>&1 || return 125
+    mkdir -p "$WORK/home"
+    bash "$REPO/minictd/deploy/install.sh" --home "$WORK/home" --bindir bin \
+        > "$WORK/install.log" 2>&1 || return 1
+    [[ -f "$WORK/home/.config/systemd/user/minictd.service" ]] || return 1
+    [[ -x "$WORK/home/bin/minictd" ]] || return 1
+    grep -q "ExecStart=$WORK/home/bin/minictd" \
+        "$WORK/home/.config/systemd/user/minictd.service" || return 1
+    # placeholder leak check (fail-closed render)
+    if grep -q '@HOME@\|@BINDIR@' "$WORK/home/.config/systemd/user/minictd.service"; then return 1; fi
+    systemd-analyze verify "$WORK/home/.config/systemd/user/minictd.service" || return 1
+}
+run_case MD22 "deploy: install.sh renders --user unit, systemd-analyze verify" skip md22
+
+echo "=== summary: PASS=$PASS SKIP=$SKIPPED FAIL=$FAIL ==="
 if [[ $FAIL -ne 0 ]]; then
-    echo "--- daemon log (tail) ---"; tail -20 "$WORK/daemon.log"
+    echo "--- daemon log (tail) ---"; tail -20 "$WORK/daemon.log" 2>/dev/null
+    echo "--- daemon2 log (tail) ---"; tail -20 "$WORK/daemon2.log" 2>/dev/null
+    echo "--- install log (tail) ---"; tail -10 "$WORK/install.log" 2>/dev/null
 fi
 [[ $FAIL -eq 0 ]]

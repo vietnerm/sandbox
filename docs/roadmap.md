@@ -232,26 +232,30 @@
    (hiện nginx), API production-grade (thay CGI shell bằng runtime thật —
    GĐ2), SQLite WAL/concurrency tuning.
 
-## Giai đoạn 2 — Control plane + storage (KẾ TIẾP; có "seed" minictd, chưa mở việc mới)
+## Giai đoạn 2 — Control plane + storage (HIỆN TẠI từ 2026-11-20 phiên 12; GĐ1 đã đóng cả 5 mục nền phiên 11)
 
-> **Luật D27 (owner, 2026-11-18):** SDDA **không chọn** mục GĐ2 nào dưới đây khi GĐ1
-> còn mục mở. Với `minictd/` chỉ được: sửa lỗi bảo mật (S1–S6, issue `type:security`),
-> giữ `make test-minictd` xanh, và cập nhật khi thay đổi GĐ1 làm vỡ nó.
+> Luật D27 (owner, 2026-11-18) HẾT hiệu lực chặn cho GĐ2: GĐ1 đã đóng cả 5
+> mục nền (rootfs alpine+debian, escape sâu, pasta, web stack — xem "Đã xong").
 
 0. **GATE research:** exec vào instance đang chạy rootless — **đo được 2026-11-18**
-   (D25, `minict-exec` setns, MD5–MD13; container kernel 6.18). Còn: xác nhận trên
-   runner CI (job `test-minictd`).
+   (D25, `minict-exec` setns, MD5–MD13); xác nhận trên runner CI: **đạt** —
+   `test-minictd` 20/20 chạy đều mỗi PR từ run #206 (những run gần nhất giữ
+   20/20 + go test ok).
 1. Daemon user-level + REST API: **seed có** (`minictd`, state machine
-   creating/running/stopped, flock, liveness chống pid-reuse). Còn thiếu cho DoD:
-   systemd `--user` unit, CLI `sandbox`, instance tồn tại qua reboot (autostart),
-   reconcile loop định kỳ (A3). API hiện theo contract sandboxd (docker-shaped).
+   creating/running/stopped, flock, liveness chống pid-reuse). **Phiên 12
+   (#91, D47): CLI `sandbox` (contract.HTTPClient thin shell) + systemd
+   --user unit (deploy/install.sh render, systemd-analyze verify MD22) +
+   `--autostart` (reboot recovery, MD21) + A3 reconcile `--reconcile-interval`
+   (heal proactive, Go unit + e2e).** Suite MD0–MD22 (23 case).
+   Còn thiếu cho DoD mục 1:
+   - systemd unit chạy THẬT dưới user manager (lingering) — env-gated,
+     chỉ verify cú pháp được (MD22); cần host có systemd thật.
    - **CG1** quota qua cgroups v2 (Memory/CPUs/pids — hiện chỉ Notes + rlimit nproc
      theo uid, S2) → gộp với mục 5.
    - **G3** preview: Traefik file provider `s-<id>.<domain>` → `127.0.0.1:<port>` +
      wake probe theo port host (BridgeIP luôn rỗng) → gộp với mục 4.
    - **A2** image `oci:` (crane) đã code, **chưa test**.
-   - **S1** webproxy đi theo socket bị thay bằng symlink trong rootfs (có từ D16) —
-     sửa được ngay cả trong GĐ1 vì là bảo mật.
+   - **S2–S6** còn mở (S1 FIXED #41; A3 reconcile proactive đã có — heartbeat P4 mở).
 2. Template: instance từ template; lưu instance thành template.
 3. Storage: overlayfs rootless + idmapped mounts (thay private copy 2 MB/instance);
    snapshot/backup/restore (overlay layer + tar.zst).
@@ -260,7 +264,11 @@
 6. Landlock LSM cho fs-policing (kernel ≥ 5.13, runner đạt).
 7. Đo: control plane idle ≤ 30 MB RSS; destroy không rò rỉ process/mount/netns.
 
-## Giai đoạn 3 — Web UI + console (chưa mở code)
+## Giai đoạn 3 — Web UI + console (chưa mở code — **DỪNG + nhắc owner trước khi mở**, chỉ thị owner)
+
+> Per chỉ thị owner (roadmap Phiên 11 + mỗi lần chạy): khi mọi mục GĐ2
+> trước mục này hoàn thành và GĐ3 sẵn sàng mở code → DỪNG chu trình, nhắc
+> owner trước khi viết dòng code UI đầu tiên.
 
 1. UI tĩnh single-user (không framework nặng), bind 127.0.0.1 + token: danh sách,
    tạo từ template, start/stop, snapshot/restore, port-forward, quota.

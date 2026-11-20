@@ -46,3 +46,31 @@
 - Host baseline thay đổi: sẽ kiểm lại ở Pha D Bước 7.
 
 → KHÔNG dừng. Sang Pha D (việc mới). SBG MODE=apply chạy lại ở Pha E.
+
+---
+
+## Phiên 12 — SBG MODE=plan (Pha A, 2026-11-20)
+
+- `git fetch --prune origin` — xong.
+- Nhánh remote: **chỉ `main`** (REST `/branches`: `['main']`).
+- PR mở: **0** (REST `/pulls?state=open`: rỗng) → Pha B/C không có việc.
+- CI `main`: **success** @ `813afb1` (run `ci` + `unicode-guard` 2026-11-20).
+- Host baseline đầu phiên: `/etc/passwd 21d5de2d…`, `/bin/bash 223fe856…`,
+  `/usr/bin/sudo a59f393b…` — **3/3 khớp journal 2026-11-19 → UNCHANGED**.
+- `gh` CLI không có sẵn máy này → REST API curl + PAT (như Phiên 9; PAT qua
+  env, không echo vào log/journal).
+
+## Bảng quyết định
+
+| branch | ahead/behind | PR | quyết định | lý do |
+|---|---|---|---|---|
+| (không có nhánh ≠ main) | — | — | — | remote chỉ còn `main` sau Phiên 11 |
+
+## Điều kiện dừng (§0.6)
+
+- CI `main` đỏ: **không** (success @ 813afb1).
+- Issue `type:security` `priority:p0` mở: **không** (#8 là p2 track backport).
+- Host baseline thay đổi: **không** (3/3 khớp đầu phiên; kiểm lại Bước 7).
+
+→ KHÔNG dừng. Sang Pha D (việc mới: GĐ2 mục 1 — daemon REST API hoàn thiện).
+SBG MODE=apply chạy lại ở Pha C/E.
