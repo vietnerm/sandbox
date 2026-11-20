@@ -155,9 +155,8 @@ cg_bootstrap() {
 echo "=== cgroups v2 enforcement tests ($(date '+%F %T')) — api :$API_PORT ==="
 
 # ---------- daemon boot (with the base override) ----------
-BOOTRC="$WORK/bootrc"
-( cg_bootstrap; echo $? > "$BOOTRC" )
-BOOT=$(cat "$BOOTRC")
+cg_bootstrap
+BOOT=$?
 if [[ "$BOOT" != 0 ]]; then
     echo "env gate: bootstrap unavailable — $(tail -1 "$WORK/bootrc.out" 2>/dev/null || echo 'probe said no')"
     env_skip() { return 125; }
@@ -204,11 +203,7 @@ cgmem() {
     api GET /v1/sandboxes/cg-a >/dev/null && [[ "$(jget 'd["State"]["Status"]')" == running ]] || return 1
     # the enforcement note records the true posture (moved from CG-BOOT)
     api GET /v1/sandboxes/cg-a/state >/dev/null || return 1
-    python3 -I -c "
-import json,sys
-d=json.load(open(sys.argv[1]))
-notes=' '.join(d.get('notes') or [])
-sys.exit(0 if 'cgroups v2 enforced' in notes else 1)" "$WORK/resp" || { echo "cgmem: notes missing enforced claim: $(python3 -I -c "import json;print(' | '.join(json.load(open(sys.argv[1])).get('notes') or []))" "$WORK/resp")"; return 1; }
+    python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); notes=" ".join(d.get("notes") or []); print(notes); sys.exit(0 if "cgroups v2 enforced" in notes else 1)' "$WORK/resp" || { echo "cgmem: notes missing enforced claim: $(cat "$WORK/resp" | head -c 400)"; return 1; }
     local dir="$CGROOT/minictd-apps/sandbox-cg-a"
     local i
     for i in $(seq 1 10); do
@@ -237,6 +232,14 @@ cgoom() {
         [[ "$state" == exited ]] && break
     done
     [[ "$state" == exited ]] || return 1
+    # OOM teeth: the payload must die BEFORE printing alloc-done — on a
+    # host without enforcement the 96m alloc completes and the log gains
+    # the marker (vacuous PASS guard).
+    api GET "/v1/sandboxes/cg-oom/logs" >/dev/null || return 1
+    if grep -q 'alloc-done' "$WORK/resp"; then
+        echo "cgoom: alloc completed — no kernel OOM (vacuous)"
+        return 1
+    fi
     # the OOM story must be visible: rootfs intact + cgroup reclaimed or empty
     [[ -d "$REPO/rootfs/bin" ]] || return 1
 }
@@ -271,6 +274,11 @@ cgstats() {
     limit="$(jget 'd["mem_limit_bytes"]')"
     [[ -n "$usage" && "$usage" -gt 0 ]] || return 1
     [[ "$limit" == "67108864" ]] || return 1
+    # teeth: the accounting files must really exist under the instance dir
+    # (a non-enforcing daemon would fall back to spec-parse + /proc RSS and
+    # still report limit=67108864 — vacuous without this check)
+    local dir="$CGROOT/minictd-apps/sandbox-cg-a"
+    [[ -s "$dir/pids.current" ]] || { echo "cgstats: pids.current missing (not cgroup-backed)"; return 1; }
 }
 run_case CG-STATS "stats: mem.usage>0, limit==67108864 (cgroup-backed)" pass cgstats
 

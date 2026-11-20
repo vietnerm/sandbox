@@ -457,12 +457,21 @@ func renderSpec(spec *contract.RunSpec, ports []int, cgAvail bool) (lines, notes
 		}
 	}
 
-	// --- PidsLimit -> rlimit nproc (approximation; cgroups pids.max is
-	// unavailable in this build, CG1) ---
-	if spec.PidsLimit > 0 && !sawNproc {
-		v := fmt.Sprintf("%d", spec.PidsLimit)
-		lines = append(lines, "ulimit nproc="+v+":"+v)
-		addNote("PidsLimit=%d mapped to rlimit nproc (per-uid approximation, not cgroups pids.max)", spec.PidsLimit)
+	// --- PidsLimit: cgroups v2 pids.max when available (CG1/S2), rlimit
+	// nproc approximation otherwise ---
+	// S2 measured on the runner (CI 44700961938): a shared per-uid nproc
+	// of 16 starves the shim itself (the runner user owns many unrelated
+	// processes), killing the payload before it starts — exactly the gap
+	// S2 documents. With cgroups v2 available the scoped pids.max is the
+	// only pid bound; the shared nproc rlimit is dropped.
+	if spec.PidsLimit > 0 {
+		if cgAvail {
+			addNote("PidsLimit=%d enforced via cgroups v2 pids.max (CG1/S2 — shared per-uid rlimit nproc dropped)", spec.PidsLimit)
+		} else if !sawNproc {
+			v := fmt.Sprintf("%d", spec.PidsLimit)
+			lines = append(lines, "ulimit nproc="+v+":"+v)
+			addNote("PidsLimit=%d mapped to rlimit nproc (per-uid approximation, not cgroups pids.max)", spec.PidsLimit)
+		}
 	}
 
 	// --- preview relays: one webport directive per port ---
