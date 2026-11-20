@@ -267,12 +267,16 @@ func (s *Store) alive(st *InstanceState) *InstanceState {
 			st.Exited = true
 			st.ExitCode = 0 // cause unknown from outside; reaper refines when it saw the wait
 		}
-		// CG1/S2 (SIA finding medium, PR #95): the heal path must reclaim
-		// the instance cgroup exactly like Stop/Remove — otherwise an
-		// instance that dies on its own (kernel OOM, payload crash) leaves
-		// an empty cgroup dir behind until Remove().
-		s.cgroupCleanup(st.CgroupPath)
-		st.CgroupPath = ""
+		// CG1/S2 deliberate NON-cleanup (SIA medium finding REASSESSED):
+		// the heal path must NOT rmdir the instance cgroup — an exited
+		// instance keeps its cgroup for post-mortem counter reads
+		// (memory.peak/memory.events, docker keeps the exited container's
+		// cgroup until rm), and the CI suite reads those counters AFTER the
+		// exit (measured: a heal-time rmdir erased the evidence between the
+		// exit and the read — run 44711850479). Cleanup stays on the two
+		// paths that release the instance identity: Stop (CgroupPath=“”) and
+		// Remove (dir unlink); an empty cgroup dir holds no processes and
+		// costs nothing until then.
 		_ = s.saveState(st.Name, st)
 	}
 	return st
