@@ -14,18 +14,18 @@
 #   - dev hosts with cgroups v1 (e.g. this sandbox) SKIP every case (rc=125)
 #
 # Cases:
-#   CG0   bootstrap + probe: daemon notes say "cgroups v2 enforced" and
+#   CG-BOOT  bootstrap + probe: daemon notes say "cgroups v2 enforced" and
 #         minictd-apps/ + minictd-daemon/ exist under the base
-#   CG1   Run(memory=64m) -> memory.max file == 67108864, shim pid in
+#   CG-MEM   Run(memory=64m) -> memory.max file == 67108864, shim pid in
 #         cgroup.procs (anti-vacuous: filesystem, not just notes)
-#   CG2   kernel OOM: payload allocates 96m > memory.max=64m -> payload
+#   CG-OOM   kernel OOM: payload allocates 96m > memory.max=64m -> payload
 #         killed -> daemon heals the instance to stopped
-#   CG3   pids.max=16: payload forks 64 -> fork blocked well before 64
+#   CG-PIDS  pids.max=16: payload forks 64 -> fork blocked well before 64
 #         (FORKED marker file read back via exec; vacuous guard: a run
 #         without enforcement would fork all 64)
-#   CG4   Stats over cgroup accounting: MemUsageBytes>0 and
+#   CG-STATS Stats over cgroup accounting: MemUsageBytes>0 and
 #         MemLimitBytes==67108864 (memory.max-backed, not memInfo)
-#   CG5   Remove -> instance cgroup dir reclaimed (rmdir)
+#   CG-RM    Remove -> instance cgroup dir reclaimed (rmdir)
 #
 # Exit code: 0 if all expected results hold, 1 otherwise.
 
@@ -37,8 +37,23 @@ MINICT="$REPO/sandbox/minict"
 MINICTD="$REPO/minictd/bin/minictd"
 MEXEC="$REPO/minictd/bin/minict-exec"
 
-for b in "$MINICT" "$MINICTD" "$MEXEC"; do
-    [[ -x "$b" ]] || { echo "missing $b — run: make build minictd"; exit 1; }
+for b in "$MINICT"; do
+    [[ -x "$b" ]] || { echo "missing $b — run: make build"; exit 1; }
+done
+# This suite drives the control-plane daemon, whose Go binaries are built
+# by `make minictd` — a step the CI build-test job runs only for the
+# minictd suite, AFTER run-suites.sh. Build here when missing (idempotent;
+# needs Go — on a host without Go this suite is not runnable at all).
+if [[ ! -x "$MINICTD" || ! -x "$MEXEC" ]]; then
+    # Go lookup: PATH first, then the sandbox dev install (~/.local/go).
+    if ! command -v go >/dev/null 2>&1 && [[ -x "$HOME/.local/go/bin/go" ]]; then
+        export PATH="$HOME/.local/go/bin:$PATH"
+    fi
+    echo "building minictd binaries for test_cg.sh (make minictd)"
+    make -C "$REPO" minictd >/dev/null 2>&1 || { echo "make minictd failed (Go missing?)"; exit 1; }
+fi
+for b in "$MINICTD" "$MEXEC"; do
+    [[ -x "$b" ]] || { echo "missing $b after make minictd"; exit 1; }
 done
 [[ -d "$REPO/rootfs" ]] || bash "$REPO/sandbox/mkrootfs.sh" "$REPO/rootfs" >/dev/null
 
@@ -146,9 +161,9 @@ BOOT=$(cat "$BOOTRC")
 if [[ "$BOOT" != 0 ]]; then
     echo "env gate: bootstrap unavailable — $(tail -1 "$WORK/bootrc.out" 2>/dev/null || echo 'probe said no')"
     env_skip() { return 125; }
-    for id_desc in "CG0:bootstrap+probe:enforced" "CG1:memory.max file written" \
-                   "CG2:kernel OOM heal->stopped" "CG3:pids.max blocks fork burst" \
-                   "CG4:stats from cgroup accounting" "CG5:remove reclaims cgroup dir"; do
+    for id_desc in "CG-BOOT:bootstrap+probe:enforced" "CG-MEM:memory.max file written" \
+                   "CG-OOM:kernel OOM heal->stopped" "CG-PIDS:pids.max blocks fork burst" \
+                   "CG-STATS:stats from cgroup accounting" "CG-RM:remove reclaims cgroup dir"; do
         run_case "${id_desc%%:*}" "${id_desc#*:}" skip env_skip
     done
     echo "=== cg suite: ${PASS} PASS + ${SKIPPED} SKIP (env-gated) + ${FAIL} FAIL ==="
@@ -172,7 +187,7 @@ done
 # containment blocks shim migration otherwise. One-time sudo bootstrap.
 sudo sh -c "echo $DPID > '$CGROOT/cgroup.procs'" || true
 
-cg0() {
+cgboot() {
     api GET /v1/sandboxes/cg-a/state >/dev/null || return 1
     python3 -I -c "
 import json,sys
@@ -183,10 +198,10 @@ sys.exit(0 if 'cgroups v2 enforced' in notes else 1)" "$WORK/resp" || return 1
     # controllers enabled on the base
     grep -q '+memory' "$CGROOT/cgroup.subtree_control" || return 1
 }
-run_case CG0 "bootstrap + probe: enforced + apps/daemon dirs" pass cg0
+run_case CG-BOOT "bootstrap + probe: enforced + apps/daemon dirs" pass cgboot
 
 # CG1: run instance with memory=64m; assert the real file + shim pid.
-cg1() {
+cgmem() {
     api POST /v1/run '{"name":"cg-a","image":"base","memory":"64m","cmd":["/bin/sh","-c","sleep 600"]}' >/dev/null || return 1
     sleep 0.5
     api GET /v1/sandboxes/cg-a >/dev/null && [[ "$(jget 'd["State"]["Status"]')" == running ]] || return 1
@@ -199,11 +214,11 @@ cg1() {
     pid=$(cat "$dir/cgroup.procs" | head -1 | tr -d '[:space:]')
     [[ -n "$pid" && -d "/proc/$pid" ]] || return 1
 }
-run_case CG1 "memory.max file == 67108864 + shim pid inside" pass cg1
+run_case CG-MEM "memory.max file == 67108864 + shim pid inside" pass cgmem
 
 # CG2: kernel OOM — payload allocates 96m > 64m cap; daemon (reconcile 1s)
 # must heal the dead payload to stopped.
-cg2() {
+cgoom() {
     api POST /v1/run '{"name":"cg-oom","image":"base","memory":"64m","cmd":["/bin/sh","-c","a=$(dd if=/dev/zero bs=1M count=96 2>/dev/null); echo alloc-done"]}' >/dev/null || return 1
     local i state
     for i in $(seq 1 20); do
@@ -216,11 +231,11 @@ cg2() {
     # the OOM story must be visible: rootfs intact + cgroup reclaimed or empty
     [[ -d "$REPO/rootfs/bin" ]] || return 1
 }
-run_case CG2 "kernel OOM kills 96m alloc under 64m cap -> exited" pass cg2
+run_case CG-OOM "kernel OOM kills 96m alloc under 64m cap -> exited" pass cgoom
 
 # CG3: pids.max=16 — 64 forks must be blocked well before 64 (fork count
 # marker written by the PAYLOAD inside the cgroup, read via exec).
-cg3() {
+cgpids() {
     api POST /v1/run '{"name":"cg-pids","image":"base","pids_limit":16,"cmd":["/bin/sh","-c","n=0; for i in $(seq 1 64); do if sleep 300 & then n=$((n+1)); fi; done; echo FORKED=$n > /tmp/forkcount; wait"]}' >/dev/null || return 1
     sleep 1
     xv2 cg-pids '{"cmd":["/bin/cat","/tmp/forkcount"],"timeout_s":8}' || return 1
@@ -231,10 +246,10 @@ cg3() {
     [[ "$(cat "$CGROOT/minictd-apps/sandbox-cg-pids/pids.max" | tr -d '[:space:]')" == "16" ]] || return 1
     api POST /v1/sandboxes/cg-pids/remove >/dev/null
 }
-run_case CG3 "pids.max=16 blocks the 64-fork burst" pass cg3
+run_case CG-PIDS "pids.max=16 blocks the 64-fork burst" pass cgpids
 
 # CG4: stats over cgroup accounting (memory.current + memory.max-backed limit).
-cg4() {
+cgstats() {
     api GET /v1/sandboxes/cg-a/stats >/dev/null || return 1
     local usage limit
     usage="$(jget 'd["mem_usage_bytes"]')"
@@ -242,15 +257,15 @@ cg4() {
     [[ -n "$usage" && "$usage" -gt 0 ]] || return 1
     [[ "$limit" == "67108864" ]] || return 1
 }
-run_case CG4 "stats: mem.usage>0, limit==67108864 (cgroup-backed)" pass cg4
+run_case CG-STATS "stats: mem.usage>0, limit==67108864 (cgroup-backed)" pass cgstats
 
 # CG5: remove reclaims the instance cgroup dir.
-cg5() {
+cgrm() {
     api POST /v1/sandboxes/cg-a/remove >/dev/null || return 1
     sleep 0.5
     [[ ! -d "$CGROOT/minictd-apps/sandbox-cg-a" ]] || return 1
 }
-run_case CG5 "remove reclaims instance cgroup dir" pass cg5
+run_case CG-RM "remove reclaims instance cgroup dir" pass cgrm
 
 echo "=== cg suite: ${PASS} PASS + ${SKIPPED} SKIP (env-gated) + ${FAIL} FAIL ==="
 [[ $FAIL -eq 0 ]]
