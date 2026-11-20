@@ -325,3 +325,122 @@ main xanh `7dc40af`, remote chỉ `main`.
   chờ xanh; nhánh `chore/ledger-11` thừa đã xoá. Phòng tránh: Pha E commits
   phải chạy trên nhánh `chore/ledger-<phiên>` từ đầu — thêm vào checklist
   phiên kế.
+
+## Phiên 12 — Orchestrator (2026-11-20, ZAI — tiếp tục theo chỉ thị owner)
+
+### Pha A — Sync + SBG plan
+- Sync main `813afb1`; issues mở 13 → sau triage 14 (tạo #91); **PR mở 0**; CI
+  main success; remote chỉ `main`. Host baseline đầu phiên **3/3 khớp**
+  journal 2026-11-19 → UNCHANGED.
+- SBG MODE=plan (`branch/plan.md` mục Phiên 12): remote chỉ `main`, 0 điều
+  kiện dừng §0.6. Pha B/C lượt 1: bỏ qua (0 PR).
+- Env: kernel 5.10.134 (container Debian trixie), uid 1001; `gh` CLI không
+  có → REST API curl/urllib + PAT (env, không echo). **Go 1.27.4 cài mới**
+  (`~/.local/go`, tarball sha256-verified từ go.dev) — máy dev thiếu Go
+  trước đây; `make test-minictd` giờ chạy được local (trước: env-blocked).
+
+### Pha B/C — không có PR nào đang mở (bỏ qua).
+
+### Pha D — Issue #91 — GĐ2 mục 1: daemon service hoàn thiện (D47)
+
+#### Chọn việc
+- GĐ1 cả 5 mục nền đã đóng (Phiên 11) → luật D27 hết chặn GĐ2. Mục thấp
+  nhất chưa xong của GĐ2 = mục 1: daemon REST API thiếu CLI `sandbox`,
+  systemd `--user` unit, autostart, A3 reconcile (GAPS A3 "not yet built").
+- Tạo issue **#91** (area:minictd — label mới, p1, type:feature, phase:2),
+  self-assign + `status:in-progress`, gỡ `needs-repro`.
+
+#### Research (journal/2026-11-20/research.md, Phiên 12 — 3 nguồn verified 200)
+- systemd.unit (freedesktop): user unit search path `~/.config/systemd/user/*`,
+  `WantedBy=default.target` cho user service.
+- Podman quadlet: generate-then-install pattern; `Restart=on-failure` mặc định.
+- loginctl: `enable-linger` = điều kiện tiên quyết boot-time user manager.
+
+#### Development (nhánh `feat/91-daemon-service`, 8 commits, merge #92 `7803730`)
+- `minictd/cmd/sandbox` (CLI mới): thin shell over `contract.HTTPClient`
+  (list/up/start/stop/rm/exec/inspect/stats/logs/version); token resolve
+  4-bước; `--cmd` comma/space split; không thêm logic (NO MAGIC DEFAULTS).
+- `minictd/deploy/minictd.service.in` + `install.sh`: render fail-closed
+  (placeholder còn → abort; sed-escape `&|\\` — SIA low), copy binary,
+  token 0600 once, KHÔNG tự enable/linger (docs-only steps).
+- `cmd/minictd`: `--autostart` (Start() mọi instance state=running lúc
+  boot; operator-stopped vẫn stopped — `--restart=unless-stopped` semantics)
+  + `--reconcile-interval N` (A3 heal-only ticker, ctx-cancelled).
+- `internal/minict`: `ReconcileAll()` (SIA medium fix: **per-instance flock
+  cho toàn bộ heal** — không còn TOCTOU đè state running của Start đang
+  chạy) + `AutostartNames()`; Go unit tests ×4 (dead healed / live untouched /
+  broken skipped / missing root).
+- `tests/test_minictd.sh`: **MD20** CLI round-trip, **MD21** autostart
+  wake-recreate (kill daemon → kill shim → daemon mới → PID mới ≠ cũ +
+  fs persist → rm sạch), **MD22** deploy render + `systemd-analyze verify`
+  (SKIP 125 khi thiếu tool). Suite 20 → **23 case**.
+- **Fix bug đo được trong phiên**: runner pipe (grep/tail) thoát sớm →
+  SIGPIPE → bash EXIT trap KHÔNG chạy → daemon `--autostart` (MD21) sống
+  sót sau run — **6 daemon rò đo được (`ps aux`) từ 6 lần chạy suite**.
+  Fix: cleanup catch-all `pkill -TERM/-KILL -f -- "$STATE"` (mktemp unique
+  per run — không đụng run khác); post-fix pgrep = 0.
+- Fix khác trong phiên: root Makefile recipe tabs bị Edit tool chuyển
+  spaces (make "missing separator" ngay khi chạy suite — bắt thật, fix
+  `f6c146c`, bài học 2026-11-17 lặp lại).
+- Docs: README minictd (CLI + service), GAPS A3 (reconcile BUILT — heartbeat
+  P4 còn), roadmap GĐ2 mục 1 cập nhật + **GĐ3 đánh dấu "DỪNG + nhắc owner
+  trước khi mở code"** per chỉ thị owner.
+
+#### Mutants (negative controls)
+- 9 mutants caught, mỗi mutant bị đúng test mới: M-CLI-1→MD20 (exec nuốt
+  stdout), M-AUTO-1→MD21 (daemon bỏ autostart), M-RECONCILE-1→go test
+  (early-return; attempt 1 compile-fail = mutant không sạch, làm lại), 
+  M-DEPLOY-1→MD22 (render bỏ BINDIR); SCR clean-room: M0 no-start→107 FAIL
+  toàn suite, M2 no-capdrop→CAPD1+SETUID2 ×2 suites (đúng thiết kế #38),
+  M6 env-leak→MD10, M7 bind-follow→MD17, M8 seccomp-drift→MD0. 0 vacuous.
+
+#### CVE Check
+- `cve/daemon-service.md|.json`: cve-check rc=0 (19 hàng NVD live), **cve-gate
+  rc=0 → 0 CVE mới ngoài watchlist**. Watchlist không thêm dòng (không CVE mới,
+  không component mới trong rootfs).
+
+#### Validation "không bị nhiễm"
+- `make test` ×3 (working tree) + ×2 clean-room (`/tmp/scr-room` @ 6018023,
+  `/tmp/scr-room2` @ b3c44ac): **9 suites, failed: none** (124 PASS + 7 SKIP
+  env-blocked tun); `make test-web` 9/9; **`make test-minictd` 23/23 +
+  `go test ./...` ok** — lần đầu chạy đủ local (Go cài mới).
+- **CI runner @ 6018023 + @ b3c44ac**: build-test + perf-guard + unicode-guard
+  **success**; log job 136133793798: MD20/MD21/MD22 **PASS trên runner** +
+  mọi suite xanh (31/21/7/9/9/31) — run 44690169206.
+- Perf: perf-guard **2.00 ms / 1188 kB / 2.04 MB** PASS (gate không đổi —
+  cold path runtime không đụng); SCR bench N=50 p50 2.0 / p95 3.3.
+- Host baseline: 3/3 sha256 khớp journal 2026-11-19 (đo lại sau retest —
+  unchanged); 0 process minict/busybox còn sống sau suite (pgrep); bằng chứng
+  `evidence/daemon-service.txt`.
+
+#### PR + Pha B (lại)
+- **#92** draft tạo @ `6018023`. Pha B vòng 1: CI xanh + SCR clean-room ×3
+  (mutants ×5 caught) → **SIA CONCERNS** (1 medium: `ReconcileAll` TOCTOU —
+  heal không giữ instance flock, saveState(stopped) có thể đè state running
+  vừa write bởi Start đang chạy; 3 low) → fix(review) `b3c44ac`
+  (per-instance lock 300ms timeout + skip-warn; sed-escape render; token
+  perm warn; low #4 → issue **#93** `from-audit` p3) → CI xanh @ b3c44ac →
+  SCR delta PASS (9 suites + 23/23 clean-room) → **SIA delta PASS**
+  (`audit:pass`, 0 medium còn lại). Số vòng Pha B: **1 vòng**.
+
+#### Pha C + E — SBG apply
+- PR #92 flip ready (GraphQL) @ CI xanh + audit pass → **squash `7803730`**
+  match-head-commit `b3c44ac` → #91 auto-close → nhánh DELETE_MERGED (204) →
+  remote chỉ `main` + nhánh ledger này. G1–G8 PASS đủ cổng.
+
+### Kế hoạch kế tiếp
+- **GĐ2 tiếp**: mục 1 còn thiếu (systemd unit chạy THẬT dưới user manager —
+  env-gated), CG1 quota cgroups v2 (S2), G3 Traefik preview, A2 `oci:` test,
+  template (mục 2), storage overlayfs + snapshot (mục 3), S3–S6.
+- #26/#27 docs p1; #75 port-collision web suite; from-audit #93/#77/#62/#61.
+- **GD3 (Web UI + console) CHƯA chạm** — per chỉ thị owner: khi mọi mục GĐ2
+  trước GD3 hoàn thành và GD3 sẵn sàng mở code → **DỪNG + nhắc owner trước
+  khi viết dòng code UI đầu tiên** (ghi rõ trong roadmap mục GD3).
+
+DAY PASS — 2026-11-20 Phiên 12: issue #91 done (merge #92 `7803730` @
+`b3c44ac`, 1 vòng Pha B; SCR clean-room ×3 + delta + mutants ×9 caught;
+SIA CONCERNS→PASS medium fixed), CVE gate rc=0 0 mới, suite 9 suites none
+failed (dev 124 PASS + 7 SKIP; minictd 23/23 lần đầu local + runner; host
+unchanged), main xanh `7803730`, remote chỉ `main`. Bug mới ghi nhận + fix:
+daemon-leak SIGPIPE-before-EXIT-trap (catch-all cleanup) + Makefile tabs
+lesson lặp lại.
