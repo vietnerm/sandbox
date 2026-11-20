@@ -1,7 +1,7 @@
 # Root Makefile — entry points required by PROMPT.MD / CI.
 # The binary build itself lives in sandbox/Makefile.
 
-.PHONY: all build minictd rootfs rootfs-alpine test test-escape test-escape-alpine test-seccomp test-netns test-alpine test-web test-minictd test-pasta unicode-check test-unicode test-cve-gate perf-check cve-check bench clean help
+.PHONY: all build minictd rootfs rootfs-alpine test test-escape test-escape-alpine test-seccomp test-netns test-alpine test-web test-stack test-minictd test-pasta unicode-check test-unicode test-cve-gate perf-check cve-check bench clean help
 
 all: build
 
@@ -31,6 +31,11 @@ test-escape: test
 # pasta connectivity suite standalone (issue #57, D37; apk online #79, D43)
 test-pasta: build rootfs
 	bash tests/test_pasta.sh
+
+# full web stack suite (nginx + fcgiwrap + CGI + SQLite in ONE instance,
+# issue #85, D45; env-aware SKIP without the stack packages)
+test-stack: build rootfs-alpine
+	bash tests/test_stack.sh
 
 # the WHOLE isolation/escape suite re-run against the alpine distro rootfs
 # (roadmap GĐ1 mục 2 residual, issue #5 — more attack surfaces than busybox)
@@ -86,6 +91,7 @@ help:
 	@echo "make rootfs-alpine- build alpine minirootfs rootfs (rootless)"
 	@echo "make test         - isolation (31) + seccomp (21) + netns (7) + alpine (8) + escape-alpine (31) + cve-check tool (4) + pasta (11; NET10-12/PT3/PT4/AB1 SKIP without tun), all suites always run"
 	@echo "make test-pasta  - pasta connectivity suite only (issues #57/#79)"
+	@echo "make test-stack   - web stack suite (nginx+fcgiwrap+CGI+SQLite, 7 cases; issue #85)"
 	@echo "make test-escape  - same suites (alias, CI requirement)"
 	@echo "make test-escape-alpine - isolation suite re-run on alpine rootfs (29 cases)"
 	@echo "make test-web     - web service suite (6 cases)"

@@ -46,8 +46,63 @@ pin_lookup() {
 PIN_KEY="alpine-minirootfs-${ALPINE_VERSION}-${ALPINE_ARCH}"
 PINNED="$(pin_lookup "$PIN_KEY")"
 
+# STACK PACKAGES (GĐ1 mục 4, issue #85, D45): nginx + sqlite + fcgiwrap +
+# spawn-fcgi pre-installed at BUILD TIME. Installation runs the rootfs's own
+# apk via its musl loader on the HOST (apk is dynamic — cannot run natively
+# outside the rootfs): "$T/lib/ld-musl-x86_64.so.1 --library-path ..." +
+# `apk add --root $T` as the CALLING uid. Every installed file is owned by
+# that uid, which IS root inside the sandbox (single-uid map, D20) —
+# nginx/sqlite can then write their dirs. This deliberately avoids the AL7
+# class (apk add INSIDE the instance would chown foreign uids -> EPERM).
+# Signature verification stays intact: apk uses $T/etc/apk/keys (alpine-keys)
+# against the CDN index — no --allow-untrusted, ever.
+# Env-aware (AL5 pattern, audit PR #24): CDN/apk failure leaves the rootfs
+# usable but WITHOUT stack packages; tests/test_stack.sh then reports
+# SKIP(env-blocked) instead of painting CI red.
+install_stack_pkgs() { # <target-dir> — best-effort, loud on failure
+    local T="$1"
+    local PKGS="${MINICT_STACK_PKGS:-nginx sqlite fcgiwrap spawn-fcgi}"
+    [[ -n "$PKGS" ]] || return 0
+    echo "==> pre-installing stack packages (D45): $PKGS"
+    # apk exit code is NOT authoritative under non-root: the busybox trigger
+    # (chroot) and directory-permission updates fail by design here (EPERM,
+    # measured 2026-11-20) while every package file is still unpacked. The
+    # authoritative check is the presence of ALL four stack binaries.
+    # --no-scripts is MANDATORY (D45): with scripts, apk runs them via chroot
+    # — EPERM on the host — and marks busybox/fcgiwrap/nginx BROKEN in the
+    # DB, so every later `apk add` inside the sandbox fails with rc=3
+    # ("APK unavailable, skipped" on apk fix; measured). --no-scripts leaves
+    # no pending scripts, AL5 offline apk add stays rc=0. Triggers are not
+    # needed for the stack (busybox applet symlinks ship in the minirootfs;
+    # nginx runs `user root` — D45; no TLS cert rehash in the demo).
+    "$T/lib/ld-musl-x86_64.so.1" --library-path "$T/lib:$T/usr/lib" \
+        "$T/sbin/apk" add --root "$T" --no-cache --no-scripts $PKGS >/dev/null 2>&1 || true
+    if [[ -x "$T/usr/sbin/nginx" ]] \
+            && [[ -x "$T/usr/bin/sqlite3" ]] \
+            && [[ -x "$T/usr/bin/fcgiwrap" ]] \
+            && [[ -x "$T/usr/bin/spawn-fcgi" ]]; then
+        echo "==> stack packages installed ($(du -sh "$T" | cut -f1))"
+    else
+        echo "WARNING: stack package install FAILED (CDN/network?) — rootfs is"
+        echo "         still usable, but WITHOUT the web stack;"
+        echo "         tests/test_stack.sh will report SKIP(env-blocked)."
+    fi
+}
+
+# MINICT_STACK_AUTOADD=1: rootfs already exists but lacks the stack — install
+# only (used by sandbox.sh/test_stack.sh to upgrade an older build in place).
+if [[ "${MINICT_STACK_AUTOADD:-0}" == "1" ]]; then
+    if [[ -x "$TARGET/bin/busybox" && -f "$TARGET/etc/alpine-release" ]]; then
+        [[ -x "$TARGET/usr/sbin/nginx" ]] || install_stack_pkgs "$TARGET"
+        exit 0
+    fi
+    echo "MINICT_STACK_AUTOADD: no existing alpine rootfs at '$TARGET' — build first"
+    exit 1
+fi
+
 if [[ -x "$TARGET/bin/busybox" && -f "$TARGET/etc/alpine-release" ]]; then
     echo "alpine rootfs '$TARGET' already exists, skipping (rm -rf it to rebuild)"
+    [[ -x "$TARGET/usr/sbin/nginx" ]] || echo "note: stack packages NOT in this rootfs (MINICT_STACK_AUTOADD=1 re-runs install)"
     exit 0
 fi
 
@@ -109,6 +164,11 @@ chmod 1777 "$TARGET/tmp"
 # issue #55) — create them unconditionally, fail loud on failure
 mkdir -p "$TARGET/home/minict" "$TARGET/media" "$TARGET/root" "$TARGET/run" \
          "$TARGET/srv" "$TARGET/sys"
+
+# stack packages for fresh builds (D45) — MINICT_STACK=0 opts out (plain rootfs)
+if [[ "${MINICT_STACK:-1}" == "1" ]]; then
+    install_stack_pkgs "$TARGET"
+fi
 
 SIZE=$(du -sh "$TARGET" | cut -f1)
 echo "==> done: $TARGET ($SIZE, alpine $(cat "$TARGET/etc/alpine-release" 2>/dev/null || echo '?'))"
