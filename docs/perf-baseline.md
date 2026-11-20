@@ -19,6 +19,7 @@
 | 2026-11-17 (netns, phiên 5) | 1.90 (perf-check N=20) | 1032 | 2.03 | + CLONE_NEWNET mặc định + lo up (D17/D18) + unix-socket bridge web (D16); A/B N=40 interleaved: ON 1.80 vs OFF 1.52 → **+0.28ms** netns (bench `bench-netns-ab.sh`, evidence `journal/2026-11-17/evidence/netns.txt`); perf-check PASS tất cả ngưỡng |
 | 2026-11-17 (sigterm shim, phiên 7) | 1.85 (perf-check N=40) | 1160 | 2.02 | + pidns-1 signal shim (D19); A/B N=40: trước (không shim) 1.66 vs sau 1.83 → **+0.17ms** (1 fork + waitpid; evidence `journal/2026-11-17/evidence/sigterm-ab.txt`); perf-check PASS tất cả ngưỡng |
 | 2026-11-20 (web stack, phiên 10, #85) | 1.93 (perf-check N=20, busybox) | 1196 | 2.04 (busybox) | + web stack nginx+fcgiwrap+CGI+SQLite trong 1 instance alpine (D45): perf-guard đo rootfs busybox default — KHÔNG đổi; rootfs-alpine 8.6 → **13.3 MB** (stack pre-install, vẫn ≤ 20); **stack cold start** (spawn → HTTP 200 + API 200) **median 127 ms, max 232 ms** (N=5, ngưỡng roadmap < 5000 ms — PASS); evidence `journal/2026-11-20/evidence/web-stack.txt` |
+| 2026-11-20 (debian rootfs, phiên 11, #88) | (busybox baseline giữ nguyên) | 1196 | 2.04 (busybox) | + debian rootfs boots (D46): gate busybox KHÔNG đổi; rootfs-debian 83.3 MB gitignored đo supplementary (fetch pinned+sha256 D37); suite debian 8 case vào make test (9 suites) |
 
 ## Alpine rootfs (bổ sung phiên 8, issue #23; cập nhật phiên 10)
 
@@ -29,6 +30,15 @@
 | rss_kb idle (wrapper+PID1) | 1087 (N=5, median, phiên 8) | như trên |
 | **stack cold start** (spawn → index + API health) | **median 127 ms, min 123, max 232 (N=5)** | gồm rootfs copy ~14 MB + spawn-fcgi + nginx ready + 2 curl qua bridge; ngưỡng roadmap < 5000 ms — PASS dư ~39× |
 | perf-check busybox baseline | PASS 1.84 / 1140 / 2.02 (N=20) | `make perf-check` vẫn đo rootfs busybox (default), alpine đo riêng ở trên |
+
+## Debian rootfs (bổ sung phiên 11, issue #88, D46)
+
+| Metric | Giá trị | Ghi chú |
+|---|---|---|
+| disk rootfs-debian | **83.3 MB** (unpacked, du -sk đo 2026-11-20) | bookworm-slim 12.15 amd64, debuerreotype epoch 1794787200; **gitignored** (fetch pinned+sha256 mỗi lần thiếu — 28.2 MB compressed), KHÔNG nằm trong disk_base_mb gate (gate đo rootfs busybox default 2.04 MB) — cùng cách đo supplementary như rootfs-alpine |
+| cold_start_ms debian p50 | chưa đo riêng (one-shot boot đo được trong DB suite: < 1 s kể cả cp -a 83 MB per instance) | rootfs copy ~83 MB per instance là phần lớn chi phí; không gate |
+| rss_kb idle (wrapper+PID1) | tương đương busybox baseline (~1.2 MB) | dash/sleep PID1 glibc, đo trên dev |
+| apt online (DB7) | env-gated tun — đo thật trên runner CI | HTTP deb.debian.org + DNS D42; signature-verified mặc định |
 
 ## Web instance (bổ sung cho area:web)
 

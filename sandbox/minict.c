@@ -1339,10 +1339,58 @@ int main(int argc, char **argv)
         ruid = getuid();
         rgid = getgid();
 
-        /* rootfs sanity check (host-side, DAC-checked against real uid) */
-        snprintf(path, sizeof(path), "%s/bin/busybox", rootfs);
-        if (stat(path, &st) < 0) {
-                fprintf(stderr, "minict: no busybox in %s (run mkrootfs.sh)\n",
+        /* rootfs sanity check (host-side, DAC-checked against real uid).
+         * D46 (issue #88): require an executable /bin/sh instead of
+         * /bin/busybox — Debian/glibc rootfs ship no busybox, and /bin/sh is
+         * what the wrapper always execs (minict.sh default payload). Busybox
+         * and alpine rootfs still pass (both have /bin/sh). /bin/sh may be a
+         * symlink (alpine: /bin/sh -> /bin/busybox, ABSOLUTE target — valid
+         * only INSIDE the rootfs, dangling on the host), so resolve it
+         * relative to the rootfs root before the check — same rule as the
+         * wrapper's fail-closed check (D43). */
+        snprintf(path, sizeof(path), "%s/bin/sh", rootfs);
+        {
+                /* jbuf sized for the worst join: rootfs(511) + "/bin/"(5) +
+                 * lpath(511) + NUL = 1028 — SCR R2 builds with -Werror and
+                 * gcc format-truncation proves lpath (known 512 buffer) */
+                char lpath[512], jbuf[1100];
+                int depth;
+                /* SIA audit PR #89 (medium): symlink loops are possible in a
+                 * user-provided rootfs (bin/sh -> sh or absolute cycles) —
+                 * resolve with a HARD CAP and fail closed; never stat a
+                 * stale intermediate symlink (that one used to be reached by
+                 * the too-long break). The final lstat+S_ISREG below rejects
+                 * any remaining symlink, so only a real executable file
+                 * passes. */
+                for (depth = 0; depth < 8; depth++) {
+                        ssize_t n = readlink(path, lpath, sizeof(lpath) - 1);
+                        if (n < 0)
+                                break; /* regular file (or ELOOP): lstat below */
+                        lpath[n] = '\0';
+                        if (lpath[0] == '/')
+                                snprintf(jbuf, sizeof(jbuf), "%s%s", rootfs,
+                                         lpath);
+                        else
+                                snprintf(jbuf, sizeof(jbuf), "%s/bin/%s",
+                                         rootfs, lpath);
+                        if (strlen(jbuf) >= sizeof(path))
+                                break; /* too long: lstat fails below */
+                        memcpy(path, jbuf, strlen(jbuf) + 1);
+                }
+                if (depth >= 8) {
+                        fprintf(stderr,
+                                "minict: /bin/sh symlink chain too deep in %s"
+                                " (cap 8 — loop or abuse?)\n",
+                                rootfs);
+                        return 125;
+                }
+        }
+        /* lstat (not stat): a leftover symlink must NOT pass — SIA PR #89 */
+        if (lstat(path, &st) < 0 || access(path, X_OK) != 0 ||
+            !S_ISREG(st.st_mode)) {
+                fprintf(stderr,
+                        "minict: no executable /bin/sh in %s (build a rootfs "
+                        "with mkrootfs.sh or pass a usable --rootfs)\n",
                         rootfs);
                 return 125;
         }

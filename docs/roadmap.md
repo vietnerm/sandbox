@@ -20,13 +20,30 @@
 3. C — CVE check: `python3 tools/cve-check.py --json journal/$(date +%F)/cve/<slug>.json`
    + cập nhật `docs/cve-watchlist.md`
 4. D — No-Compromise Validation: `make test` (isolation 31 + seccomp 21 + netns 7 +
-   alpine 9 + escape-alpine 31 + cve-check tool 4 + pasta 11 = 114, pipefail thật —
-   issue #14; alpine 8→9 từ #80/D44 2026-11-20; dev: 108 PASS + 6 SKIP env-blocked) + `make test-web` +
+   alpine 9 + debian 8 + escape-alpine 31 + cve-check tool 4 + pasta 11 = 122, pipefail thật —
+   issue #14; debian suite từ #88/D46 2026-11-20; dev: 115 PASS + 7 SKIP env-blocked) + `make test-web` +
    `make test-minictd` (20, từ 2026-11-18) + lưu evidence vào
    `journal/YYYY-MM-DD/evidence/` + integrity check host
 5. Ghi `journal/YYYY-MM-DD/daily-log.md` (quy tắc thư mục: PROMPT.MD §10)
 
 ## Đã xong
+- [x] 2026-11-20 (phiên 11, SDDA): **Debian rootfs — GĐ1 mục 1 residual cuối (issue #88, D46)**:
+  rootfs bookworm-slim 12.15 amd64 từ debuerreotype/docker-debian-artifacts
+  (OCI layer digest pin `2a7a0929…`, verified tải+sha256 cùng phiên) qua
+  `tools/fetch-debian-rootfs.sh` fail-closed (D37 pattern) — **gitignored**
+  (83.3 MB unpacked, không track); `minict.c` sanity `/bin/sh` executable
+  resolve symlink thay `/bin/busybox` hardcode (blocker đo được: debian không
+  có busybox ⇒ `minict: no busybox`); seccomp blocklist KHÔNG đụng (MD0 sync
+  giữ nguyên); suite mới `tests/test_debian.sh` 8 case (DB1 boot dash
+  anti-busybox, DB2 dpkg glibc, DB3 /proc env-aware D39, DB4 ownership
+  AL6-pattern probe `/var/tmp` — đo được: **/tmp là tmpfs** trong sandbox,
+  DB5 chown EINVAL AL7-pattern, DB6 control no-pasta apt unreachable
+  PT4C-pattern + wait_for_exit, DB7 apt update+install tree ONLINE signature-
+  verified 2-step anti-vacuous #80 — env-gated tun, DB8 pristine manifest hash
+  AL9-pattern) vào `make test` (9 suites, dev 123 PASS + 7 SKIP; gate busybox
+  2.04 MB không đổi — debian đo supplementary); apt chạy HTTP deb.debian.org +
+  DNS D42, `_apt` unmapped warning documented; cve-watchlist thêm apt 2.6.1 /
+  dpkg 1.21.23 / glibc 2.36 (OSV: 0 CVE mở). (#88)
 - [x] 2026-11-19 (phiên 4, phiên thử của Claude theo PROMPT.MD §11): **/proc trong pidns
   (issue #31, D39)** — root cause đo được: kernel chỉ cho userns mount procfs khi ns còn
   một procfs fully-visible (`mount_too_revealing`); minict detach old root TRƯỚC khi
@@ -190,9 +207,12 @@
    vì `chown` sang uid khác và phương án (bỏ qua / giả lập).
    → Alpine **xong phiên 8** (xem "Đã xong"); `/proc` trong pidns **sửa 2026-11-19
    phiên 4 (#31, D39)**, chờ CI runner; DNS cho pasta **xong 2026-11-19 phiên 7
-   (#74, D42 — `--dns-forward` + inject resolv.conf, PT3/PT3C)**; phần còn mở:
-   `apk add` online trong instance (lớp DNS đã có — còn HTTPS/apk-tools runtime)
-   + Debian rootfs (sau).
+   (#74, D42 — `--dns-forward` + inject resolv.conf, PT3/PT3C)**; `apk add` online
+   **xong 2026-11-19 phiên 7 (#79, D43 — PT4/PT4C)**; Debian rootfs **xong
+   2026-11-20 phiên 11 (#88, D46 — bookworm-slim fetch pinned+sha256 gitignored +
+   sanity `/bin/sh` thay busybox + DB1–DB8; apt online HTTP qua pasta, DB7 runner).
+   Residual mục 1: HTTPS runtime cho apt/apk (cài ca-certificates — cùng class,
+   khi cần); các point-release mới của bookworm/alpine chỉ là maintenance.
 2. **chroot-escape test sâu hơn** (issue #5): fd-based escape, /proc/self/root,
    setuid binary trong rootfs (NNP chặn), core dump leak; case seccomp SIGSYS;
    chạy lại cả suite trên rootfs distro thật (có `/proc`, nhiều mặt tấn công hơn busybox).

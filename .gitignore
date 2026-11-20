@@ -13,3 +13,4 @@ tools/bin/
 tools/cache/
 # CI evidence (uploaded as artifact, not committed)
 ci-evidence/
+rootfs-debian/

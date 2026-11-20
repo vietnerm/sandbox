@@ -23,3 +23,26 @@
 - Host baseline báo thay đổi trong ngày: **không** (Phiên 9 ghi unchanged; sẽ kiểm lại ở Pha D Bước 7).
 
 → KHÔNG dừng. Chế độ plan: không gộp/xoá gì. Không có nhánh nào cần xử lý.
+
+---
+
+## Phiên 11 — SBG MODE=plan (Pha A, 2026-11-20)
+
+- `git fetch --prune origin` — xong.
+- Nhánh remote: **chỉ `main`**.
+- PR mở: **0** (`gh pr list --state open`: rỗng) → Pha B/C không có việc.
+- CI `main`: **success** @ `bf409b8` (ledger Phiên 10, run 2026-11-20T03:52Z).
+
+## Bảng quyết định
+
+| branch | ahead/behind | PR | quyết định | lý do |
+|---|---|---|---|---|
+| (không có nhánh ≠ main) | — | — | — | remote chỉ còn `main` sau Phiên 10 |
+
+## Điều kiện dừng (§0.6)
+
+- CI `main` đỏ: **không** (success).
+- Issue `type:security` `priority:p0` mở: **không** (#8 là p2 track backport).
+- Host baseline thay đổi: sẽ kiểm lại ở Pha D Bước 7.
+
+→ KHÔNG dừng. Sang Pha D (việc mới). SBG MODE=apply chạy lại ở Pha E.
