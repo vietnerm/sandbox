@@ -1,0 +1,64 @@
+# Evidence — fix/80-alpine-hygiene (issue #80, D44) — 2026-11-20
+
+## Môi trường
+- kernel 5.10.134-013.15.kangaroo.al8.x86_64, uid 1001 (rootless), dev tree
+- Commit: fix/80-alpine-hygiene @ e459403 (trên 2c7e839 = main 2026-11-20)
+- NVD reachable (khác máy của Phiên 4); CDN dl-cdn reachable (AL5 thật)
+
+## Bước rebuild pristine (D44.1)
+- tarball pin 3.22.8 sha256 khớp: 2d7f46af9b7e86ad64ebeba3fe9b75b62dd5b259e708afb2ab21268f627696e5
+- verify tarball content: `./usr/bin/tree` CÓ SẴN trong tarball (symlink applet
+  busybox) — KHÔNG phải nhiễm (sửa giả thuyết issue #80); opt/local-repo,
+  init.d/acpid, conf.d/acpid KHÔNG có trong tarball = nhiễm, đã bị rebuild bỏ.
+- git diff sau rebuild = chính xác 6 mục: M world, M db/installed,
+  M db/scripts.tar, D conf.d/acpid, D init.d/acpid, D opt/local-repo/acpid-openrc.apk
+- R:acpid còn lại trong DB = etc/logrotate.d/acpid thuộc gói busybox pristine.
+
+## Negative controls (clean-room clone, không đụng dev tree — bài học Phiên 4)
+- Baseline pristine clone: suite alpine 9/9 PASS.
+- M-CONTAM (product mutation — tái hiện nhiễm 42f3273: +block P:acpid-openrc
+  vào DB, +constraint >< vào world, +etc/init.d/acpid, +etc/conf.d/acpid):
+  AL5 FAIL (anti-vacuous bước 1: "P:acpid-openrc đã trong DB TRƯỚC install")
+  + AL9 FAIL (pristine guard: DB + world) — suite PASS=7 FAIL=2, rc=1. CAUGHT.
+- M-TEETH (control — OLD AL5 flow, không 2-step, trên CÙNG rootfs nhiễm có .apk):
+  rc=0 = vacuous PASS — chứng minh đúng class bug #80 mà flow cũ không bắt được.
+- Sự cố control 1: old-flow trên contaminated clone TRƯỚC khi copy .apk vào →
+  rc=99 (apk fail vì thiếu file — .apk không còn trong pristine tracked rootfs,
+  đúng thiết kế: suite tải về WORK). Control được làm lại đúng cách.
+
+## make test (full, dev tree, sau fix)
+- rc=0, 7 suites OK: isolation 31 + seccomp 21 + netns 7 + alpine 9 +
+  escape-alpine 31 + cve-check 4 + pasta (5 PASS + 6 SKIP)
+- Tổng: 114 case — 108 PASS + 6 SKIP (NET10/11/12/PT3/PT4/AB1 pasta env-blocked,
+  không /dev/net/tun — nguồn sự thật pasta là CI runner, D34/D37) + 0 FAIL
+- AL4 PASS(expected-fail) — probe D39 trên kernel 5.10 dev
+- AL5 PASS (install THẬT acpid-openrc=2.0.34-r6, CDN + signature)
+- AL9 PASS (pristine guard + churn probe: git status rootfs-alpine KHÔNG đổi
+  trong suốt suite)
+
+## Churn check sau suite (điểm chính của #80)
+- `git status --porcelain rootfs-alpine/` sau 2 lần chạy suite = chỉ còn đúng
+  tập cleanup đã commit (diff khớp EXACTLY với tập 6 mục dự kiến) — KHÔNG có
+  churn mới. (Trước fix: mỗi run mutate DB/world/files.)
+
+## make test-web
+- 9/9 PASS, rc=0
+
+## CVE check (Bước 6)
+- tools/cve-check.py rc=0, 19 hàng (NVD live), 0 lỗi NVD
+- cve-gate rc=0, output rỗng → 0 CVE mới ngoài watchlist
+- kernel: 5.10.134-013.15.kangaroo.al8.x86_64
+
+## Host baseline "không bị nhiễm"
+- sha256 khớp journal 2026-11-19 Phiên 8 (cùng máy): /etc/passwd 21d5de2d…,
+  /bin/bash 223fe856…, /usr/bin/sudo a59f393b… — UNCHANGED
+- ss -tlnp: cùng tập listener nền infra (12600, 19001, 12700, 19005, 19006, 81,
+  3000 next-server) — không listener lạ
+
+## Perf (PR metrics)
+- perf-check PASS: cold_start 2.01 ms (≤100) / rss 1148 kB (≤10240) /
+  disk 2.04 MB (≤20) — KHÔNG đổi runtime (chỉ test + nội dung rootfs)
+
+## make test-minictd
+- Máy này không có Go ≥ 1.23 → lấy từ CI run của đúng HEAD SHA trên PR
+  (ghi nguồn trong SCR comment).
