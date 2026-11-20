@@ -267,6 +267,12 @@ func (s *Store) alive(st *InstanceState) *InstanceState {
 			st.Exited = true
 			st.ExitCode = 0 // cause unknown from outside; reaper refines when it saw the wait
 		}
+		// CG1/S2 (SIA finding medium, PR #95): the heal path must reclaim
+		// the instance cgroup exactly like Stop/Remove — otherwise an
+		// instance that dies on its own (kernel OOM, payload crash) leaves
+		// an empty cgroup dir behind until Remove().
+		s.cgroupCleanup(st.CgroupPath)
+		st.CgroupPath = ""
 		_ = s.saveState(st.Name, st)
 	}
 	return st
