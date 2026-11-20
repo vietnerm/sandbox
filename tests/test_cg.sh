@@ -18,8 +18,10 @@
 #         minictd-apps/ + minictd-daemon/ exist under the base
 #   CG-MEM   Run(memory=64m) -> memory.max file == 67108864, shim pid in
 #         cgroup.procs (anti-vacuous: filesystem, not just notes)
-#   CG-OOM   kernel OOM: payload allocates 96m > memory.max=64m -> payload
-#         killed -> daemon heals the instance to stopped
+#   CG-OOM   kernel memory cap: 96m tmpfs alloc under memory.max=64m ->
+#         charging fails inline (peak == the cap, memory.events max>0),
+#         payload exits early -> daemon heals the instance to stopped
+#         (kernel truth: shmem charging fails with ENOMEM, no oom_kill)
 #   CG-PIDS  pids.max=16: payload forks 64 -> fork blocked well before 64
 #         (FORKED marker file read back via exec; vacuous guard: a run
 #         without enforcement would fork all 64)
@@ -252,17 +254,24 @@ cgoom() {
         [[ "$state" == exited ]] && break
     done
     [[ "$state" == exited ]] || return 1
-    # OOM teeth (kernel-recorded): memory.events must carry oom_kill >= 1
-    # for the instance cgroup. No enforcement -> no OOM -> no record, so
-    # this is vacuous-proof regardless of whether dd or the shell died.
-    local events
+    # Cap teeth (kernel-recorded, MEASURED 2026-11-20 run 44708072067):
+    # tmpfs shmem charging fails INLINE (ENOMEM) — memory.current pins to
+    # memory.max (peak == cap) and memory.events records max-hits; there
+    # is NO oom_kill for shmem writes (kernel truth, not a bug). Without
+    # enforcement the 96m alloc completes -> peak ~96m != cap -> FAIL.
+    local peak events
+    peak="$(cat "$CGROOT/minictd-apps/sandbox-cg-oom/memory.peak" 2>/dev/null | tr -d '[:space:]')"
     events="$(cat "$CGROOT/minictd-apps/sandbox-cg-oom/memory.events" 2>/dev/null | tr '\n' ' ')"
-    echo "$events" | grep -q 'oom_kill [1-9]' || {
-        echo "cgoom: no kernel oom_kill record (events=[$events] peak=$(cat "$CGROOT/minictd-apps/sandbox-cg-oom/memory.peak" 2>/dev/null))"; cg_diag cgoom
+    [[ "$peak" == "67108864" ]] || {
+        echo "cgoom: peak=$peak != cap (events=[$events]) — alloc not capped"; cg_diag cgoom
+        return 1
+    }
+    echo "$events" | grep -q 'max [1-9]' || {
+        echo "cgoom: memory.events has no max-hits (events=[$events])"; cg_diag cgoom
         return 1
     }
 }
-run_case CG-OOM "kernel OOM kills 96m alloc under 64m cap -> exited" pass cgoom
+run_case CG-OOM "kernel caps 96m tmpfs alloc at 64m (peak==max) -> exited" pass cgoom
 
 # CG3: pids.max=16 — 64 forks must be blocked well before 64 (fork count
 # marker written by the PAYLOAD inside the cgroup, read via exec).
@@ -276,24 +285,22 @@ cgpids() {
         cg_diag cgpids
         return 1
     }
-    # poll for the marker: the payload writes it only after the loop ends
-    local i forked=""
-    for i in $(seq 1 16); do
-        sleep 0.5
-        if xv2 cg-pids '{"cmd":["/bin/cat","/tmp/forkcount"],"timeout_s":8}' 2>/dev/null; then
-            forked="$(jget 'd["stdout"].strip().split("=")[-1]' 2>/dev/null || true)"
-            [[ -n "$forked" ]] && break
-        fi
-    done
-    [[ -n "$forked" ]] || {
-        echo "cgpids: forkcount marker never appeared (last resp: $(head -c 200 "$WORK/resp" 2>/dev/null))"
-        api GET "/v1/sandboxes/cg-pids/logs" >/dev/null 2>&1 && echo "cgpids: instance log: $(head -c 500 "$WORK/resp")"
-        cg_diag cgpids
-        return 1
-    }
-    [[ "$forked" -lt 64 ]] || { echo "cgpids: FORKED=$forked — enforcement vacuous"; cg_diag cgpids; return 1; }
-    # teeth: pids.max file really says 16
-    [[ "$(cat "$CGROOT/minictd-apps/sandbox-cg-pids/pids.max" | tr -d '[:space:]')" == "16" ]] || { echo "cgpids: pids.max=$(cat "$CGROOT/minictd-apps/sandbox-cg-pids/pids.max" 2>&1)"; return 1; }
+    # wait window: with enforcement the shell dies on the first blocked
+    # fork (busybox ash semantics); without it, it forks 64 and waits
+    # fork-burst teeth via kernel counters (measured: busybox ash dies on
+    # the first blocked fork — "can't fork: Resource temporarily
+    # unavailable" — so the FORKED marker never lands; pids.peak is the
+    # ground truth). Without enforcement the shell forks all 64 and waits:
+    # instance stays running and pids.peak ~66 > cap -> FAIL.
+    sleep 2
+    api GET /v1/sandboxes/cg-pids >/dev/null || return 1
+    local pstate ppeak pcur
+    pstate="$(jget 'd["State"]["Status"]')"
+    ppeak="$(cat "$CGROOT/minictd-apps/sandbox-cg-pids/pids.peak" 2>/dev/null | tr -d '[:space:]')"
+    pcur="$(cat "$CGROOT/minictd-apps/sandbox-cg-pids/pids.current" 2>/dev/null | tr -d '[:space:]')"
+    [[ -n "$ppeak" && "$ppeak" -gt 2 ]] || { echo "cgpids: pids.peak=$ppeak — fork burst never ran (cur=$pcur)"; cg_diag cgpids; return 1; }
+    [[ "$ppeak" -le 16 ]] || { echo "cgpids: pids.peak=$ppeak > cap 16 — enforcement vacuous"; cg_diag cgpids; return 1; }
+    [[ "$pstate" == exited ]] || { echo "cgpids: state=$pstate (shell survived the burst — not blocked)"; cg_diag cgpids; return 1; }
     api POST /v1/sandboxes/cg-pids/remove >/dev/null
 }
 run_case CG-PIDS "pids.max=16 blocks the 64-fork burst" pass cgpids
