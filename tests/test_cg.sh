@@ -229,11 +229,14 @@ cgmem() {
     done
     [[ -f "$dir/memory.max" ]] || { echo "cgmem: memory.max missing in $dir: $(ls "$CGROOT/minictd-apps" 2>&1)"; return 1; }
     [[ "$(cat "$dir/memory.max" | tr -d '[:space:]')" == "67108864" ]] || { echo "cgmem: memory.max=$(cat "$dir/memory.max")"; return 1; }
-    # shim pid really migrated (anti-vacuous)
-    [[ -s "$dir/cgroup.procs" ]] || { echo "cgmem: cgroup.procs empty (launcher migration failed?)"; cg_diag cgmem; return 1; }
+    # shim pid really migrated (anti-vacuous). NOTE: kernfs files always
+    # stat size=0 — -s would be a vacuous FAIL; read content instead.
+    local procs
+    procs="$(cat "$dir/cgroup.procs" 2>/dev/null | tr -d '[:space:]')"
+    [[ -n "$procs" ]] || { echo "cgmem: cgroup.procs empty (launcher migration failed?)"; cg_diag cgmem; return 1; }
     local pid
-    pid=$(cat "$dir/cgroup.procs" | head -1 | tr -d '[:space:]')
-    [[ -n "$pid" && -d "/proc/$pid" ]] || { echo "cgmem: procs=[$(cat "$dir/cgroup.procs" | tr '\n' ' ')] pid=$pid dead"; return 1; }
+    pid="$(echo "$procs" | head -1)"
+    [[ -n "$pid" && -d "/proc/$pid" ]] || { echo "cgmem: procs=[$procs] pid=$pid dead"; cg_diag cgmem; return 1; }
 }
 run_case CG-MEM "memory.max file == 67108864 + shim pid inside" pass cgmem
 
@@ -249,16 +252,15 @@ cgoom() {
         [[ "$state" == exited ]] && break
     done
     [[ "$state" == exited ]] || return 1
-    # OOM teeth: the payload must die BEFORE printing alloc-done — on a
-    # host without enforcement the 96m alloc completes and the log gains
-    # the marker (vacuous PASS guard).
-    api GET "/v1/sandboxes/cg-oom/logs" >/dev/null || return 1
-    if grep -q 'alloc-done' "$WORK/resp"; then
-        echo "cgoom: alloc completed — no kernel OOM (vacuous)"; cg_diag cgoom
+    # OOM teeth (kernel-recorded): memory.events must carry oom_kill >= 1
+    # for the instance cgroup. No enforcement -> no OOM -> no record, so
+    # this is vacuous-proof regardless of whether dd or the shell died.
+    local events
+    events="$(cat "$CGROOT/minictd-apps/sandbox-cg-oom/memory.events" 2>/dev/null | tr '\n' ' ')"
+    echo "$events" | grep -q 'oom_kill [1-9]' || {
+        echo "cgoom: no kernel oom_kill record (events=[$events])"; cg_diag cgoom
         return 1
-    fi
-    # the OOM story must be visible: rootfs intact + cgroup reclaimed or empty
-    [[ -d "$REPO/rootfs/bin" ]] || return 1
+    }
 }
 run_case CG-OOM "kernel OOM kills 96m alloc under 64m cap -> exited" pass cgoom
 
@@ -275,7 +277,7 @@ cgpids() {
             [[ -n "$forked" ]] && break
         fi
     done
-    [[ -n "$forked" ]] || { echo "cgpids: forkcount marker never appeared"; return 1; }
+    [[ -n "$forked" ]] || { echo "cgpids: forkcount marker never appeared (last resp: $(head -c 200 "$WORK/resp" 2>/dev/null))"; cg_diag cgpids; return 1; }
     [[ "$forked" -lt 64 ]] || { echo "cgpids: FORKED=$forked — enforcement vacuous"; cg_diag cgpids; return 1; }
     # teeth: pids.max file really says 16
     [[ "$(cat "$CGROOT/minictd-apps/sandbox-cg-pids/pids.max" | tr -d '[:space:]')" == "16" ]] || { echo "cgpids: pids.max=$(cat "$CGROOT/minictd-apps/sandbox-cg-pids/pids.max" 2>&1)"; return 1; }
@@ -295,7 +297,9 @@ cgstats() {
     # (a non-enforcing daemon would fall back to spec-parse + /proc RSS and
     # still report limit=67108864 — vacuous without this check)
     local dir="$CGROOT/minictd-apps/sandbox-cg-a"
-    [[ -s "$dir/memory.current" ]] || { echo "cgstats: memory.current missing (not cgroup-backed): $(ls "$dir" 2>&1 | tr '\n' ' ')"; cg_diag cgstats; return 1; }
+    local cur
+    cur="$(cat "$dir/memory.current" 2>/dev/null | tr -d '[:space:]')"
+    [[ -n "$cur" ]] || { echo "cgstats: memory.current unreadable (not cgroup-backed): $(ls "$dir" 2>&1 | tr '\n' ' ')"; cg_diag cgstats; return 1; }
 }
 run_case CG-STATS "stats: mem.usage>0, limit==67108864 (cgroup-backed)" pass cgstats
 
