@@ -123,6 +123,19 @@ code() { cat "$WORK/code"; }
 jget() { python3 -I -c "import json,sys; d=json.load(open(sys.argv[1])); print($1)" "$WORK/resp"; }
 xv2() { api POST "/v1/sandboxes/$1/execv2" "$2" >/dev/null; }
 
+# cg_diag <label> — dump daemon + instance logs (failure forensics; the
+# launcher/migration story is only visible in these logs)
+cg_diag() {
+    echo "---- daemon.log tail ($1) ----"
+    tail -6 "$WORK/daemon.log" 2>/dev/null || echo "(none)"
+    for inst in cg-a cg-oom cg-pids; do
+        if [[ -f "$STATE/$inst/log" ]]; then
+            echo "---- $inst log tail ----"
+            tail -4 "$STATE/$inst/log" 2>/dev/null
+        fi
+    done
+}
+
 # cg_bootstrap <rc-file> — probe + sudo bootstrap; echoes the reason and
 # returns 125 when the host cannot host the suite.
 cg_bootstrap() {
@@ -217,7 +230,7 @@ cgmem() {
     [[ -f "$dir/memory.max" ]] || { echo "cgmem: memory.max missing in $dir: $(ls "$CGROOT/minictd-apps" 2>&1)"; return 1; }
     [[ "$(cat "$dir/memory.max" | tr -d '[:space:]')" == "67108864" ]] || { echo "cgmem: memory.max=$(cat "$dir/memory.max")"; return 1; }
     # shim pid really migrated (anti-vacuous)
-    [[ -s "$dir/cgroup.procs" ]] || { echo "cgmem: cgroup.procs empty"; return 1; }
+    [[ -s "$dir/cgroup.procs" ]] || { echo "cgmem: cgroup.procs empty (launcher migration failed?)"; cg_diag cgmem; return 1; }
     local pid
     pid=$(cat "$dir/cgroup.procs" | head -1 | tr -d '[:space:]')
     [[ -n "$pid" && -d "/proc/$pid" ]] || { echo "cgmem: procs=[$(cat "$dir/cgroup.procs" | tr '\n' ' ')] pid=$pid dead"; return 1; }
@@ -241,7 +254,7 @@ cgoom() {
     # the marker (vacuous PASS guard).
     api GET "/v1/sandboxes/cg-oom/logs" >/dev/null || return 1
     if grep -q 'alloc-done' "$WORK/resp"; then
-        echo "cgoom: alloc completed — no kernel OOM (vacuous)"
+        echo "cgoom: alloc completed — no kernel OOM (vacuous)"; cg_diag cgoom
         return 1
     fi
     # the OOM story must be visible: rootfs intact + cgroup reclaimed or empty
@@ -263,7 +276,7 @@ cgpids() {
         fi
     done
     [[ -n "$forked" ]] || { echo "cgpids: forkcount marker never appeared"; return 1; }
-    [[ "$forked" -lt 64 ]] || { echo "cgpids: FORKED=$forked — enforcement vacuous"; return 1; }
+    [[ "$forked" -lt 64 ]] || { echo "cgpids: FORKED=$forked — enforcement vacuous"; cg_diag cgpids; return 1; }
     # teeth: pids.max file really says 16
     [[ "$(cat "$CGROOT/minictd-apps/sandbox-cg-pids/pids.max" | tr -d '[:space:]')" == "16" ]] || { echo "cgpids: pids.max=$(cat "$CGROOT/minictd-apps/sandbox-cg-pids/pids.max" 2>&1)"; return 1; }
     api POST /v1/sandboxes/cg-pids/remove >/dev/null
@@ -282,7 +295,7 @@ cgstats() {
     # (a non-enforcing daemon would fall back to spec-parse + /proc RSS and
     # still report limit=67108864 — vacuous without this check)
     local dir="$CGROOT/minictd-apps/sandbox-cg-a"
-    [[ -s "$dir/pids.current" ]] || { echo "cgstats: pids.current missing (not cgroup-backed)"; return 1; }
+    [[ -s "$dir/memory.current" ]] || { echo "cgstats: memory.current missing (not cgroup-backed): $(ls "$dir" 2>&1 | tr '\n' ' ')"; cg_diag cgstats; return 1; }
 }
 run_case CG-STATS "stats: mem.usage>0, limit==67108864 (cgroup-backed)" pass cgstats
 
