@@ -1,0 +1,72 @@
+=== SDDA Phiên 10 — web-stack evidence — 2026-11-20 03:16:31 ===
+kernel: 5.10.134-013.15.kangaroo.al8.x86_64
+
+--- make test (8 suites) ---
+### suite: test_isolation.sh
+=== summary: PASS=31 FAIL=0 ===
+### suite: test_isolation.sh — OK
+### suite: test_seccomp.sh
+=== summary: PASS=21 FAIL=0 ===
+### suite: test_seccomp.sh — OK
+### suite: test_netns.sh
+=== summary: PASS=7 FAIL=0 ===
+### suite: test_netns.sh — OK
+### suite: test_alpine.sh
+=== summary: PASS=9 FAIL=0 ===
+### suite: test_alpine.sh — OK
+### suite: test_escape_alpine.sh
+=== summary: PASS=31 FAIL=0 ===
+### suite: test_escape_alpine.sh — OK
+### suite: test_cve_check.sh
+=== summary: PASS=4 FAIL=0 ===
+### suite: test_cve_check.sh — OK
+### suite: test_pasta.sh
+=== summary: PASS=5 SKIP=6 FAIL=0 ===
+### suite: test_pasta.sh — OK
+### suite: test_stack.sh
+=== summary: PASS=7 FAIL=0 SKIP=0 ===
+### suite: test_stack.sh — OK
+=== run-suites summary: 8 suites, failed: none ===
+
+--- make test-web ---
+=== summary: PASS=9 FAIL=0 ===
+
+--- make perf-check ---
+== perf-check 2026-11-20 03:16:59 — kernel 5.10.134-013.15.kangaroo.al8.x86_64, N=20 ==
+cold_start_ms  :     1.78  (threshold 100)
+rss_kb         :     1228  (threshold 10240)
+disk_base_mb   :     2.04  (threshold 20)
+perf-check: PASS
+
+--- host baseline vs 2026-11-19 ---
+21d5de2dc39f2ceb19e33f8cc124b311b57a48aea6d7703a9a98b93079d412bd  /etc/passwd
+223fe8564b60636bc738b6178d3ba9a50ef7d791266b0efae6363bb716e4c47f  /bin/bash
+a59f393bad5037644b89de64fe558ae6d5d1473c25c63022241e7c7019ad2f0c  /usr/bin/sudo
+(all 3 match journal/2026-11-19 evidence — unchanged; /etc/shadow not readable as non-root, same as before)
+
+--- listeners (ss -tln) after teardown ---
+LISTEN 0      2048       127.0.0.1:12600      0.0.0.0:*   
+LISTEN 0      128        127.0.0.1:19001      0.0.0.0:*   
+LISTEN 0      511        127.0.0.1:12700      0.0.0.0:*   
+LISTEN 0      1024         0.0.0.0:19005      0.0.0.0:*   
+LISTEN 0      128          0.0.0.0:19006      0.0.0.0:*   
+LISTEN 0      4096               *:81               *:*   
+LISTEN 0      511                *:3000             *:*   
+
+--- stack bench N=5 ---
+run 1: READY_MS=124
+run 2: READY_MS=122
+run 3: READY_MS=123
+run 4: READY_MS=124
+run 5: READY_MS=229
+median=124 ms  min=122 ms  max=229 ms  N=5  threshold=5000 ms
+
+--- sandbox.sh end-to-end demo ---
+stack 'webstack-demo' READY in 233 ms — http://127.0.0.1:16999/ (api /api/health, /api/items)
+READY_MS=233
+{"status":"ok","stack":"minict-web-stack","db":"/var/lib/minict/app.sqlite"}
+{"inserted":"from-sdda-demo"}
+
+[{"id":1,"name":"from-sdda-demo","created":"2026-11-20 03:17:12"}]
+
+stack 'webstack-demo' down

@@ -203,6 +203,14 @@
 4. **Stack web thật trong 1 instance**: nginx/caddy + API + SQLite trên rootfs
    distro; `./sandbox up|down|bench` một lệnh; cold start stack < 5 s;
    signal lifecycle graceful đã có từ phiên 7 (D19).
+   → **Stack dùng được phiên 10 (#85, D45)**: nginx + fcgiwrap + CGI shell +
+   SQLite trong 1 instance alpine (pre-install tại build time, `--no-scripts`
+   — D45), một lệnh `./sandbox.sh up|down|bench` (`./sandbox` không khả thi —
+   `sandbox/` là thư mục từ PoC); cold start stack đo được **median 127 ms**
+   (ngưỡng < 5 s, dư ~39×); suite `tests/test_stack.sh` ST1–ST7 vào `make test`
+   (dev 121 case: 115 PASS + 6 SKIP env-blocked); residual: caddy thực
+   (hiện nginx), API production-grade (thay CGI shell bằng runtime thật —
+   GĐ2), SQLite WAL/concurrency tuning.
 
 ## Giai đoạn 2 — Control plane + storage (KẾ TIẾP; có "seed" minictd, chưa mở việc mới)
 

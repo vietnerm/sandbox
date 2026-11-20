@@ -3,4 +3,8 @@ alpine-keys
 alpine-release
 apk-tools
 busybox
+fcgiwrap
 libc-utils
+nginx
+spawn-fcgi
+sqlite

@@ -18,15 +18,16 @@
 | 2026-11-17 (seccomp, phiên 4) | 1.15 (perf-check N=20) | 1060 | 2.02 | + seccomp-bpf blocklist mặc định BẬT; A/B N=40: ON 1.38 vs OFF 1.18 → **+0.2ms** (chi tiết D11/D14, evidence `journal/2026-11-17/evidence/seccomp-ab.txt`) |
 | 2026-11-17 (netns, phiên 5) | 1.90 (perf-check N=20) | 1032 | 2.03 | + CLONE_NEWNET mặc định + lo up (D17/D18) + unix-socket bridge web (D16); A/B N=40 interleaved: ON 1.80 vs OFF 1.52 → **+0.28ms** netns (bench `bench-netns-ab.sh`, evidence `journal/2026-11-17/evidence/netns.txt`); perf-check PASS tất cả ngưỡng |
 | 2026-11-17 (sigterm shim, phiên 7) | 1.85 (perf-check N=40) | 1160 | 2.02 | + pidns-1 signal shim (D19); A/B N=40: trước (không shim) 1.66 vs sau 1.83 → **+0.17ms** (1 fork + waitpid; evidence `journal/2026-11-17/evidence/sigterm-ab.txt`); perf-check PASS tất cả ngưỡng |
-| 2026-11-17 (alpine rootfs, phiên 8) | 1.83 (alpine, N=20; busybox cùng đo: 1.88) | 1087 (alpine, N=5; busybox: 1066) | 8.6 (alpine) | + rootfs Alpine minirootfs 3.22.8 (D20) — cold start/RSS không đổi về bản chất; disk +6.6MB là chi phí "distro thật" chấp nhận, vẫn ≤ 20; evidence `journal/2026-11-17/evidence/alpine-perf.txt` |
+| 2026-11-20 (web stack, phiên 10, #85) | 1.93 (perf-check N=20, busybox) | 1196 | 2.04 (busybox) | + web stack nginx+fcgiwrap+CGI+SQLite trong 1 instance alpine (D45): perf-guard đo rootfs busybox default — KHÔNG đổi; rootfs-alpine 8.6 → **13.3 MB** (stack pre-install, vẫn ≤ 20); **stack cold start** (spawn → HTTP 200 + API 200) **median 127 ms, max 232 ms** (N=5, ngưỡng roadmap < 5000 ms — PASS); evidence `journal/2026-11-20/evidence/web-stack.txt` |
 
-## Alpine rootfs (bổ sung phiên 8, issue #23)
+## Alpine rootfs (bổ sung phiên 8, issue #23; cập nhật phiên 10)
 
 | Metric | Giá trị | Ghi chú |
 |---|---|---|
-| disk rootfs-alpine | 8.6 MB (busybox 2.0) | minirootfs + apk DB; ngưỡng 20 MB |
-| cold_start_ms alpine p50 | 1.83 (N=20) | ≈ busybox (1.88 cùng lúc đo) |
-| rss_kb idle (wrapper+PID1) | 1087 (N=5, median) | ≈ busybox (1066) |
+| disk rootfs-alpine | **13.3 MB** (busybox 2.0) | phiên 8: 8.6 MB; phiên 10: + nginx/sqlite/fcgiwrap/spawn-fcgi pre-install (D45, `--no-scripts`); ngưỡng 20 MB |
+| cold_start_ms alpine p50 | 1.83 (N=20, phiên 8) | đo trước khi thêm stack; stack trong instance không nằm trong cold_start busybox |
+| rss_kb idle (wrapper+PID1) | 1087 (N=5, median, phiên 8) | như trên |
+| **stack cold start** (spawn → index + API health) | **median 127 ms, min 123, max 232 (N=5)** | gồm rootfs copy ~14 MB + spawn-fcgi + nginx ready + 2 curl qua bridge; ngưỡng roadmap < 5000 ms — PASS dư ~39× |
 | perf-check busybox baseline | PASS 1.84 / 1140 / 2.02 (N=20) | `make perf-check` vẫn đo rootfs busybox (default), alpine đo riêng ở trên |
 
 ## Web instance (bổ sung cho area:web)
