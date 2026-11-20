@@ -121,3 +121,57 @@ gọi `ReconcileAll()` (quét state dir, `alive()` self-heal đã có — đổi
 sang proactive); Go unit test không cần spawn payload thật (state.json PID chết
 giả → heal); (4) daemon restart không phải restart instance (units/log ghi
 "instances keep running" — autostart của reboot riêng biệt).
+
+## Phiên 13 — CG1 cgroups v2 (issue #4, S2)
+
+**Vấn đề:** minictd không enforce CPU/RAM/pid (GAPS CG1/S2 — Notes-only + rlimit
+nproc approximation). Rootless resource limits **cần cgroups v2** (cgroups v1
+không rootless-friendly). Máy dev: v1 → env-gated; runner ubuntu-24.04: v2
+unified → PASS thật được kỳ vọng.
+
+**Nguồn 1 — systemd.io/CGROUP_DELEGATION (200):**
+systemd hỗ trợ controllers `cpu, io, memory, pids` trên unified hierarchy v2.
+`Delegate=yes` expose controllers cho delegated subtree nhưng **không enable
+sẵn** — delegated user phải tự write `cgroup.subtree_control` (`+memory`…).
+Model "islands" phù hợp minictd: daemon nằm trong subtree delegated
+(`user@<uid>.service` có Delegate mặc định), tạo sub-cgroup cho instance bên
+dưới; **bắt buộc rule no-processes-in-inner-nodes** — không enable domain
+controller trên cgroup đang chứa process.
+→ Áp dụng: tạo subtree `minictd-apps/` (không chứa process) dưới cgroup daemon,
+enable `+memory +cpu +pids` trên `minictd-apps/cgroup.subtree_control`, rồi
+mỗi instance là con `minictd-apps/sandbox-<name>` — daemon PID không nằm trong
+minictd-apps → rule không vi phạm.
+
+**Nguồn 2 — podman rootless.md (200):**
+"No support for setting resource limits on systems using cgroups v1" — rootless
+resource limits chỉ có trên cgroups v2. Xác nhận: CG1 trên dev v1 là
+**env-gated** (không phải parked theo thiết kế — roadmap "blocked-on-dev-env"
+vẫn nằm trong kế hoạch).
+
+**Nguồn 3 — kernel.org cgroup-v2.rst (torvalds master, 200):**
+- **No Internal Process Constraint**: "only domain cgroups which don't contain
+  any processes can have domain controllers enabled in their
+  `cgroup.subtree_control`" — củng cố thiết kế subtree apps riêng.
+- **Delegation Containment**: delegatee cần write access `cgroup.procs` của
+  source + destination + **common ancestor** — move shim PID (nằm trong cùng
+  delegated subtree với cgroup instance) vào cgroup con hợp lệ; không thể pull
+  process từ ngoài delegated subtree vào (chống injection chéo user).
+- Hierarchical: limits không thể escape từ delegated subtree — parent quota
+  trội mọi sub-cgroup.
+→ Áp dụng: write PID shim vào instance `cgroup.procs`; nếu shim chưa nằm trong
+subtree (daemon spawn shim từ PID namespace host của daemon — daemon nằm trong
+subtree) → cùng subtree → OK; nếu write fail EACCES → fail-soft + note lý do.
+
+**Trade-off / quyết định:**
+1. **Fail-soft, không fail-closed**: thiếu cgroups v2 → giữ hành vi hiện tại
+   (Notes + rlimit nproc) + note lý do đo được — instance vẫn boot được trên
+   mọi môi trường (không phá baseline 124 case).
+2. **Env override** `MINICTD_CGROUP_ROOT`: chỉ cgroup base dir (điểm bắt đầu
+   tạo subtree apps) — giúp test unit (temp dir giả lập) + runner (chỉ rõ).
+3. **Stats ưu tiên cgroup reads** khi enforced: `memory.current` + `cpu.stat`
+   usage_usec + `pids.current`; fallback RSS tree khi không enforced
+   (`procstats.go` giữ nguyên).
+4. **Cleanup**: destroy/stop → rmdir cgroup instance (chỉ khi rỗng; ignore
+   ENOENT) — chết rồi mới dọn, không rò rỉ mount/proc.
+5. Test env-gated probe-based (pattern pasta/alpine): SKIP khi không có cgroups
+   v2 writable; mutation trên code enforcement (go unit) + shell suite.

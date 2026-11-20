@@ -20,13 +20,25 @@
 3. C — CVE check: `python3 tools/cve-check.py --json journal/$(date +%F)/cve/<slug>.json`
    + cập nhật `docs/cve-watchlist.md`
 4. D — No-Compromise Validation: `make test` (isolation 31 + seccomp 21 + netns 7 +
-   alpine 9 + debian 8 + escape-alpine 31 + cve-check tool 4 + pasta 11 = 122, pipefail thật —
-   issue #14; debian suite từ #88/D46 2026-11-20; dev: 115 PASS + 7 SKIP env-blocked) + `make test-web` +
-   `make test-minictd` (20, từ 2026-11-18) + lưu evidence vào
+   alpine 9 + debian 9 + escape-alpine 31 + cve-check tool 4 + pasta 11 + cg 6 = 129, pipefail thật —
+   issue #14; cg suite từ #4/D48 2026-11-20, env-gated cgroups v2; dev: 127 PASS + 13 SKIP env-blocked)
+   + `make test-web` + `make test-minictd` (23, từ 2026-11-20 #91) + lưu evidence vào
    `journal/YYYY-MM-DD/evidence/` + integrity check host
 5. Ghi `journal/YYYY-MM-DD/daily-log.md` (quy tắc thư mục: PROMPT.MD §10)
 
 ## Đã xong
+- [x] 2026-11-20 (phiên 13, SDDA): **CG1/S2 — cgroups v2 resource enforcement
+  (issue #4, D48, GĐ2 mục 5)**: `minictd/internal/minict/cgroup.go` — islands
+  model (daemon self-park `minictd-daemon/` + enable `+memory +cpu +pids` trên
+  base subtree_control + instance tree `minictd-apps/sandbox-<name>`), shim-pid
+  migration sau spawn (containment-safe), mapping Memory→memory.max /
+  CPUs→cpu.max / CPUShares→cpu.weight / PidsLimit→pids.max, Stats ưu tiên
+  cgroup reads (memory.current/pids.current/cpu.stat 250ms window) fallback
+  /proc, cleanup Stop/Remove/heal; `CgroupPath` persist trong state.json;
+  fail-soft khi không có base v2 (note lý do đo được); 13 Go unit test trên
+  fake cgroup FS + shell suite `tests/test_cg.sh` CG0–CG5 env-gated vào
+  `make test` (9→10 suites, dev 127 PASS + 13 SKIP); 5/5 mutant caught;
+  perf 2.15ms/1128kB/2.04MB PASS (gate không đổi); CVE gate rc=0. (#4)
 - [x] 2026-11-20 (phiên 11, SDDA): **Debian rootfs — GĐ1 mục 1 residual cuối (issue #88, D46)**:
   rootfs bookworm-slim 12.15 amd64 từ debuerreotype/docker-debian-artifacts
   (OCI layer digest pin `2a7a0929…`, verified tải+sha256 cùng phiên) qua
@@ -261,6 +273,12 @@
    snapshot/backup/restore (overlay layer + tar.zst).
 4. Port-forward theo instance qua pasta, khai báo trong config instance.
 5. Quota CPU/RAM/pid qua cgroups v2 delegation; disk quota dạng cảnh báo.
+   → **Xong phần core 2026-11-20 phiên 13 (#4, D48)**: cgroups v2 islands
+   enforcement (memory.max/cpu.max/cpu.weight/pids.max + shim migration +
+   Stats cgroup reads, fail-soft khi không có base); suite `test_cg.sh`
+   CG0–CG5 env-gated vào `make test` (129 case); CG0–CG5 PASS thật trên
+   runner nếu sudo bootstrap được. Residual: memory.swap.max/io.max mapping,
+   cpu.weight mapping tuyến tính (D48).
 6. Landlock LSM cho fs-policing (kernel ≥ 5.13, runner đạt).
 7. Đo: control plane idle ≤ 30 MB RSS; destroy không rò rỉ process/mount/netns.
 

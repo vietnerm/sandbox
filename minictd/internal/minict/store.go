@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -42,6 +43,15 @@ type Store struct {
 	// so this is belt-and-braces, not routing truth).
 	SandboxSubnet  string
 	SandboxGateway string
+	// CgroupRoot overrides the cgroups v2 enforcement base (CG1/S2,
+	// issue #4). Empty = auto-probe from the daemon's own cgroup
+	// (/proc/self/cgroup); on hosts without a delegated subtree the
+	// probe fails soft and enforcement degrades to notes + rlimit.
+	CgroupRoot string
+	// cg is the lazily-resolved cgroup manager (CG1). Guarded by cgMu
+	// because Run/Start can run concurrently for different instances.
+	cg   *cgroupManager
+	cgMu sync.Mutex
 	// Log receives structured daemon logging.
 	Log *slog.Logger
 }
@@ -87,6 +97,11 @@ type InstanceState struct {
 	Exited     bool        `json:"exited,omitempty"`
 	ExitCode   int         `json:"exit_code,omitempty"` // recorded by the reaper goroutine, when known
 	KilledBy   string      `json:"killed_by,omitempty"` // "stop" | "remove" — distinguishes an operator stop
+	// CgroupPath is the cgroups v2 dir enforcing this instance's
+	// resources (CG1/S2, issue #4). Empty = not enforced (notes-only
+	// fallback). Persisted so Stop/Remove/heal can clean it up even
+	// across a daemon restart.
+	CgroupPath string `json:"cgroup_path,omitempty"`
 }
 
 // nameRe mirrors docker's name charset: alphanumeric first char, then
@@ -320,7 +335,11 @@ func parseDockerSize(s string) (int64, error) {
 // patched minict.c parses host-side before unshare). Every directive it
 // emits is validated here too — the C parser is the second, fail-closed
 // gate. Anything minict cannot honour becomes a Note, never a silent lie.
-func renderSpec(spec *contract.RunSpec, ports []int) (lines, notes []string, err error) {
+//
+// cgAvail tells whether cgroups v2 enforcement is possible (CG1/S2,
+// issue #4): when true the resource-limit notes record the cgroup mapping
+// applied after spawn; when false they keep the pre-CG1 fallback wording.
+func renderSpec(spec *contract.RunSpec, ports []int, cgAvail bool) (lines, notes []string, err error) {
 	addNote := func(f string, a ...any) { notes = append(notes, fmt.Sprintf(f, a...)) }
 
 	// --- hostname ---
@@ -475,13 +494,28 @@ func renderSpec(spec *contract.RunSpec, ports []int) (lines, notes []string, err
 		}
 	}
 	if spec.CPUShares > 0 {
-		addNote("CPUShares=%d not enforced (no cgroups in this build, CG1)", spec.CPUShares)
+		if cgAvail {
+			addNote("CPUShares=%d enforced via cgroups v2 cpu.weight=%d (CG1/S2)", spec.CPUShares, sharesToWeight(spec.CPUShares))
+		} else {
+			addNote("CPUShares=%d not enforced (no cgroups in this build, CG1)", spec.CPUShares)
+		}
 	}
 	if spec.CPUs != "" {
-		addNote("CPUs=%q not enforced (no cgroups in this build, CG1)", spec.CPUs)
+		if cgAvail {
+			addNote("CPUs=%q enforced via cgroups v2 cpu.max (quota x %d period, CG1/S2)", spec.CPUs, cgroupCPUPeriod)
+		} else {
+			addNote("CPUs=%q not enforced (no cgroups in this build, CG1)", spec.CPUs)
+		}
 	}
 	if spec.Memory != "" || spec.MemorySwap != "" {
-		addNote("Memory=%q MemorySwap=%q not enforced (no cgroups in this build, CG1)", spec.Memory, spec.MemorySwap)
+		if cgAvail {
+			addNote("Memory=%q enforced via cgroups v2 memory.max (CG1/S2)", spec.Memory)
+		} else {
+			addNote("Memory=%q MemorySwap=%q not enforced (no cgroups in this build, CG1)", spec.Memory, spec.MemorySwap)
+		}
+	}
+	if spec.MemorySwap != "" && cgAvail {
+		addNote("MemorySwap=%q not mapped (v2 memory.swap.max is a separate knob; memory.max is set, CG1/S2)", spec.MemorySwap)
 	}
 	if spec.User != "" {
 		addNote("User=%q ignored: minict runs the payload as the userns-mapped root uid", spec.User)
