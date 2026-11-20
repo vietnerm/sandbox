@@ -277,30 +277,34 @@ run_case CG-OOM "kernel caps 96m tmpfs alloc at 64m (peak==max) -> exited" pass 
 # marker written by the PAYLOAD inside the cgroup, read via exec).
 cgpids() {
     api POST /v1/run '{"name":"cg-pids","image":"base","pids_limit":16,"cmd":["/bin/sh","-c","n=0; for i in $(seq 1 64); do if sleep 300 & then n=$((n+1)); fi; done; echo FORKED=$n > /tmp/forkcount; wait"]}' >/dev/null || return 1
-    sleep 0.5
-    api GET /v1/sandboxes/cg-pids >/dev/null && [[ "$(jget 'd["State"]["Status"]')" == running ]] || {
-        echo "cgpids: instance not running right after Run"
+    # With enforcement the busybox shell dies on the first blocked fork
+    # ("can't fork" — measured) within ~50ms, so it is NOT running by the
+    # time we poll; without enforcement it forks all 64 and waits 300s.
+    # Poll up to 12s for the exited state (reconcile interval is 1s).
+    local i pstate0
+    for i in $(seq 1 24); do
+        sleep 0.5
+        api GET /v1/sandboxes/cg-pids >/dev/null || return 1
+        pstate0="$(jget 'd["State"]["Status"]')"
+        [[ "$pstate0" == exited ]] && break
+    done
+    [[ "${pstate0:-}" == exited ]] || {
+        echo "cgpids: shell survived the burst (state=$pstate0 — forks not blocked)"
         api GET "/v1/sandboxes/cg-pids/logs" >/dev/null 2>&1 && echo "cgpids: instance log: $(head -c 600 "$WORK/resp")"
-        api GET "/v1/sandboxes/cg-pids/state" >/dev/null 2>&1 && echo "cgpids: state fields: $(head -c 700 "$WORK/resp")"
         cg_diag cgpids
         return 1
     }
-    # wait window: with enforcement the shell dies on the first blocked
-    # fork (busybox ash semantics); without it, it forks 64 and waits
     # fork-burst teeth via kernel counters (measured: busybox ash dies on
     # the first blocked fork — "can't fork: Resource temporarily
     # unavailable" — so the FORKED marker never lands; pids.peak is the
     # ground truth). Without enforcement the shell forks all 64 and waits:
     # instance stays running and pids.peak ~66 > cap -> FAIL.
-    sleep 2
     api GET /v1/sandboxes/cg-pids >/dev/null || return 1
-    local pstate ppeak pcur
-    pstate="$(jget 'd["State"]["Status"]')"
+    local ppeak pcur
     ppeak="$(cat "$CGROOT/minictd-apps/sandbox-cg-pids/pids.peak" 2>/dev/null | tr -d '[:space:]')"
     pcur="$(cat "$CGROOT/minictd-apps/sandbox-cg-pids/pids.current" 2>/dev/null | tr -d '[:space:]')"
     [[ -n "$ppeak" && "$ppeak" -gt 2 ]] || { echo "cgpids: pids.peak=$ppeak — fork burst never ran (cur=$pcur)"; cg_diag cgpids; return 1; }
     [[ "$ppeak" -le 16 ]] || { echo "cgpids: pids.peak=$ppeak > cap 16 — enforcement vacuous"; cg_diag cgpids; return 1; }
-    [[ "$pstate" == exited ]] || { echo "cgpids: state=$pstate (shell survived the burst — not blocked)"; cg_diag cgpids; return 1; }
     api POST /v1/sandboxes/cg-pids/remove >/dev/null
 }
 run_case CG-PIDS "pids.max=16 blocks the 64-fork burst" pass cgpids
