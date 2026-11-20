@@ -315,3 +315,13 @@ SCR ×2 SHA + mutants ×6 caught total + SIA CONCERNS→PASS medium fixed), CVE 
 + OSV per-version 0 actionable, suite 9 suites none failed (dev 124 PASS + 7 SKIP;
 runner 124/124 thật gồm DB1–DB9 + pasta 11/11 + minictd 20/20), host unchanged,
 main xanh `7dc40af`, remote chỉ `main`.
+
+#### Process note (SBG Pha E — minh bạch vi phạm)
+- **Vi phạm §11 luật "không push thẳng main"**: commit ledger `ac4347f` (chỉ
+  `docs/branch-ledger.md` + `journal/2026-11-20/daily-log.md`) đã đi thẳng vào
+  `main` qua `git push -u origin HEAD` chạy NHẦM khi HEAD vẫn là local `main`
+  (đáng lẽ phải checkout nhánh trước khi commit). Không force-push; nội dung
+  đúng như PR ledger dự kiến (docs-only); CI run trên main @ `ac4347f` được
+  chờ xanh; nhánh `chore/ledger-11` thừa đã xoá. Phòng tránh: Pha E commits
+  phải chạy trên nhánh `chore/ledger-<phiên>` từ đầu — thêm vào checklist
+  phiên kế.
