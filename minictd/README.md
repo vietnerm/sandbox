@@ -83,10 +83,22 @@ Trường RunSpec không thực thi được (Memory/CPUs/User/Network/…) đư
 
 ## Còn mở
 
-CG1 (cgroups: Memory/CPUs/pids), G3 (Traefik + wake probe theo port host), A2 (oci),
-S2–S6 từ review tích hợp (S1 FIXED #41) — chi tiết `docs/GAPS.md`.
+G3 (Traefik + wake probe theo port host), A2 (oci test), S3–S6 từ review tích
+hợp (S1 FIXED #41, S2/CG1 FIXED #4/D48) — chi tiết `docs/GAPS.md`.
 A3 reconcile: proactive ĐÃ CÓ (#91, `--reconcile-interval`); fleet-agent heartbeat
 (P4) vẫn mở.
+
+## Cgroups v2 resource enforcement (CG1/S2, #4, D48)
+
+Khi daemon có một cgroups v2 subtree writable (systemd user delegation, hoặc
+`--cgroup-root` / `$MINICTD_CGROUP_ROOT` trỏ vào base đã bootstrap): daemon tự
+đậu vào `<base>/minictd-daemon/`, bật `+memory +cpu +pids` trên
+`cgroup.subtree_control` của base, và mỗi instance nhận
+`<base>/minictd-apps/sandbox-<name>/` với `memory.max` (RunSpec.Memory),
+`cpu.max` (RunSpec.CPUs), `cpu.weight` (CPUShares, tuyến tính 1024→100),
+`pids.max` (PidsLimit) + shim PID migrate vào. Stats đọc cgroup accounting
+trước, /proc fallback sau. KHÔNG có base → fail-soft: hành vi pre-CG1
+(Notes + rlimit nproc) kèm note lý do đo được — instance vẫn boot được mọi nơi.
 
 ## Tài liệu
 

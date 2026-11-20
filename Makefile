@@ -62,6 +62,9 @@ test-debian: build rootfs-debian
 test-web: build rootfs
 	bash tests/test_web.sh
 
+test-cg: build minictd rootfs
+	bash tests/test_cg.sh
+
 # minictd: go unit tests (issue #50 regression + #91 reconcile) + e2e (23 cases): real daemon -> patched minict -> minict-exec
 test-minictd: build rootfs minictd
 	cd minictd && $(or $(GO),go) test -count=1 ./...
@@ -97,7 +100,7 @@ help:
 	@echo "make build        - build minict binary"
 	@echo "make rootfs       - build busybox rootfs (rootless)"
 	@echo "make rootfs-alpine- build alpine minirootfs rootfs (rootless)"
-	@echo "make test         - isolation (31) + seccomp (21) + netns (7) + alpine (8) + escape-alpine (31) + cve-check tool (4) + pasta (11; NET10-12/PT3/PT4/AB1 SKIP without tun), all suites always run"
+	@echo "make test         - isolation (31) + seccomp (21) + netns (7) + alpine (8) + escape-alpine (31) + cve-check tool (4) + pasta (11; NET10-12/PT3/PT4/AB1 SKIP without tun) + cg (6; CG0-CG5 SKIP without cgroups v2), all suites always run"
 	@echo "make test-pasta  - pasta connectivity suite only (issues #57/#79)"
 	@echo "make test-stack   - web stack suite (nginx+fcgiwrap+CGI+SQLite, 7 cases; issue #85)"
 	@echo "make test-escape  - same suites (alias, CI requirement)"

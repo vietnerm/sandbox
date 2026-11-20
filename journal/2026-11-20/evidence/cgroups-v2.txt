@@ -1,0 +1,59 @@
+=== CG1/S2 evidence — 2026-11-20 Phiên 13 (issue #4, cgroups v2) ===
+Env: kernel 5.10.134-013.15.kangaroo.al8 (cgroups V1 dev — suite env-gated), uid 1001
+Go 1.27.4; binaries: minictd + minict-exec (gcc -Wall -Wextra clean) + sandbox
+
+--- go vet + go unit tests (fake cgroup FS, 13 tests) ---
+$ cd minictd && go vet ./... && go test -count=1 ./...
+ok  github.com/vietnerm/sandbox/minictd/internal/minict
+ok  github.com/vietnerm/sandbox/minictd/internal/server
+(internal/minict: reconcile_test 4 + cgroup_test 13 PASS)
+
+--- make test (10 suites, dev) ---
+### suite: test_isolation.sh — OK        (31 case)
+### suite: test_seccomp.sh — OK          (21 case)
+### suite: test_netns.sh — OK            (7 case)
+### suite: test_alpine.sh — OK           (9 case)
+### suite: test_debian.sh — OK           (9 case: 8P+1S)
+### suite: test_escape_alpine.sh — OK    (31 case)
+### suite: test_cve_check.sh — OK        (4 case)
+### suite: test_pasta.sh — OK            (11 case: 5P+6S env-blocked tun)
+### suite: test_stack.sh — OK            (8 case)
+### suite: test_cg.sh — OK               (6 case: 0P + 6S — dev cgroups v1)
+=== run-suites summary: 10 suites, failed: none ===
+(dev tổng: 127 PASS + 13 SKIP, 0 FAIL)
+
+--- make test-web ---
+=== summary: PASS=9 FAIL=0 ===
+
+--- make test-minictd (e2e 23 case, dev) ---
+MD0 seccomp parity PASS ... MD22 deploy verify PASS
+=== summary: PASS=23 SKIP=0 FAIL=0 ===
++ go test ./... ok (daemon unit: autostart/reconcile/minictd 20→23 đã có + cgroup_test mới)
+
+--- negative controls (mutants, go unit trên fake FS) ---
+M-CG-1 (skip controller enable)     CAUGHT  (TestCgEnsureAppsFull: +memory missing)
+M-CG-2 (skip memory.max write)      CAUGHT  (TestCgApplyInto: file missing)
+M-CG-3 (skip shim pid migration)    CAUGHT  (TestCgApplyInto: procs empty)
+M-CG-4 (limits always empty)        CAUGHT  (TestCgApplyInto + TestLimitsFromSpec)
+M-CG-5 (cleanup no-op)              CAUGHT  (TestCgInstancePathAndCleanup: dir survives)
+ALL CAUGHT — code restored post-mutant, go test ok, gofmt clean.
+
+--- shell suite env gate (dev, cgroups v1) ---
+=== cgroups v2 enforcement tests ===
+no cgroups v2 unified hierarchy
+CG0..CG5: 0 PASS + 6 SKIP (env-gated) + 0 FAIL  → SKIP path verified, rc=0
+(PASS thật kỳ vọng trên runner ubuntu-24.04 v2 — log CI của PR)
+
+--- CVE check ---
+kernel 5.10.134; cve-check.py rc=0 (watchlist 16 rows; NVD transient timeout
+trên CVE-2024-21626 — ERR logged, gate treats as not-scored, minh bạch)
+cve-gate rc=0 → 0 CVE mới ngoài watchlist
+artifacts: journal/2026-11-20/cve/cgroups-v2.md|.json
+
+--- host baseline ---
+21d5de2d… /etc/passwd | (shadow unreadable uid 1001) | 223fe856… /bin/bash | a59f393b… /usr/bin/sudo
+3/3 khớp evidence Phiên 12 (daemon-service.txt) → UNCHANGED
+listeners: cùng tập nền infra + next-server:3000 (dev tooling, không phải sandbox)
+
+--- perf (perf-check, gate không đổi — cold path runtime không đụng) ===
+cold_start_ms: 2.15 (≤100) | rss_kb: 1128 (≤10240) | disk_base_mb: 2.04 (≤20) → PASS

@@ -40,6 +40,7 @@ func main() {
 		gateway    = flag.String("sandbox-gateway", "10.200.0.1", "defensive stub gateway reported by NetworkSubnets")
 		autostart  = flag.Bool("autostart", false, "on boot, Start() every instance that was running when the daemon went away (wake-recreate from spec.json; issue #91, D47)")
 		reconcile  = flag.Int("reconcile-interval", 0, "proactive A3 reconcile loop interval in seconds (0 = off): heal state.json for instances whose payload died outside a query (issue #91, D47)")
+		cgRoot     = flag.String("cgroup-root", os.Getenv("MINICTD_CGROUP_ROOT"), "cgroups v2 enforcement base (CG1/S2, issue #4; default $MINICTD_CGROUP_ROOT then the daemon's own delegated cgroup; enforcement degrades to notes + rlimit when no writable v2 subtree exists)")
 		showVer    = flag.Bool("version", false, "print version and exit")
 	)
 	flag.Parse()
@@ -99,6 +100,7 @@ func main() {
 		BaseRootfs:     *baseRootfs,
 		SandboxSubnet:  *subnet,
 		SandboxGateway: *gateway,
+		CgroupRoot:     *cgRoot,
 		Log:            log,
 	}
 

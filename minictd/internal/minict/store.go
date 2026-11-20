@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -42,6 +43,15 @@ type Store struct {
 	// so this is belt-and-braces, not routing truth).
 	SandboxSubnet  string
 	SandboxGateway string
+	// CgroupRoot overrides the cgroups v2 enforcement base (CG1/S2,
+	// issue #4). Empty = auto-probe from the daemon's own cgroup
+	// (/proc/self/cgroup); on hosts without a delegated subtree the
+	// probe fails soft and enforcement degrades to notes + rlimit.
+	CgroupRoot string
+	// cg is the lazily-resolved cgroup manager (CG1). Guarded by cgMu
+	// because Run/Start can run concurrently for different instances.
+	cg   *cgroupManager
+	cgMu sync.Mutex
 	// Log receives structured daemon logging.
 	Log *slog.Logger
 }
@@ -87,6 +97,11 @@ type InstanceState struct {
 	Exited     bool        `json:"exited,omitempty"`
 	ExitCode   int         `json:"exit_code,omitempty"` // recorded by the reaper goroutine, when known
 	KilledBy   string      `json:"killed_by,omitempty"` // "stop" | "remove" — distinguishes an operator stop
+	// CgroupPath is the cgroups v2 dir enforcing this instance's
+	// resources (CG1/S2, issue #4). Empty = not enforced (notes-only
+	// fallback). Persisted so Stop/Remove/heal can clean it up even
+	// across a daemon restart.
+	CgroupPath string `json:"cgroup_path,omitempty"`
 }
 
 // nameRe mirrors docker's name charset: alphanumeric first char, then
@@ -252,6 +267,16 @@ func (s *Store) alive(st *InstanceState) *InstanceState {
 			st.Exited = true
 			st.ExitCode = 0 // cause unknown from outside; reaper refines when it saw the wait
 		}
+		// CG1/S2 deliberate NON-cleanup (SIA medium finding REASSESSED):
+		// the heal path must NOT rmdir the instance cgroup — an exited
+		// instance keeps its cgroup for post-mortem counter reads
+		// (memory.peak/memory.events, docker keeps the exited container's
+		// cgroup until rm), and the CI suite reads those counters AFTER the
+		// exit (measured: a heal-time rmdir erased the evidence between the
+		// exit and the read — run 44711850479). Cleanup stays on the two
+		// paths that release the instance identity: Stop (CgroupPath=“”) and
+		// Remove (dir unlink); an empty cgroup dir holds no processes and
+		// costs nothing until then.
 		_ = s.saveState(st.Name, st)
 	}
 	return st
@@ -320,7 +345,11 @@ func parseDockerSize(s string) (int64, error) {
 // patched minict.c parses host-side before unshare). Every directive it
 // emits is validated here too — the C parser is the second, fail-closed
 // gate. Anything minict cannot honour becomes a Note, never a silent lie.
-func renderSpec(spec *contract.RunSpec, ports []int) (lines, notes []string, err error) {
+//
+// cgAvail tells whether cgroups v2 enforcement is possible (CG1/S2,
+// issue #4): when true the resource-limit notes record the cgroup mapping
+// applied after spawn; when false they keep the pre-CG1 fallback wording.
+func renderSpec(spec *contract.RunSpec, ports []int, cgAvail bool) (lines, notes []string, err error) {
 	addNote := func(f string, a ...any) { notes = append(notes, fmt.Sprintf(f, a...)) }
 
 	// --- hostname ---
@@ -438,12 +467,21 @@ func renderSpec(spec *contract.RunSpec, ports []int) (lines, notes []string, err
 		}
 	}
 
-	// --- PidsLimit -> rlimit nproc (approximation; cgroups pids.max is
-	// unavailable in this build, CG1) ---
-	if spec.PidsLimit > 0 && !sawNproc {
-		v := fmt.Sprintf("%d", spec.PidsLimit)
-		lines = append(lines, "ulimit nproc="+v+":"+v)
-		addNote("PidsLimit=%d mapped to rlimit nproc (per-uid approximation, not cgroups pids.max)", spec.PidsLimit)
+	// --- PidsLimit: cgroups v2 pids.max when available (CG1/S2), rlimit
+	// nproc approximation otherwise ---
+	// S2 measured on the runner (CI 44700961938): a shared per-uid nproc
+	// of 16 starves the shim itself (the runner user owns many unrelated
+	// processes), killing the payload before it starts — exactly the gap
+	// S2 documents. With cgroups v2 available the scoped pids.max is the
+	// only pid bound; the shared nproc rlimit is dropped.
+	if spec.PidsLimit > 0 {
+		if cgAvail {
+			addNote("PidsLimit=%d enforced via cgroups v2 pids.max (CG1/S2 — shared per-uid rlimit nproc dropped)", spec.PidsLimit)
+		} else if !sawNproc {
+			v := fmt.Sprintf("%d", spec.PidsLimit)
+			lines = append(lines, "ulimit nproc="+v+":"+v)
+			addNote("PidsLimit=%d mapped to rlimit nproc (per-uid approximation, not cgroups pids.max)", spec.PidsLimit)
+		}
 	}
 
 	// --- preview relays: one webport directive per port ---
@@ -475,13 +513,28 @@ func renderSpec(spec *contract.RunSpec, ports []int) (lines, notes []string, err
 		}
 	}
 	if spec.CPUShares > 0 {
-		addNote("CPUShares=%d not enforced (no cgroups in this build, CG1)", spec.CPUShares)
+		if cgAvail {
+			addNote("CPUShares=%d enforced via cgroups v2 cpu.weight=%d (CG1/S2)", spec.CPUShares, sharesToWeight(spec.CPUShares))
+		} else {
+			addNote("CPUShares=%d not enforced (no cgroups in this build, CG1)", spec.CPUShares)
+		}
 	}
 	if spec.CPUs != "" {
-		addNote("CPUs=%q not enforced (no cgroups in this build, CG1)", spec.CPUs)
+		if cgAvail {
+			addNote("CPUs=%q enforced via cgroups v2 cpu.max (quota x %d period, CG1/S2)", spec.CPUs, cgroupCPUPeriod)
+		} else {
+			addNote("CPUs=%q not enforced (no cgroups in this build, CG1)", spec.CPUs)
+		}
 	}
 	if spec.Memory != "" || spec.MemorySwap != "" {
-		addNote("Memory=%q MemorySwap=%q not enforced (no cgroups in this build, CG1)", spec.Memory, spec.MemorySwap)
+		if cgAvail {
+			addNote("Memory=%q enforced via cgroups v2 memory.max (CG1/S2)", spec.Memory)
+		} else {
+			addNote("Memory=%q MemorySwap=%q not enforced (no cgroups in this build, CG1)", spec.Memory, spec.MemorySwap)
+		}
+	}
+	if spec.MemorySwap != "" && cgAvail {
+		addNote("MemorySwap=%q not mapped (v2 memory.swap.max is a separate knob; memory.max is set, CG1/S2)", spec.MemorySwap)
 	}
 	if spec.User != "" {
 		addNote("User=%q ignored: minict runs the payload as the userns-mapped root uid", spec.User)
@@ -506,9 +559,24 @@ func payloadArgs(spec *contract.RunSpec) []string {
 // process is reaped by a goroutine (prevents zombies); liveness of the
 // recorded pid is derived from /proc with pid-reuse protection, so the
 // reaper goroutine only logs — it never writes state.json concurrently.
-func (s *Store) spawnPayload(name string, dir string, spec *contract.RunSpec) (pid int, startTicks uint64, err error) {
+func (s *Store) spawnPayload(name string, dir string, spec *contract.RunSpec, cgDir string) (pid int, startTicks uint64, err error) {
 	args := append([]string{s.MinictBin, filepath.Join(dir, "rootfs")}, payloadArgs(spec)...)
-	cmd := exec.Command(args[0], args[1:]...)
+	var cmd *exec.Cmd
+	if cgDir != "" {
+		// CG1/S2 migrate-before-exec (D48): a plain sh launcher writes its
+		// own pid into the instance cgroup and execs the runtime, so the
+		// shim AND its payload are born inside the cgroup (post-spawn
+		// migration races minict's payload fork — measured on CI runs
+		// 44702053556/44703016076). exec keeps the pid, so state.json
+		// records the same host pid either way.
+		launcher := `cgdir="$1"; shift
+echo "$$" > "$cgdir/cgroup.procs" || exit 125
+exec "$@"`
+		launchArgs := append([]string{"sh", "-c", launcher, "sh", cgDir}, args...)
+		cmd = exec.Command(launchArgs[0], launchArgs[1:]...)
+	} else {
+		cmd = exec.Command(args[0], args[1:]...)
+	}
 	cmd.Env = append(childEnv(), "MINICT_SPEC="+filepath.Join(dir, fMspec))
 	logf, err := os.OpenFile(filepath.Join(dir, fLog), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {

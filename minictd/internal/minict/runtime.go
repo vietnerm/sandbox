@@ -60,7 +60,10 @@ func (s *Store) Run(ctx context.Context, spec contract.RunSpec) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	lines, notes, err := renderSpec(&spec, ports)
+	// CG1/S2: resolve the cgroup manager once so renderSpec can note the
+	// true enforcement posture (cgroup mapping vs fallback).
+	cgAvail := s.cgroupManager().Avail
+	lines, notes, err := renderSpec(&spec, ports, cgAvail)
 	if err != nil {
 		return "", err
 	}
@@ -75,7 +78,12 @@ func (s *Store) Run(ctx context.Context, spec contract.RunSpec) (string, error) 
 		return "", err
 	}
 
-	pid, ticks, err := s.spawnPayload(spec.Name, dir, &spec)
+	// CG1/S2: create the cgroup and set the limits BEFORE the payload
+	// spawns; when enforced, spawnPayload uses the migrate-before-exec
+	// launcher so the shim and its payload are born inside the cgroup.
+	cgDir, cgNotes := s.cgroupPrepare(spec.Name, &spec)
+	notes = append(notes, cgNotes...)
+	pid, ticks, err := s.spawnPayload(spec.Name, dir, &spec, cgDir)
 	if err != nil {
 		return "", err
 	}
@@ -95,6 +103,7 @@ func (s *Store) Run(ctx context.Context, spec contract.RunSpec) (string, error) 
 		ExecMode:   execMode(s),
 		RootfsSrc:  spec.Image,
 		Notes:      notes,
+		CgroupPath: s.cgroupInstancePath(spec.Name),
 	}
 	if err := s.saveState(spec.Name, st); err != nil {
 		return "", err
@@ -208,6 +217,8 @@ func (s *Store) Remove(ctx context.Context, name string) error {
 	for _, pp := range st.ProxyPIDs {
 		s.killBestEffort(pp, 200*time.Millisecond)
 	}
+	// CG1/S2: reclaim the instance cgroup with the instance itself.
+	s.cgroupCleanup(st.CgroupPath)
 	if err := os.RemoveAll(s.dir(name)); err != nil {
 		return err
 	}
@@ -256,7 +267,9 @@ func (s *Store) Start(ctx context.Context, name string) error {
 		}
 	}
 
-	pid, ticks, err := s.spawnPayload(name, s.dir(name), spec)
+	// CG1/S2: same prepare-before-spawn contract as Run.
+	cgDir, cgNotes := s.cgroupPrepare(name, spec)
+	pid, ticks, err := s.spawnPayload(name, s.dir(name), spec, cgDir)
 	if err != nil {
 		return err
 	}
@@ -271,6 +284,8 @@ func (s *Store) Start(ctx context.Context, name string) error {
 	st.ExitCode = 0
 	st.KilledBy = ""
 	st.Notes = append(st.Notes, proxyNotes...)
+	st.Notes = append(st.Notes, cgNotes...)
+	st.CgroupPath = s.cgroupInstancePath(name)
 	if err := s.saveState(name, st); err != nil {
 		return err
 	}
@@ -319,6 +334,9 @@ func (s *Store) Stop(ctx context.Context, name string, timeoutSec int) error {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
+	// CG1/S2: the payload is gone — reclaim the instance cgroup.
+	s.cgroupCleanup(st.CgroupPath)
+	st.CgroupPath = ""
 
 	st.State = StateStopped
 	st.PID = 0
@@ -488,10 +506,11 @@ func (s *Store) ListByNamePrefix(ctx context.Context, prefix string) ([]string, 
 	return names, nil
 }
 
-// Stats samples one resource reading. Memory = RSS tree sum (no cgroups,
-// CG1); CPU = 250ms /proc window normalized to one core; Net/Block = 0
-// (loopback-only netns, no cgroup accounting) — documented in
-// contract.Stats.
+// Stats samples one resource reading. When cgroups v2 enforcement is on
+// (CG1/S2) memory/pids/cpu come from the instance's cgroup accounting
+// (memory.current, pids.current, cpu.stat usage over a 250ms window),
+// falling back to the /proc RSS tree when the cgroup files are unreadable.
+// Net/Block = 0 (loopback-only netns) — documented in contract.Stats.
 func (s *Store) Stats(ctx context.Context, name string) (contract.Stats, error) {
 	st, err := s.loadState(name)
 	if err != nil {
@@ -515,9 +534,24 @@ func (s *Store) Stats(ctx context.Context, name string) (contract.Stats, error) 
 	}
 
 	if st.State == StateRunning {
-		out.CPUPercent = cpuSample(st.PID, 250*time.Millisecond)
-		out.MemUsageBytes = rssTree(st.PID)
-		out.PIDs = len(descendants(st.PID))
+		if st.CgroupPath != "" {
+			if mem, pids, cpu, ok := cgStats(st.CgroupPath, 250*time.Millisecond); ok {
+				out.MemUsageBytes = mem
+				out.PIDs = pids
+				out.CPUPercent = cpu
+				if lim, ok2 := cgReadInt(filepath.Join(st.CgroupPath, "memory.max")); ok2 && lim > 0 {
+					out.MemLimitBytes = lim
+				}
+			} else {
+				out.CPUPercent = cpuSample(st.PID, 250*time.Millisecond)
+				out.MemUsageBytes = rssTree(st.PID)
+				out.PIDs = len(descendants(st.PID))
+			}
+		} else {
+			out.CPUPercent = cpuSample(st.PID, 250*time.Millisecond)
+			out.MemUsageBytes = rssTree(st.PID)
+			out.PIDs = len(descendants(st.PID))
+		}
 	}
 	if out.MemLimitBytes > 0 {
 		out.MemPercent = float64(out.MemUsageBytes) / float64(out.MemLimitBytes) * 100.0

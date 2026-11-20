@@ -1,8 +1,40 @@
-{"date": "2026-11-20", "mode": "apply", "halted": false, "halt_reason": "",
+{
+ "date": "2026-11-20",
+ "mode": "plan",
+ "halted": false,
+ "halt_reason": "",
  "branches": [
-  {"name": "fix/80-alpine-hygiene", "head_sha": "689f17161180f53d185a4c3baa1ed7b0adebdae4",
-   "decision": "MERGE", "reason": "G1-G8 PASS @ 689f171 — SCR PASS x3 + M-CONTAM/M-FLOW caught + SIA PASS (audit:pass) + CI xanh run #206; squash 282234a match-head; #80 auto-close",
-   "pr": 83, "issue": 80, "gates": {"G1": true, "G2": true, "G3": true, "G4": true, "G5": true, "G6": true, "G7": true, "G8": true},
-   "archive_tag": "", "done": true, "error": ""}
+  {
+   "name": "chore/ledger-12",
+   "head_sha": "9c2e4d4",
+   "decision": "DELETE_MERGED",
+   "reason": "PR #94 MERGED, headRefOid matches branch HEAD; remote already deleted; delete local only at Pha E",
+   "pr": 94,
+   "issue": 0,
+   "gates": {
+    "G1": true
+   },
+   "archive_tag": "",
+   "done": true,
+   "error": ""
+  },
+  {
+   "name": "feat/91-daemon-service",
+   "head_sha": "b3c44ac",
+   "decision": "DELETE_MERGED",
+   "reason": "PR #92 MERGED (squash 7803730), headRefOid matches branch HEAD; remote already deleted; delete local only at Pha E",
+   "pr": 92,
+   "issue": 91,
+   "gates": {
+    "G1": true
+   },
+   "archive_tag": "",
+   "done": true,
+   "error": ""
+  }
  ],
- "remaining_branches": ["main"], "main_ci_after": "success"}
+ "remaining_branches": [
+  "main"
+ ],
+ "main_ci_after": "success"
+}
