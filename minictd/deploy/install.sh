@@ -46,7 +46,8 @@ fi
 
 BINDIR_ABS="$HOME_DIR/$BINDIR"
 mkdir -p "$BINDIR_ABS" "$HOME_DIR/.config/systemd/user" \
-         "$HOME_DIR/.config/minictd" "$HOME_DIR/.local/state/minictd"
+         "$HOME_DIR/.config/minictd" "$HOME_DIR/.config/minictd/traefik" \
+         "$HOME_DIR/.local/state/minictd"
 
 # Binaries: copy from repo bin/ if present (build first: make -C minictd).
 for b in minictd minict-exec; do

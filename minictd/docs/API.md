@@ -21,6 +21,7 @@ Auth: `Authorization: Bearer <token>` — **mandatory** (token from `$MINICTD_TO
 | 14 | NetworkSubnets | `GET /v1/subnets?network=x` | — | `200 {"subnets":[...],"gateways":[...]}` |
 | — | healthz | `GET /healthz` | — | `200 {"ok":"1"}` |
 | — | RawState (extra) | `GET /v1/sandboxes/{name}/state` | — | `200 InstanceState` (notes, proxy pids, exec mode) · 404 |
+| — | Wake (extra, G3 #97) | `POST /v1/sandboxes/{name}/wake` | — | `200 {"ports":{"8125":true}}` per-port TCP-ready over 127.0.0.1 · 404 · **409 not running** |
 
 Status codes: `404` = `contract.ErrNotFound`; `409` = exec on a non-running
 instance; `400` = validation; `401` = bad token; `500` = the rest.
@@ -55,6 +56,26 @@ daemon watchdog: TERM to the exec process group, SIGKILL after 2s, result
 stdout/stderr frames interleave; exactly one `exit` frame terminates the
 stream. The HTTP client re-materializes this into two `io.ReadCloser`s +
 `wait()` — the exact `ExecV2Stream` signature of docker.Client.
+
+## Wake (G3 preview, issue #97)
+
+minict sandboxes have no bridge IP (`BridgeIP()` is always `""` —
+MERGE-GUIDE Step 5), so the wake probe dials `127.0.0.1:<port>` on the
+minictd node (the unix-socket bridge keeps the port host-reachable while
+the instance runs; TCP-ready within ~2.5s of Run/Start). Response carries
+one boolean per preview port:
+
+```bash
+curl -s -X POST localhost:7601/v1/sandboxes/s-demo01/wake
+# {"ports":{"8125":true}}
+```
+
+When `--traefik-dir` is set the daemon also generates one Traefik
+file-provider route per running instance
+(`sandbox-<name>.yml`: `s-<name>.<domain>` → `http://127.0.0.1:<port>`,
+multi-port D24 → `s-<name>-p<port>`), removed on Stop/Remove and rebuilt
+at daemon boot / reconcile (fail-soft: errors never fail the instance op;
+operator files without the `sandbox-` prefix are never touched).
 
 ## curl examples
 

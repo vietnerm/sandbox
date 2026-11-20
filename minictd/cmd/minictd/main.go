@@ -41,6 +41,8 @@ func main() {
 		autostart  = flag.Bool("autostart", false, "on boot, Start() every instance that was running when the daemon went away (wake-recreate from spec.json; issue #91, D47)")
 		reconcile  = flag.Int("reconcile-interval", 0, "proactive A3 reconcile loop interval in seconds (0 = off): heal state.json for instances whose payload died outside a query (issue #91, D47)")
 		cgRoot     = flag.String("cgroup-root", os.Getenv("MINICTD_CGROUP_ROOT"), "cgroups v2 enforcement base (CG1/S2, issue #4; default $MINICTD_CGROUP_ROOT then the daemon's own delegated cgroup; enforcement degrades to notes + rlimit when no writable v2 subtree exists)")
+		traefikDir = flag.String("traefik-dir", "", "directory for generated Traefik file-provider routes (G3, issue #97; one sandbox-<name>.yml per running instance; empty = feature off)")
+		tfDomain   = flag.String("traefik-domain", "localhost", "domain suffix for generated Traefik Host() rules (s-<name>.<domain>, G3)")
 		showVer    = flag.Bool("version", false, "print version and exit")
 	)
 	flag.Parse()
@@ -101,7 +103,18 @@ func main() {
 		SandboxSubnet:  *subnet,
 		SandboxGateway: *gateway,
 		CgroupRoot:     *cgRoot,
+		TraefikDir:     *traefikDir,
+		TraefikDomain:  *tfDomain,
 		Log:            log,
+	}
+
+	// G3 (issue #97): reality first — rebuild the route dir from the
+	// state dir at boot (covers daemon restarts with Traefik watching
+	// the directory while minictd was away).
+	if *traefikDir != "" {
+		if err := store.SyncAllRoutes(); err != nil {
+			log.Warn("minictd: route sync failed", "err", err.Error())
+		}
 	}
 
 	srv := server.New(store, *token, log)

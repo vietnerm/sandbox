@@ -1,0 +1,41 @@
+=== G3 validation (feat/97-g3-preview-routing) 2026-11-20 10:36:39 ===
+### suite: test_stack.sh — OK
+### suite: test_cg.sh
+=== cgroups v2 enforcement tests (2026-11-20 10:37:50) — api :17704 ===
+no cgroups v2 unified hierarchy
+env gate: bootstrap unavailable — probe said no
+CG-BOOT bootstrap+probe:enforced                                     SKIP
+      (env-blocked: see case)
+CG-MEM memory.max file written                                      SKIP
+      (env-blocked: see case)
+CG-OOM kernel OOM heal->stopped                                     SKIP
+      (env-blocked: see case)
+CG-PIDS pids.max blocks fork burst                                   SKIP
+      (env-blocked: see case)
+CG-STATS stats from cgroup accounting                                 SKIP
+      (env-blocked: see case)
+CG-RM remove reclaims cgroup dir                                   SKIP
+      (env-blocked: see case)
+=== cg suite: 0 PASS + 6 SKIP (env-gated) + 0 FAIL ===
+### suite: test_cg.sh — OK
+=== run-suites summary: 10 suites, failed: none ===
+--- test-web ---
+WEB8  symlink to ATTACKER host socket -> zero leak             PASS
+WEB7  symlink at socket path -> proxy refuses (no follow)      PASS
+WEB9  resolver: ancestor symlink blocked, positive control     PASS
+WEB6  down closes port and leaves no processes                 PASS
+=== summary: PASS=9 FAIL=0 ===
+--- host baseline ---
+21d5de2dc39f2ceb19e33f8cc124b311b57a48aea6d7703a9a98b93079d412bd  /etc/passwd
+223fe8564b60636bc738b6178d3ba9a50ef7d791266b0efae6363bb716e4c47f  /bin/bash
+a59f393bad5037644b89de64fe558ae6d5d1473c25c63022241e7c7019ad2f0c  /usr/bin/sudo
+--- listeners ---
+LISTEN 0      2048       127.0.0.1:12600      0.0.0.0:*                                              
+LISTEN 0      128        127.0.0.1:19001      0.0.0.0:*                                              
+LISTEN 0      511        127.0.0.1:12700      0.0.0.0:*                                              
+LISTEN 0      1024         0.0.0.0:19005      0.0.0.0:*                                              
+LISTEN 0      128          0.0.0.0:19006      0.0.0.0:*                                              
+LISTEN 0      4096               *:81               *:*                                              
+LISTEN 0      511                *:3000             *:*    users:(("next-server (v1",pid=1197,fd=22))
+--- leftover processes ---
+none

@@ -293,5 +293,27 @@ func (c *HTTPClient) NetworkSubnets(ctx context.Context, network string) (subnet
 	return out.Subnets, out.Gateways, nil
 }
 
+// Wake probes the preview ports of a running instance over host loopback
+// (G3, issue #97 — non-contract extra, not part of the Runtime interface:
+// only minict nodes serve it). BridgeIP() is always "" for minictd, so the
+// wake probe dials 127.0.0.1:<port> (MERGE-GUIDE Step 5). 404 when the
+// instance does not exist, 409 when it is stopped (same mapping as
+// exec/stop). Returns per-port TCP-ready status.
+func (c *HTTPClient) Wake(ctx context.Context, name string) (map[int]bool, error) {
+	var out map[string]bool
+	if err := c.call(ctx, "POST", "/v1/sandboxes/"+url.PathEscape(name)+"/wake", nil, &out); err != nil {
+		return nil, err
+	}
+	ports := make(map[int]bool, len(out))
+	for k, v := range out {
+		p, perr := strconv.Atoi(k)
+		if perr != nil {
+			return nil, fmt.Errorf("wake %s: bad port key %q", name, k)
+		}
+		ports[p] = v
+	}
+	return ports, nil
+}
+
 // Compile-time proof that HTTPClient satisfies the runtime contract.
 var _ Runtime = (*HTTPClient)(nil)

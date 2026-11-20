@@ -20,6 +20,8 @@
 //	exec <name> [cmd...]    exec a command, print stdout/stderr, exit code
 //	inspect <name>          docker-shaped inspect JSON
 //	stats <name>            one resource sample as JSON
+//	wake <name>             probe preview ports over host loopback (G3:
+//	                        per-port TCP-ready map; 409 stopped, 404 gone)
 //	logs <name> [--tail N]  stream instance log (no follow in v1)
 //	version                 daemon version
 //
@@ -201,6 +203,16 @@ loop:
 			return err
 		}
 		return emitJSON(st)
+
+	case "wake":
+		if len(rest) != 1 {
+			return errUsage("wake <name>")
+		}
+		ports, err := rt.Wake(ctx, rest[0])
+		if err != nil {
+			return err
+		}
+		return emitJSON(ports)
 
 	case "logs":
 		if len(rest) < 1 {

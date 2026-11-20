@@ -83,8 +83,8 @@ Trường RunSpec không thực thi được (Memory/CPUs/User/Network/…) đư
 
 ## Còn mở
 
-G3 (Traefik + wake probe theo port host), A2 (oci test), S3–S6 từ review tích
-hợp (S1 FIXED #41, S2/CG1 FIXED #4/D48) — chi tiết `docs/GAPS.md`.
+A2 (oci test), S3–S6 từ review tích
+hợp (S1 FIXED #41, S2/CG1 FIXED #4/D48, G3 FIXED #97/D49) — chi tiết `docs/GAPS.md`.
 A3 reconcile: proactive ĐÃ CÓ (#91, `--reconcile-interval`); fleet-agent heartbeat
 (P4) vẫn mở.
 

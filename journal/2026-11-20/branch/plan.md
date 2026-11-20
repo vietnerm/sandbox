@@ -110,3 +110,24 @@ SBG MODE=apply chạy lại ở Pha C/E.
 
 → KHÔNG dừng. Sang Pha D (việc mới — GĐ2, issue thấp nhất còn mở). SBG
 MODE=apply chạy lại ở Pha C/E.
+
+## Phiên 14 — SBG MODE=plan (Pha A, 2026-11-20T10:1xZ)
+
+- `git fetch --prune origin '+refs/heads/*:refs/remotes/origin/*' --tags` — xong.
+- Nhánh remote: **chỉ `main`** (`gh api repos/vietnerm/sandbox/branches`).
+- PR mở: **0** (`gh pr list --state open`: rỗng) → Pha B/C không có việc.
+- CI `main`: **success** — `ci` + `unicode-guard` @ `8291da8` (ledger Phiên 13).
+
+## Bảng quyết định
+
+| branch | ahead/behind | PR | quyết định | lý do |
+|---|---|---|---|---|
+| (không có nhánh ≠ main) | — | — | — | remote chỉ còn `main` sau Phiên 13 |
+
+## Điều kiện dừng (§0.6)
+
+- CI `main` đỏ: **không** (success @ 8291da8).
+- Issue `type:security` `priority:p0` CVE critical chưa vá: **không** (#8 là p2 monitor).
+- Host baseline báo thay đổi trong ngày: **không** (Phiên 13 ghi unchanged; kiểm lại Bước 7).
+
+→ KHÔNG dừng. Chế độ plan: không gộp/xoá gì.
