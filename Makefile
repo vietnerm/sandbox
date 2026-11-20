@@ -1,7 +1,7 @@
 # Root Makefile — entry points required by PROMPT.MD / CI.
 # The binary build itself lives in sandbox/Makefile.
 
-.PHONY: all build minictd rootfs rootfs-alpine test test-escape test-escape-alpine test-seccomp test-netns test-alpine test-web test-stack test-minictd test-pasta unicode-check test-unicode test-cve-gate perf-check cve-check bench clean help
+.PHONY: all build minictd rootfs rootfs-alpine rootfs-debian test test-escape test-escape-alpine test-seccomp test-netns test-alpine test-debian test-web test-stack test-minictd test-pasta unicode-check test-unicode test-cve-gate perf-check cve-check bench clean help
 
 all: build
 
@@ -18,9 +18,14 @@ rootfs:
 rootfs-alpine:
 	bash sandbox/mkrootfs-alpine.sh rootfs-alpine
 
-# isolation suite (29 cases) + seccomp blocklist suite (21 cases)
-# + netns suite (7 cases) + alpine-rootfs suite (8 cases)
-# + escape-alpine suite (29 cases) + cve-check tool suite (4 cases)
+rootfs-debian:
+	bash tools/fetch-debian-rootfs.sh rootfs-debian
+
+# isolation suite (31 cases) + seccomp blocklist suite (21 cases)
+# + netns suite (7 cases) + alpine-rootfs suite (9 cases)
+# + debian-rootfs suite (8 cases: DB1–DB6/DB8 always run, DB7 env-gated SKIP
+#   without /dev/net/tun — D46; rootfs-debian fetched pinned+sha256, gitignored)
+# + escape-alpine suite (31 cases) + cve-check tool suite (4 cases)
 # + pasta connectivity suite (11 cases: PT1/PT2/NET11C/PT3C/PT4C always run,
 #   NET10/NET11/NET12/PT3/PT4/AB1 env-gated SKIP without /dev/net/tun — D37/D42/D43)
 test: build rootfs
@@ -50,6 +55,9 @@ test-netns: build rootfs
 
 test-alpine: build rootfs-alpine
 	bash tests/test_alpine.sh
+
+test-debian: build rootfs-debian
+	bash tests/test_debian.sh
 
 test-web: build rootfs
 	bash tests/test_web.sh
