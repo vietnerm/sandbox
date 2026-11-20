@@ -243,7 +243,7 @@ run_case CG-MEM "memory.max file == 67108864 + shim pid inside" pass cgmem
 # CG2: kernel OOM — payload allocates 96m > 64m cap; daemon (reconcile 1s)
 # must heal the dead payload to stopped.
 cgoom() {
-    api POST /v1/run '{"name":"cg-oom","image":"base","memory":"64m","cmd":["/bin/sh","-c","a=$(dd if=/dev/zero bs=1024k count=96 2>/dev/null); echo alloc-done"]}' >/dev/null || return 1
+    api POST /v1/run '{"name":"cg-oom","image":"base","memory":"64m","cmd":["/bin/sh","-c","dd if=/dev/zero of=/tmp/big bs=1024k count=96 2>/dev/null; echo alloc-done"]}' >/dev/null || return 1
     local i state
     for i in $(seq 1 20); do
         sleep 1
@@ -258,7 +258,7 @@ cgoom() {
     local events
     events="$(cat "$CGROOT/minictd-apps/sandbox-cg-oom/memory.events" 2>/dev/null | tr '\n' ' ')"
     echo "$events" | grep -q 'oom_kill [1-9]' || {
-        echo "cgoom: no kernel oom_kill record (events=[$events])"; cg_diag cgoom
+        echo "cgoom: no kernel oom_kill record (events=[$events] peak=$(cat "$CGROOT/minictd-apps/sandbox-cg-oom/memory.peak" 2>/dev/null))"; cg_diag cgoom
         return 1
     }
 }
@@ -270,8 +270,10 @@ cgpids() {
     api POST /v1/run '{"name":"cg-pids","image":"base","pids_limit":16,"cmd":["/bin/sh","-c","n=0; for i in $(seq 1 64); do if sleep 300 & then n=$((n+1)); fi; done; echo FORKED=$n > /tmp/forkcount; wait"]}' >/dev/null || return 1
     sleep 0.5
     api GET /v1/sandboxes/cg-pids >/dev/null && [[ "$(jget 'd["State"]["Status"]')" == running ]] || {
-        echo "cgpids: instance not running right after Run"; cg_diag cgpids
-        api GET "/v1/sandboxes/cg-pids/logs" >/dev/null 2>&1 && echo "cgpids: instance log: $(head -c 500 "$WORK/resp")"
+        echo "cgpids: instance not running right after Run"
+        api GET "/v1/sandboxes/cg-pids/logs" >/dev/null 2>&1 && echo "cgpids: instance log: $(head -c 600 "$WORK/resp")"
+        api GET "/v1/sandboxes/cg-pids/state" >/dev/null 2>&1 && echo "cgpids: state fields: $(head -c 700 "$WORK/resp")"
+        cg_diag cgpids
         return 1
     }
     # poll for the marker: the payload writes it only after the loop ends
