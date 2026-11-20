@@ -9,7 +9,7 @@
 # unpacked, measured D46) — gitignored, rebuilt when missing, same class as
 # rootfs-alpine (D36) and tools/bin/pasta (D34/D37).
 #
-# Cases (8):
+# Cases (9):
 #   DB1    boot: dash payload, /bin/sh executable, NO busybox in rootfs
 #          (anti-vacuous: proves we are NOT secretly on busybox)
 #   DB2    glibc dynamic linking works in sandbox: dpkg --version
@@ -30,6 +30,8 @@
 #   DB8    pristine guard on the SHARED rootfs-debian (AL9 pattern, gitignored
 #          variant): content manifest unchanged during the suite + no tree in
 #          the shared dpkg DB (mutating cases run in PRIVATE instance copies)
+#   DB9    self-referential /bin/sh symlink in a user rootfs → rc=125 FAST,
+#          no hang (SIA PR #89 medium: symlink-chain cap + fail-closed)
 #
 # Env gates (never fake-PASS, D34/D36/D39):
 #   - rootfs-debian missing + fetch fails → rc 125 = SKIP for the whole
@@ -201,7 +203,9 @@ db4_test() {
     up "$NAME_D-own" --rootfs "$DROOTFS" -- \
         /bin/sh -c 'touch /var/tmp/own-test && echo OWN_TOUCHED' >/dev/null 2>&1
     local rc_up=$? log="$REPO/instances/$NAME_D-own/log" ok=0
-    wait_for_log "$log" "OWN_TOUCHED" 100 && ok=1
+    # 200×0.1s = 20 s: cp -a of 83 MB on a slow CI disk must not false-FAIL
+    # (SIA PR #89 low — flaky-direction, not vacuous)
+    wait_for_log "$log" "OWN_TOUCHED" 200 && ok=1
     local host_uid_in_ns=-1
     if [[ $ok -eq 1 ]]; then
         host_uid_in_ns="$(stat -c %u "$REPO/instances/$NAME_D-own/rootfs/var/tmp/own-test" 2>/dev/null || echo -1)"
@@ -306,6 +310,34 @@ db8_test() {
     return $bad
 }
 run_case DB8 "shared rootfs pristine (manifest+dpkg DB) — #80 class" pass db8_test
+
+# DB9 — SIA PR #89 (medium): self-referential /bin/sh symlink (dash-style
+# relative target, or absolute cycles) in a user-provided rootfs must hit the
+# symlink-chain cap and fail closed FAST (rc=125) — the host-side sanity
+# check must never hang before fork. timeout 10 guards the regression.
+db9_test() {
+    local tmp out rc
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/bin"
+    if ! ln -s sh "$tmp/bin/sh" 2>/dev/null; then
+        # some dev containers block symlink creation entirely — env-blocked
+        # (CI runners allow it; the case runs for real there)
+        rm -rf "$tmp"
+        return 125
+    fi
+    # resolves to itself → chain cap 8
+    out="$(timeout 10 "$MINICT" "$tmp" /bin/sh -c 'true' 2>&1)"; rc=$?
+    rm -rf "$tmp"
+    if [[ $rc -ne 125 ]]; then
+        echo "       rc=$rc (expect 125 fast — no hang; timeout guard 10s)"
+        return 1
+    fi
+    echo "$out" | grep -q "symlink chain too deep" || {
+        echo "       missing fail-closed message"; return 1
+    }
+    return 0
+}
+run_case DB9 "self-symlink /bin/sh: rc=125 fast, no hang (SIA)" pass db9_test
 
 echo "=== summary: PASS=$PASS SKIP=$SKIP FAIL=$FAIL ==="
 echo "(SKIP = env-blocked on this host: no /dev/net/tun — real run on CI runners, D34/D37)"
