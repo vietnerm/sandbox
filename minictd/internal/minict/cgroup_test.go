@@ -212,42 +212,43 @@ func TestSharesToWeight(t *testing.T) {
 	}
 }
 
-// TestCgApplyInto: files land with the right values, shim pid migrated,
-// note records the enforcement. Mutant targets: skipping any write or the
-// pid migration fails these asserts.
-func TestCgApplyInto(t *testing.T) {
+// TestCgPrepareInto: files land with the right values BEFORE spawn (the
+// launcher — not this function — migrates the process; migration race
+// measured on CI runs 44702053556/44703016076). Mutant targets: skipping
+// any limit write fails these asserts.
+func TestCgPrepareInto(t *testing.T) {
 	base := fakeCgroupRoot(t, nil)
 	m := &cgroupManager{Base: base, Apps: filepath.Join(base, cgroupAppsDir), Avail: true}
 	if err := os.MkdirAll(m.Apps, 0755); err != nil {
 		t.Fatal(err)
 	}
 	spec := &contract.RunSpec{Memory: "32m", PidsLimit: 16}
-	notes := m.cgApplyInto("cg-app", spec, 424242)
+	cgDir, notes := m.cgPrepareInto("cg-app", spec)
 	dir := filepath.Join(m.Apps, "sandbox-cg-app")
+	if cgDir != dir {
+		t.Fatalf("cgDir = %q", cgDir)
+	}
 	if got := readFileStr(t, filepath.Join(dir, "memory.max")); got != strconv.Itoa(32*1024*1024) {
 		t.Fatalf("memory.max = %q", got)
 	}
 	if got := readFileStr(t, filepath.Join(dir, "pids.max")); got != "16" {
 		t.Fatalf("pids.max = %q", got)
 	}
-	if got := readFileStr(t, filepath.Join(dir, "cgroup.procs")); got != "424242" {
-		t.Fatalf("cgroup.procs = %q (shim not migrated)", got)
-	}
 	if len(notes) == 0 || !strings.Contains(notes[len(notes)-1], "cgroups v2 enforced") {
 		t.Fatalf("missing enforcement note: %v", notes)
 	}
 	// no limits → nothing applied
-	if n2 := m.cgApplyInto("cg-noop", &contract.RunSpec{}, 1); n2 != nil {
-		t.Fatalf("empty spec should apply nothing, got %v", n2)
+	if d2, n2 := m.cgPrepareInto("cg-noop", &contract.RunSpec{}); d2 != "" || n2 != nil {
+		t.Fatalf("empty spec should prepare nothing, got dir=%q notes=%v", d2, n2)
 	}
 	if _, err := os.Stat(filepath.Join(m.Apps, "sandbox-cg-noop")); !os.IsNotExist(err) {
 		t.Fatal("noop instance must not create a cgroup dir")
 	}
 }
 
-// TestCgApplyIntoPartial: a failed limit write degrades to a note, not an
-// error (fail-soft contract; partial enforcement recorded).
-func TestCgApplyIntoPartial(t *testing.T) {
+// TestCgPrepareIntoPartial: a failed limit write degrades to a note, not
+// an error (fail-soft contract; partial enforcement recorded).
+func TestCgPrepareIntoPartial(t *testing.T) {
 	base := fakeCgroupRoot(t, nil)
 	m := &cgroupManager{Base: base, Apps: filepath.Join(base, cgroupAppsDir), Avail: true}
 	if err := os.MkdirAll(m.Apps, 0755); err != nil {
@@ -261,7 +262,7 @@ func TestCgApplyIntoPartial(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "memory.max"), []byte("max\n"), 0444); err != nil {
 		t.Fatal(err)
 	}
-	notes := m.cgApplyInto("part", &contract.RunSpec{Memory: "8m"}, 1)
+	_, notes := m.cgPrepareInto("part", &contract.RunSpec{Memory: "8m"})
 	found := false
 	for _, n := range notes {
 		if strings.Contains(n, "partial enforcement") {
@@ -310,7 +311,7 @@ func TestCgManagerFailSoft(t *testing.T) {
 	// host running the tests the daemon sits at root or in a foreign path
 	// → also refused. Either way: notes, not panic, and no enforcement
 	// claim.
-	notes := s.cgroupApply("x", &contract.RunSpec{Memory: "8m"}, 1)
+	_, notes := s.cgroupPrepare("x", &contract.RunSpec{Memory: "8m"})
 	if len(notes) == 0 {
 		t.Fatal("fail-soft must still produce a note")
 	}

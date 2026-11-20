@@ -549,9 +549,24 @@ func payloadArgs(spec *contract.RunSpec) []string {
 // process is reaped by a goroutine (prevents zombies); liveness of the
 // recorded pid is derived from /proc with pid-reuse protection, so the
 // reaper goroutine only logs — it never writes state.json concurrently.
-func (s *Store) spawnPayload(name string, dir string, spec *contract.RunSpec) (pid int, startTicks uint64, err error) {
+func (s *Store) spawnPayload(name string, dir string, spec *contract.RunSpec, cgDir string) (pid int, startTicks uint64, err error) {
 	args := append([]string{s.MinictBin, filepath.Join(dir, "rootfs")}, payloadArgs(spec)...)
-	cmd := exec.Command(args[0], args[1:]...)
+	var cmd *exec.Cmd
+	if cgDir != "" {
+		// CG1/S2 migrate-before-exec (D48): a plain sh launcher writes its
+		// own pid into the instance cgroup and execs the runtime, so the
+		// shim AND its payload are born inside the cgroup (post-spawn
+		// migration races minict's payload fork — measured on CI runs
+		// 44702053556/44703016076). exec keeps the pid, so state.json
+		// records the same host pid either way.
+		launcher := `cgdir="$1"; shift
+echo "$$" > "$cgdir/cgroup.procs" || exit 125
+exec "$@"`
+		launchArgs := append([]string{"sh", "-c", launcher, "sh", cgDir}, args...)
+		cmd = exec.Command(launchArgs[0], launchArgs[1:]...)
+	} else {
+		cmd = exec.Command(args[0], args[1:]...)
+	}
 	cmd.Env = append(childEnv(), "MINICT_SPEC="+filepath.Join(dir, fMspec))
 	logf, err := os.OpenFile(filepath.Join(dir, fLog), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {

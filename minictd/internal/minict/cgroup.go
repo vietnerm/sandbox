@@ -322,20 +322,25 @@ func limitsFromSpec(spec *contract.RunSpec) CgroupLimits {
 	return l
 }
 
-// cgApplyInto writes the limits and migrates the shim pid into a fresh
-// per-instance cgroup under apps. Returns one note per action so the
-// state.json record shows exactly what was enforced. Instance dirs are
-// named sandbox-<name>; <name> passed validName, so the path cannot
-// escape apps (same reasoning as the state dir, R1).
-func (m *cgroupManager) cgApplyInto(name string, spec *contract.RunSpec, pid int) []string {
+// cgPrepareInto creates the instance cgroup and writes the limits BEFORE
+// the payload spawns. Process migration is deliberately NOT done here:
+// measured on the CI runner (runs 44702053556/44703016076), migrating the
+// shim pid after spawn races against minict's own payload fork — when the
+// shim forks first, the payload inherits the DAEMON's cgroup and limits
+// apply to an empty cgroup (OOM never fires, pids.max moot). Instead the
+// spawn path uses a sh launcher that self-migrates before exec
+// (spawnPayload), so payload and shim are born inside the cgroup.
+// Returns one note per action so state.json records exactly what was set.
+// Instance dirs are named sandbox-<name>; <name> passed validName, so the
+// path cannot escape apps (same reasoning as the state dir, R1).
+func (m *cgroupManager) cgPrepareInto(name string, spec *contract.RunSpec) (cgDir string, notes []string) {
 	l := limitsFromSpec(spec)
 	if l == (CgroupLimits{}) {
-		return nil
+		return "", nil
 	}
 	dir := filepath.Join(m.Apps, "sandbox-"+name)
-	var notes []string
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return []string{fmt.Sprintf("cgroups v2: mkdir %s failed: %v (limits NOT enforced, CG1 fallback)", dir, err)}
+		return "", []string{fmt.Sprintf("cgroups v2: mkdir %s failed: %v (limits NOT enforced, CG1 fallback)", dir, err)}
 	}
 	set := func(file, val, desc string) {
 		if val == "" {
@@ -349,13 +354,10 @@ func (m *cgroupManager) cgApplyInto(name string, spec *contract.RunSpec, pid int
 	set("cpu.max", l.CPUMax, fmt.Sprintf("CPUs=%s", spec.CPUs))
 	set("cpu.weight", l.CPUWeight, fmt.Sprintf("CPUShares=%d", spec.CPUShares))
 	set("pids.max", l.PidsMax, fmt.Sprintf("PidsLimit=%d", spec.PidsLimit))
-	if err := writeCgroupFile(filepath.Join(dir, "cgroup.procs"), strconv.Itoa(pid)); err != nil {
-		notes = append(notes, fmt.Sprintf("cgroups v2: shim pid %d migration failed: %v — limits set but process NOT in cgroup", pid, err))
-	}
 	notes = append(notes, fmt.Sprintf(
 		"cgroups v2 enforced for %s: memory.max=%s cpu.max=%s cpu.weight=%s pids.max=%s under %s (CG1/S2)",
 		name, orUnset(l.MemoryMax), orUnset(l.CPUMax), orUnset(l.CPUWeight), orUnset(l.PidsMax), dir))
-	return notes
+	return dir, notes
 }
 
 func orUnset(v string) string {
@@ -365,16 +367,18 @@ func orUnset(v string) string {
 	return v
 }
 
-// cgroupApply is the Store-level entry used by Run/Start after the shim
-// spawned: ensure the manager (once), then enforce. Fail-soft — notes
-// always, never an error, because the pre-CG1 contract treats resource
-// limits as best-effort.
-func (s *Store) cgroupApply(name string, spec *contract.RunSpec, pid int) []string {
+// cgroupPrepare is the Store-level entry used by Run/Start BEFORE the
+// payload spawns: ensure the manager (once), then create the cgroup and
+// set the limits. Returns (cgDir, notes): cgDir non-empty instructs
+// spawnPayload to use the migrate-before-exec launcher; empty means
+// either no limits requested or enforcement unavailable (notes carry the
+// measured reason). Fail-soft — notes always, never an error.
+func (s *Store) cgroupPrepare(name string, spec *contract.RunSpec) (string, []string) {
 	m := s.cgroupManager()
 	if !m.Avail {
-		return []string{fmt.Sprintf("cgroups v2 unavailable: %s (CG1 fallback: notes + rlimit nproc)", m.reason)}
+		return "", []string{fmt.Sprintf("cgroups v2 unavailable: %s (CG1 fallback: notes + rlimit nproc)", m.reason)}
 	}
-	return m.cgApplyInto(name, spec, pid)
+	return m.cgPrepareInto(name, spec)
 }
 
 // cgroupInstancePath returns the instance's enforcing cgroup dir, or ""

@@ -207,7 +207,7 @@ cgmem() {
     python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); notes=" ".join(d.get("notes") or []); print(notes); sys.exit(0 if "cgroups v2 enforced" in notes else 1)' "$WORK/resp" || { echo "cgmem: notes missing enforced claim: $(cat "$WORK/resp" | head -c 400)"; return 1; }
     # daemon-managed tree + second-hop controller enable (moved from cgboot)
     [[ -d "$CGROOT/minictd-apps" && -d "$CGROOT/minictd-daemon" ]] || { echo "cgmem: apps/daemon dir missing: $(ls "$CGROOT" 2>&1)"; return 1; }
-    grep -q '+memory' "$CGROOT/minictd-apps/cgroup.subtree_control" || { echo "cgmem: apps subtree_control=$(cat "$CGROOT/minictd-apps/cgroup.subtree_control" 2>&1)"; return 1; }
+    grep -qw memory "$CGROOT/minictd-apps/cgroup.subtree_control" || { echo "cgmem: apps subtree_control=$(cat "$CGROOT/minictd-apps/cgroup.subtree_control" 2>&1)"; return 1; }
     local dir="$CGROOT/minictd-apps/sandbox-cg-a"
     local i
     for i in $(seq 1 10); do
@@ -272,12 +272,12 @@ run_case CG-PIDS "pids.max=16 blocks the 64-fork burst" pass cgpids
 
 # CG4: stats over cgroup accounting (memory.current + memory.max-backed limit).
 cgstats() {
-    api GET /v1/sandboxes/cg-a/stats >/dev/null || return 1
+    api GET /v1/sandboxes/cg-a/stats || { echo "cgstats: stats api failed ($(cat "$WORK/code")): $(head -c 200 "$WORK/resp")"; return 1; }
     local usage limit
     usage="$(jget 'd["mem_usage_bytes"]')"
     limit="$(jget 'd["mem_limit_bytes"]')"
-    [[ -n "$usage" && "$usage" -gt 0 ]] || return 1
-    [[ "$limit" == "67108864" ]] || return 1
+    [[ -n "$usage" && "$usage" -gt 0 ]] || { echo "cgstats: usage=$usage limit=$limit resp=$(head -c 200 "$WORK/resp")"; return 1; }
+    [[ "$limit" == "67108864" ]] || { echo "cgstats: limit=$limit resp=$(head -c 200 "$WORK/resp")"; return 1; }
     # teeth: the accounting files must really exist under the instance dir
     # (a non-enforcing daemon would fall back to spec-parse + /proc RSS and
     # still report limit=67108864 — vacuous without this check)

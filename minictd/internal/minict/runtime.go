@@ -78,16 +78,17 @@ func (s *Store) Run(ctx context.Context, spec contract.RunSpec) (string, error) 
 		return "", err
 	}
 
-	pid, ticks, err := s.spawnPayload(spec.Name, dir, &spec)
+	// CG1/S2: create the cgroup and set the limits BEFORE the payload
+	// spawns; when enforced, spawnPayload uses the migrate-before-exec
+	// launcher so the shim and its payload are born inside the cgroup.
+	cgDir, cgNotes := s.cgroupPrepare(spec.Name, &spec)
+	notes = append(notes, cgNotes...)
+	pid, ticks, err := s.spawnPayload(spec.Name, dir, &spec, cgDir)
 	if err != nil {
 		return "", err
 	}
 	proxyPIDs, proxyNotes := s.spawnProxies(spec.Name, dir, ports, 2500*time.Millisecond)
 	notes = append(notes, proxyNotes...)
-	// CG1/S2: apply cgroups v2 limits after the shim exists (the child
-	// inherits the daemon's cgroup at fork; enforcing is a sibling
-	// migration). Fail-soft: notes record the outcome either way.
-	notes = append(notes, s.cgroupApply(spec.Name, &spec, pid)...)
 
 	now := time.Now().UTC()
 	st := &InstanceState{
@@ -266,12 +267,13 @@ func (s *Store) Start(ctx context.Context, name string) error {
 		}
 	}
 
-	pid, ticks, err := s.spawnPayload(name, s.dir(name), spec)
+	// CG1/S2: same prepare-before-spawn contract as Run.
+	cgDir, cgNotes := s.cgroupPrepare(name, spec)
+	pid, ticks, err := s.spawnPayload(name, s.dir(name), spec, cgDir)
 	if err != nil {
 		return err
 	}
 	proxyPIDs, proxyNotes := s.spawnProxies(name, s.dir(name), st.Ports, 2500*time.Millisecond)
-	cgNotes := s.cgroupApply(name, spec, pid)
 
 	st.State = StateRunning
 	st.PID = pid
