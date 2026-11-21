@@ -3,6 +3,7 @@ package minict
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -114,6 +115,16 @@ func unpackOCI(ctx context.Context, ref, dst string) error {
 		return fmt.Errorf("crane export: %w", err)
 	}
 	unpackErr := secureUnpack(stdout, dst)
+	// Drain whatever remains of the stream before waiting. A mid-stream
+	// refusal stops the reader while crane is still writing: its stdout
+	// pipe fills (64 KB) and crane blocks in write(2) forever, so Wait()
+	// (which only closes the pipe after the process exits) would
+	// deadlock the Run handler until the request context cancels
+	// (issue #108 — measured 2026-11-21 with a goroutine dump: crane in
+	// syscall write on the full pipe, 22144 bytes queued unread). The
+	// drain is a pure read — nothing is extracted — so it cannot weaken
+	// the refusal that secureUnpack already returned.
+	_, _ = io.Copy(io.Discard, stdout)
 	// Always reap crane: on unpack refusal it dies of EPIPE (its error is
 	// noise); on success its error is the real one.
 	craneErr := crane.Wait()

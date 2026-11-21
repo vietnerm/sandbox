@@ -74,18 +74,39 @@ proxy-env injection and add the per-sandbox Proxy-Authorization token from
 the integration plan (HTTPS_PROXY env is daemon-controlled, the payload
 cannot override it).
 
-### A2 — OCI images
+### A2 — OCI images — **E2E TESTED 2026-11-21 (issue #103, D51, Phiên 16)**
 
 `oci:<ref>` (crane export → **secureUnpack**, Go stdlib fail-closed extractor —
 2026-11-21, issue #104/D50: was `tar -x --no-same-owner`, which leaned on
 incidental GNU tar 1.35 protections; busybox/old tar would extract `..`
 members and follow write-through symlinks — measured matrix in
-`journal/2026-11-21/research.md`) is implemented but was NOT exercised
-end-to-end in the verification environment (no crane binary). Test before
-production use (**issue #103 tracks the e2e suite**); add a rootfs cache
-layer (content-addressed unpack) when images churn. Hardening contract
-pinned by MD26/MD27 (fail-closed Run + dir wiped, no escape) and the Go
-unit matrix in `internal/minict/unpack_test.go`.
+`journal/2026-11-21/research.md`) is exercised END-TO-END with the real
+crane v0.22.1 (pin + sha256, `tools/fetch-crane.sh`, D37 pattern) against an
+in-memory registry on 127.0.0.1 (`tools/ocireg`, offline — no docker.io
+rate-limit flake class): happy-path boot + exec (MD30), nonexistent ref →
+fail-closed + wiped (MD31), hostile `../` image → refused + wiped + no
+escape (MD32), `>`64 KB mid-stream refusal → 500 FAST (MD34 — pins the
+unpackOCI pure-drain fix, **issue #108**: a mid-stream refusal used to
+deadlock `crane.Wait()` until request-context cancel, measured with a
+goroutine dump). Two INDEPENDENT refusal layers measured for the `../`
+class: crane upstream itself refuses unsafe tar paths before writing, and
+secureUnpack refuses them mid-stream (MD32 provenance assert accepts both).
+Rootfs-cache layer (content-addressed unpack) when images churn: still open
+(out of #103 scope).
+
+**Residuals (measured, issue #103/#109):**
+- **Absolute symlink targets are REFUSED** (D50 posture: reject, never
+  sanitize) — busybox `--install -s`-style rootfs (including THIS repo's
+  `sandbox/mkrootfs.sh` output: 271 applet links → `/bin/busybox`) cannot
+  boot via `oci:`; MD34 pins the refusal. Resolution options (refuse /
+  rewrite / inside-dst-only) need a maintainer decision — **issue #109**.
+- Real-world remote pull (TLS/auth/redirect surfaces: docker.io/ghcr/ttl.sh)
+  is opt-in via `MINICTD_OCI_REMOTE_REF` (MD33, SKIP unset) — docker.io
+  anonymous rate limits on shared runner IPs are a documented flake class
+  and conflict with the "CI xanh thật" bar (issue #14).
+- crane export v0.22.1 cannot read local tarballs (every arg is parsed as a
+  remote ref — measured); the harness registry is the offline workaround.
+
 
 ### Unpack boundary hardening — issue #104 (D50, 2026-11-21)
 

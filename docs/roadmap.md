@@ -27,6 +27,26 @@
 5. Ghi `journal/YYYY-MM-DD/daily-log.md` (quy tắc thư mục: PROMPT.MD §10)
 
 ## Đã xong
+- [x] 2026-11-21 (phiên 16, SDDA): **A2 e2e — `oci:` với crane thật (issue #103, D51,
+  GĐ2 mục 1 residual; + fix #108)**: crane v0.22.1 pin+sha256 (`tools/fetch-crane.sh`,
+  D37 pattern) + registry in-memory 127.0.0.1 (`tools/ocireg`, module riêng — go.mod
+  minictd không đổi) ⇒ e2e `oci:` HOÀN TOÀN OFFLINE (không docker.io rate-limit flake);
+  MD28–MD34 (suite 28→34): fetch-pin, harness+push manifest-verified, boot+exec marker
+  (bind-volume host-side — image minimal chỉ có sh/applet links relative), bad-ref
+  fail-closed, hostile `../` refuse+wiped (2 lớp refuse đo được: crane upstream
+  "unsafe tar path" trước-khi-viết + secureUnpack mid-stream), refusal >64 KB → 500
+  FAST (MD34 pin **fix #108**: `unpackOCI` drain trước Wait — refuse giữa stream từng
+  deadlock `crane.Wait()` tới ctx-cancel, đo bằng goroutine dump); remote pull thật
+  = opt-in `MINICTD_OCI_REMOTE_REF` (MD33, SKIP unset — flake class documented);
+  residual #109: absolute symlink targets bị refuse (rootfs của repo: 271 applet
+  links `/bin/busybox` — không boot được qua `oci:`, cần quyết định maintainer);
+  suite cleanup leak fix (ocireg RPID mất trong subshell → pkill theo argv).
+  Mutants: M1 (bỏ drain) MD34 đỏ; M2b (drop refusal errors) MD34 đỏ qua provenance
+  assert; M3 (sha mismatch) exit 1 verified; measured lessons: crane export không đọc
+  tarball local, `io.Discard` không phải Reader (mutant M1 compile-fail), harness
+  registry chết giữa blob-serve khi process-group bị dọn giữa các tool-call.
+  SCR/SIA trong phiên; CVE gate rc=0; make test 10 suites none-failed; perf
+  2.16 ms / 1212 kB / 2.04 MB PASS; host 3/3 unchanged. (#103/#108) — PR đang mở.
 - [x] 2026-11-21 (phiên 15, SDDA): **Unpack boundary hardening — secureUnpack thay host tar
   (issue #104, D50, GĐ2 mục 1 residual — phát lộ từ research #103/A2)**:
   `minictd/internal/minict/unpack.go` — Go stdlib `secureUnpack`: openat
@@ -299,10 +319,12 @@
      theo uid, S2) → gộp với mục 5.
    - **G3 preview: XONG phiên 14 (#97, D49)** — Traefik file provider + wake endpoint;
      còn residual mục 4 là pasta config-side (khai báo port-forward trong config instance).
-   - **A2** image `oci:` (crane) đã code, **chưa test** (e2e suite — issue #103;
-     **unpack boundary hardening xong 2026-11-21 (#104, D50)**: `tar -x` host tar
-     trong `oci:`/`tar:` thay bằng Go stdlib `secureUnpack` openat O_NOFOLLOW
-     fail-closed — MD26/MD27 + unit matrix).
+   - **A2** image `oci:` (crane): **e2e xong 2026-11-21 phiên 16 (#103, D51 + fix
+     #108)** — crane pin v0.22.1 + registry in-memory offline; MD28–MD34; residual:
+     #109 absolute-symlink refusal (cần quyết định maintainer), remote pull opt-in
+     MD33, rootfs cache khi images churn. (**unpack boundary hardening xong
+     2026-11-21 (#104, D50)**: `tar -x` host tar trong `oci:`/`tar:` thay bằng Go
+     stdlib `secureUnpack` openat O_NOFOLLOW fail-closed — MD26/MD27 + unit matrix).
    - **S2–S6** còn mở (S1 FIXED #41; A3 reconcile proactive đã có — heartbeat P4 mở).
 2. Template: instance từ template; lưu instance thành template.
 3. Storage: overlayfs rootless + idmapped mounts (thay private copy 2 MB/instance);
