@@ -8,21 +8,28 @@ chạy host-side, uid operator, TRƯỚC pivot_root/capdrop — ranh giới các
 ở bước unpack, không phải ở sandbox runtime. Câu hỏi research: extraction này
 fail-closed đo được đến đâu?
 
-## Nguồn mới (≥ 2 yêu cầu PROMPT Bước 4)
+## Nguồn mới (≥ 2 yêu cầu PROMPT Bước 4 — links khả kiểm)
 
 1. **Đo trực tiếp GNU tar 1.35 trên máy dev** (kernel 5.10 kangaroo al8; runner
    ubuntu-24.04 cũng ship GNU tar 1.35 — cùng bản upstream) — source chính,
    đúng ethos repo "measured, not assumed". Ma trận đo đầy đủ ở mục dưới.
-2. **go-containerregistry (crane) v0.22.1** — verified live qua GitHub API
-   (2026-09-04): asset `go-containerregistry_Linux_x86_64.tar.gz`, digest
+2. **go-containerregistry `pkg/crane/export.go`** — verified live qua GitHub
+   contents API (2026-11-21): doc comment "Export writes the filesystem
+   contents (as a tarball) of img to w" — multi-layer đi qua `mutate.Extract`
+   (flatten). Link:
+   https://github.com/google/go-containerregistry/blob/main/pkg/crane/export.go
+   ⇒ nội dung tar = 100% attacker-controlled nếu ref là image ác ý; chuỗi
+   `crane export | tar -x` không có bước validate nào ở giữa.
+3. **go-containerregistry release v0.22.1** (2026-09-04) — verified live qua
+   releases API: asset `go-containerregistry_Linux_x86_64.tar.gz`, digest
    `sha256:0ab7a1d6932a213aed964ce97666c3077fe691c8606413674a8b3e0b9ec4cda0`,
-   ~16.5 MB → fetch pin được theo pattern D37 (`tools/fetch-pasta.sh`).
-   `crane export <ref> -` = flattened rootfs tar của mọi layers (whiteout đã
-   áp) → nội dung tar = 100% attacker-controlled nếu ref là image ác ý.
-3. **moby `pkg/chrootarchive`** (prior art, cite từ kiến thức — fetch bị chặn
-   phiên này): Docker không từng trust host `tar` cho nội dung registry;
-   reexec `tar` bên trong chroot jail + whitelist path. Chứng minh industry
-   chuẩn là "không tin extractor bên ngoài cho ranh giới bảo mật".
+   ~16.5 MB → fetch pin được theo pattern D37 (`tools/fetch-pasta.sh`) khi #103
+   làm e2e. Link: https://github.com/google/go-containerregistry/releases/tag/v0.22.1
+4. **moby `pkg/chrootarchive`** — prior art (industry chuẩn: reexec tar trong
+   chroot jail + whitelist path, KHÔNG trust host tar cho nội dung registry).
+   **Cite từ kiến thức — không fetch được phiên này** (api.github.com tree
+   trả rỗng với moby/moby; raw.githubusercontent chặn) — flag unverified,
+   không dùng làm chứng cứ, chỉ làm định hướng thiết kế.
 
 ## Ma trận đo (tất cả trên tar GNU 1.35, host-side, không sudo)
 
