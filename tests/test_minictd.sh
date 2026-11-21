@@ -41,6 +41,10 @@
 #   MD24  G3 routes: stop -> route file removed; wake stopped -> 409
 #   MD25  G3 routes: start -> route file back + wake 200 (port TCP-ready);
 #         remove -> wake 404 + file gone
+#   MD26  unpack hardening: tar: image with hostile ../ member -> Run fails
+#         closed (500), dir wiped (R4), nothing escapes (issue #104, D50)
+#   MD27  unpack hardening: oci: ref without crane -> Run fails closed,
+#         dir wiped (issue #104, D50)
 #
 # Exit code: 0 if all expected results hold, 1 otherwise.
 set -u
@@ -435,6 +439,41 @@ md25() {
 run_case MD25 "G3 routes: start -> route back + wake 200; remove -> 404" pass md25
 
 api POST /v1/sandboxes/md-f/remove >/dev/null 2>&1 || true
+
+# ---------- unpack hardening (issue #104, D50) ----------
+# prepareRootfs used to pipe untrusted content into host `tar -x`; the
+# fail-closed posture leaned on incidental GNU tar 1.35 behavior (measured,
+# journal/2026-11-21/research.md). secureUnpack (Go, openat O_NOFOLLOW chain)
+# replaces it for both tar: and oci: — MD26/MD27 pin the fail-closed contract.
+md26() {
+    python3 - "$WORK/hostile.tar" <<'PYEOF' || return 1
+import io, sys, tarfile
+with tarfile.open(sys.argv[1], "w") as tw:
+    ti = tarfile.TarInfo("../md26-escaped")
+    data = b"md26-pwned"
+    ti.size = len(data); ti.mode = 0o644
+    tw.addfile(ti, io.BytesIO(data))
+PYEOF
+    [[ -f "$WORK/hostile.tar" ]] || return 1
+    # Run must FAIL (500) — member "../md26-escaped" refused outright
+    api POST /v1/run "{\"name\":\"md-x\",\"image\":\"tar:$WORK/hostile.tar\",\"cmd\":[\"/bin/sleep\",\"5\"]}" >/dev/null && return 1
+    [[ "$(code)" == 500 ]] || return 1
+    # R4 rollback: half-built instance dir wiped
+    [[ ! -e "$STATE/md-x" ]] || return 1
+    # nothing escaped outside dst (would-be targets, measured vector)
+    [[ ! -e "$STATE/md26-escaped" && ! -e "$WORK/md26-escaped" ]]
+}
+run_case MD26 "tar: hostile .. member -> Run fails closed, dir wiped, no escape" pass md26
+
+md27() {
+    # oci: without a crane binary: fail-closed BEFORE any unpack (crane Start
+    # error), dir wiped, error names the missing tool
+    api POST /v1/run \
+        "{\"name\":\"md-y\",\"image\":\"oci:example.test/nonexistent:latest\",\"cmd\":[\"/bin/sleep\",\"5\"]}" >/dev/null && return 1
+    [[ "$(code)" == 500 ]] || return 1
+    [[ ! -e "$STATE/md-y" ]] || return 1
+}
+run_case MD27 "oci: without crane -> Run fails closed, dir wiped" pass md27
 
 echo "=== summary: PASS=$PASS SKIP=$SKIPPED FAIL=$FAIL ==="
 if [[ $FAIL -ne 0 ]]; then

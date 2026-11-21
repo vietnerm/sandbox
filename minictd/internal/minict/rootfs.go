@@ -3,7 +3,6 @@ package minict
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,11 +14,14 @@ import (
 //
 //	base        -> copy --base-rootfs (sandbox/rootfs from mkrootfs.sh)
 //	dir:<path>  -> cp -a <path> (host dir, absolute)
-//	tar:<path>  -> tar -xf <path> --no-same-owner (tar/tgz/tar.gz)
-//	oci:<ref>   -> crane export <ref> - | tar -x --no-same-owner
+//	tar:<path>  -> secureUnpack (fail-closed Go extractor, issue #104/D50
+//	               — was `tar -xf`, which leaned on incidental GNU tar
+//	               1.35 protections; busybox/old tar extract ".." members)
+//	oci:<ref>   -> crane export <ref> - | secureUnpack (same extractor)
 //
 // The OCI path needs the `crane` binary in PATH (P2 in the integration
-// plan); everything else only needs cp/tar.
+// plan); everything else only needs cp. Untrusted content (oci: refs and
+// operator-provided tars) NEVER goes through host tar again.
 func (s *Store) prepareRootfs(ctx context.Context, dir, image string) error {
 	dst := filepath.Join(dir, "rootfs")
 	// Caller guarantees dst does not exist (Run wipes the dir first; Start
@@ -73,7 +75,12 @@ func (s *Store) prepareRootfs(ctx context.Context, dir, image string) error {
 		if err := os.MkdirAll(dst, 0755); err != nil {
 			return err
 		}
-		return run(ctx, "tar", "-xf", arg, "-C", dst, "--no-same-owner")
+		f, err := os.Open(arg)
+		if err != nil {
+			return fmt.Errorf("image tar: open %q: %w", arg, err)
+		}
+		defer f.Close()
+		return secureUnpack(f, dst)
 	case "oci":
 		if arg == "" {
 			return fmt.Errorf("image oci: missing reference")
@@ -93,33 +100,28 @@ func copyTree(ctx context.Context, src, dst string) error {
 	return run(ctx, "cp", "-a", src, dst)
 }
 
-// unpackOCI pipes `crane export <ref> -` into `tar -x -C <dst>
-// --no-same-owner` without a shell, wiring the pipe by hand so a failure
-// on either side surfaces properly.
+// unpackOCI streams `crane export <ref> -` straight into secureUnpack
+// (issue #104/D50 — was `tar -x --no-same-owner`, whose fail-closed posture
+// depended on incidental GNU tar 1.35 behavior). No shell, no host tar; a
+// refusal on the unpack side surfaces first and crane sees EPIPE.
 func unpackOCI(ctx context.Context, ref, dst string) error {
 	crane := exec.CommandContext(ctx, "crane", "export", ref, "-")
-	tar := exec.CommandContext(ctx, "tar", "-x", "-C", dst, "--no-same-owner")
-
-	pr, pw := io.Pipe()
-	crane.Stdout = pw
-	tar.Stdin = pr
-
-	craneErr := make(chan error, 1)
+	stdout, err := crane.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("crane export pipe: %w", err)
+	}
 	if err := crane.Start(); err != nil {
 		return fmt.Errorf("crane export: %w", err)
 	}
-	go func() { craneErr <- crane.Wait() }()
-
-	if err := tar.Run(); err != nil {
-		_ = pw.CloseWithError(err) // unblock crane
-		<-craneErr
-		return fmt.Errorf("tar unpack (oci %q): %w", ref, err)
+	unpackErr := secureUnpack(stdout, dst)
+	// Always reap crane: on unpack refusal it dies of EPIPE (its error is
+	// noise); on success its error is the real one.
+	craneErr := crane.Wait()
+	if unpackErr != nil {
+		return fmt.Errorf("oci unpack %q: %w", ref, unpackErr)
 	}
-	if err := pw.Close(); err != nil {
-		// crane may still be flushing; wait for it to surface the error
-	}
-	if err := <-craneErr; err != nil {
-		return fmt.Errorf("crane export %q: %w", ref, err)
+	if craneErr != nil {
+		return fmt.Errorf("crane export %q: %w", ref, craneErr)
 	}
 	return nil
 }

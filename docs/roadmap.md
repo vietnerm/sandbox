@@ -280,7 +280,10 @@
      theo uid, S2) → gộp với mục 5.
    - **G3 preview: XONG phiên 14 (#97, D49)** — Traefik file provider + wake endpoint;
      còn residual mục 4 là pasta config-side (khai báo port-forward trong config instance).
-   - **A2** image `oci:` (crane) đã code, **chưa test**.
+   - **A2** image `oci:` (crane) đã code, **chưa test** (e2e suite — issue #103;
+     **unpack boundary hardening xong 2026-11-21 (#104, D50)**: `tar -x` host tar
+     trong `oci:`/`tar:` thay bằng Go stdlib `secureUnpack` openat O_NOFOLLOW
+     fail-closed — MD26/MD27 + unit matrix).
    - **S2–S6** còn mở (S1 FIXED #41; A3 reconcile proactive đã có — heartbeat P4 mở).
 2. Template: instance từ template; lưu instance thành template.
 3. Storage: overlayfs rootless + idmapped mounts (thay private copy 2 MB/instance);
