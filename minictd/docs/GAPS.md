@@ -98,7 +98,9 @@ member `..`/absolute refused, link targets validated, duplicates refused
 (O_EXCL), setuid/setgid/sticky stripped (pure `stripSpecialBits` — unit-
 verifiable on hosts whose LSM strips bits at create), FIFOs via mknodat
 (rootless-safe), char/block refused (mknod EPERM rootless). No host tar in
-the untrusted path anymore.
+the untrusted path anymore. **Residual (SIA #106, 2026-11-21)**: a tar entry
+with mode 000 extracts as a 0000 file (parity with docker/tar — no floor
+applied; standard images do not ship mode-000 files).
 
 ### A3 — state & telemetry
 
