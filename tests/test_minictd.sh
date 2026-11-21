@@ -468,7 +468,7 @@ run_case MD26 "tar: hostile .. member -> Run fails closed, dir wiped, no escape"
 md27() {
     # oci: without a crane binary: fail-closed BEFORE any unpack (crane Start
     # error), dir wiped, error names the missing tool
-    env -u CRANE_MINICT_FAKE api POST /v1/run \
+    api POST /v1/run \
         "{\"name\":\"md-y\",\"image\":\"oci:example.test/nonexistent:latest\",\"cmd\":[\"/bin/sleep\",\"5\"]}" >/dev/null && return 1
     [[ "$(code)" == 500 ]] || return 1
     [[ ! -e "$STATE/md-y" ]] || return 1
