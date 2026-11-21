@@ -27,6 +27,25 @@
 5. Ghi `journal/YYYY-MM-DD/daily-log.md` (quy tắc thư mục: PROMPT.MD §10)
 
 ## Đã xong
+- [x] 2026-11-21 (phiên 15, SDDA): **Unpack boundary hardening — secureUnpack thay host tar
+  (issue #104, D50, GĐ2 mục 1 residual — phát lộ từ research #103/A2)**:
+  `minictd/internal/minict/unpack.go` — Go stdlib `secureUnpack`: openat
+  O_NOFOLLOW per-component (D31 pattern), reject `..`/absolute member +
+  link target ngoài, duplicates refuse (O_EXCL), `stripSpecialBits` (pure —
+  setuid/setgid/sticky), FIFO mknodat S_IFIFO rootless-safe, char/block
+  refuse (mknod EPERM); `unpackOCI` (crane pipe → extractor) + `tar:` path
+  cùng extractor — **host tar không còn trong đường untrusted** (fail-closed
+  không còn phụ thuộc GNU tar 1.35 incidental; busybox/GNU cũ extract `..`
+  + write-through symlink = ghi host-side — ma trận đo
+  `journal/2026-11-21/research.md`); unit matrix 14 test + MD26/MD27
+  (test-minictd 26→28); measured lessons: `openat(O_CREAT|O_DIRECTORY)`
+  =ENOTDIR trên 5.10, FIFO-open trick ra regular file, dev-LSM strip suid +
+  giết SYS_SYMLINK (SYS_SYMLINKAT chạy) ⇒ test assert provenance message;
+  mutant M1(4 đỏ)/M2(2)/M4(1)/M5(1)/M6(1) caught, M3 masked-local documented
+  (property assert trực tiếp); SCR PASS ×2 SHA (28/28 ×2 byte-stable;
+  bench 2.0/1188/2.04; host 3/3); SIA PASS (2 low → fix trong vòng); CVE
+  gate rc=0; squash `22831da` @ 92b56e0; #104 auto-close. A2 e2e (crane
+  thật) vẫn mở — **#103**. (#104)
 - [x] 2026-11-20 (phiên 14, SDDA): **G3 — preview routing: Traefik file provider + wake probe
   (issue #97, D49, GĐ2 mục 1 residual / mục 4 routing-side)**: `minictd/internal/minict/routes.go`
   — renderer YAML deterministic (stdlib-only) + atomic temp+rename (Traefik v3.5 directory

@@ -33,3 +33,36 @@ với `headRefOid` = HEAD nhánh (`e8ec847` = `e8ec847`) → coi là đã gộp 
    "archive_tag": "", "done": false, "error": ""}],
  "remaining_branches": ["main"], "main_ci_after": "success"}
 ```
+
+---
+
+## MODE=apply — kết quả thực thi (Phiên 15)
+
+| branch | quyết định | kết quả |
+|---|---|---|
+| `feat/97-g3-preview-routing` (local) | DELETE_MERGED | xoá local (nội dung trọn main qua squash `23cf249`) — không cần tag |
+| `sec/104-oci-unpack-traversal` (local+remote) | MERGE → DELETE_MERGED | PR #106 squash **`22831da`** match-head `92b56e0`; #104 auto-close; xoá local + remote (204) |
+
+branch-report.json (apply):
+```json
+{"date": "2026-11-21", "mode": "apply", "halted": false, "halt_reason": "",
+ "branches": [{"name": "feat/97-g3-preview-routing", "head_sha": "e8ec847",
+   "decision": "DELETE_MERGED", "reason": "squash-merged Phiên 14 via PR #98", "pr": 98, "issue": 97,
+   "gates": {}, "archive_tag": "", "done": true, "error": ""},
+  {"name": "sec/104-oci-unpack-traversal", "head_sha": "92b56e0",
+   "decision": "MERGE", "reason": "G1-G8 PASS, SCR PASS x2 SHA, SIA PASS, CI xanh",
+   "pr": 106, "issue": 104, "gates": {"G1": true, "G2": true, "G3": true, "G4": true, "G5": true, "G6": true, "G7": true, "G8": true},
+   "archive_tag": "", "done": true, "error": ""}],
+ "remaining_branches": ["main"], "main_ci_after": "success"}
+```
+
+```
+=== SBG REPORT — 2026-11-21 (apply) ===
+Đã gộp     : 1  — #106
+Đã xoá     : 2  (đã gộp từ trước: 1 — feat/97 local residue; sau merge: 1 — sec/104)
+Giữ lại    : 0
+Còn lại    : main
+CI main    : xanh (`22831da`)
+Dừng?      : không
+=============================================
+```
