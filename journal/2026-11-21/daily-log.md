@@ -131,3 +131,15 @@ clean-room PASS ×2 SHA (phát hiện + fix fake-green guard-class); SIA
 CONCERNS → fix → PASS delta; mutants M0/M-drain/M2b/M3 caught; suite
 minictd 28→34; #108 reopened per §6 (chờ verified); ledger #111 `4d95db1`;
 remote chỉ `main`.
+
+### LỖI QUY TRÌNH Phiên 16 (ghi minh bạch theo precedent Phiên 2)
+- Commit `499829c` (docs(journal): Phiên 16 daily-log Pha B/C/E) bị **push thẳng
+  `main`** — vi phạm PROMPT.MD §11 luật chung + SBG §0.1 ("không bao giờ push
+  thẳng main"). Nguyên nhân: chủ động `git push -u origin HEAD` từ local main
+  sau khi commit daily-log, thay vì mở nhánh + PR như mọi thay đổi khác.
+- Nội dung commit: docs-only (journal/2026-11-21/daily-log.md, 22 dòng) — lớp
+  miễn G3/G4/G6 theo BRANCH_GATE §3, KHÔNG phải lý do miễn quy trình PR.
+- Khắc phục (PR này): (a) ghi lỗi minh bạch; (b) post-hoc audit: diff chỉ
+  journal docs, nội dung khớp measured facts (merge `2df3ca6`, ledger `4d95db1`,
+  #108 reopened, remote chỉ main); (c) CI main chạy trên `499829c` — kết quả
+  ghi ở đây sau khi chạy; (d) mọi commit sau Phiên 16 bắt buộc qua PR.
