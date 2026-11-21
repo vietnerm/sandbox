@@ -547,6 +547,10 @@ PYEOF
 }
 
 md29() {
+    # Provision the harness BEFORE the guard: in a fresh clone (CI) ocireg
+    # does not exist yet, and the guard below would otherwise skip the whole
+    # oci: block forever (measured in the Phiên 16 clean-room SCR run).
+    build_ocireg || return $?
     skip_no_oci_harness || return $?
     start_registry || return 1
     make_happy_layer || return 1
