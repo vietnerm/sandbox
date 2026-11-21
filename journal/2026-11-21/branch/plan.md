@@ -66,3 +66,13 @@ CI main    : xanh (`22831da`)
 Dừng?      : không
 =============================================
 ```
+
+## Phiên 16 — SBG MODE=plan (2026-11-21)
+
+| branch | ahead/behind | PR | CI | retest | audit | quyết định | lý do |
+|---|---|---|---|---|---|---|---|
+| (remote chỉ `main` sau `fetch --prune`) | — | — | success @ d4df1e3 (ci + unicode-guard) | — | — | — | 0 nhánh ngoài main |
+
+- Local residue: `feat/97-g3-preview-routing` đã xoá Phiên 15 (ledger #107); local hiện chỉ `main`.
+- 0 PR mở → Pha B/C trống → vào thẳng Pha D (Bước 2–8 §1).
+- CI main xanh @ `d4df1e3`; không điều kiện dừng SBG §0.6 (0 issue p0 security mở; host baseline sẽ đo trong Pha D).

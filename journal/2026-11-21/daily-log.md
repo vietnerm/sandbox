@@ -66,3 +66,46 @@ SCR clean-room ×2 SHA — suites rc=0 ×2 byte-stable, web 9/9, minictd 28/28 �
 mutants 5/5 + M0 collapse ×8 suite, bench 2.0/1188/2.04; SIA PASS 2 low → fix →
 0; test-minictd 26→28), CVE gate rc=0, make test 10 suites none-failed, host
 unchanged 3/3, perf 2.30/1204/2.04 PASS, main xanh `22831da`, remote chỉ `main`.
+
+## Phiên 16 — Orchestrator (ZAI, §11)
+
+### Pha A — Sync + SBG plan
+- Pull main `d4df1e3` (up-to-date); remote sau prune chỉ `main`; CI main xanh ×2 (ci + unicode-guard @ d4df1e3).
+- SBG MODE=plan → `branch/plan.md` (mục Phiên 16): 0 nhánh ngoài main, 0 PR mở → Pha B/C trống → vào thẳng Pha D.
+
+### Triage + chọn issue
+- 0 issue mới từ hôm qua; 16 issue mở đều đã label.
+- Chọn theo §8/roadmap GĐ2 mục 1 residual thấp nhất: **#103** (A2 — e2e `oci:` crane) — đúng kế hoạch "ngày mai" của Phiên 15. Assign + in-progress.
+
+### Research (`research.md` mục Phiên 16)
+- crane v0.22.1 (sha256 verified từ checksums.txt chính thức): `export` KHÔNG đọc tarball local; registry in-memory 127.0.0.1 (pkg/registry.New) chạy plain-HTTP không cần --insecure (fallback https→http đo được); `crane append -t <ref>` push trực tiếp.
+- Kết luận thiết kế: e2e `oci:` offline deterministic qua harness registry — ghi D51.
+
+### Development (`test/103-oci-crane-e2e`, D51 — `decisions/crane-e2e.md`)
+- `tools/fetch-crane.sh` (pin v0.22.1 + sha256 `0ab7a1d6…` fail-closed + version guard).
+- `tools/ocireg/` (module Go riêng, bind 127.0.0.1, dep go-containerregistry v0.22.1 — go.mod minictd KHÔNG đổi).
+- Suite MD28–MD34 (28→34) + Makefile help; cleanup leak fix (ocireg pkill theo argv).
+- **Phát lộ + fix #108 (sec p1)**: `unpackOCI` deadlock `crane.Wait()` khi refuse giữa stream — pure-drain trước Wait (goroutine dump đo được: crane block write(2) trên pipe đầy, 22144 bytes unread). MD34 pin + mutant M1/M2b bắt được.
+- **Phát lộ #109 (feat p2)**: absolute symlink targets bị refuse — rootfs repo (271 links `/bin/busybox`) không boot được qua `oci:`; happy layer minimal relative-links; chờ maintainer.
+- Measured: 2 lớp refuse độc lập cho `../` (crane upstream + secureUnpack); crane không đọc tarball local; io.Discard không phải Reader (M1 compile-fail).
+- Docs: GAPS.md A2 → E2E TESTED + residuals; roadmap "Đã xong" phiên 16 + GĐ2 mục 1 A2.
+
+### CVE Check
+- Kernel: `5.10.134-013.15.kangaroo.al8.x86_64`
+- `cve/oci-crane-e2e.{md,json}`: cve-check rc=0 + **cve-gate rc=0 → 0 CVE mới ngoài watchlist**. Watchlist không thêm dòng (không component mới ship runtime).
+
+### Validation "không bị nhiễm"
+- `make test`: **10 suites, failed: none**; `make test-web` **9/9**; `make test-minictd` **34/34 + 1 SKIP** (MD33 opt-in).
+- Mutant matrix: M1 → MD34 đỏ; M2b → MD34 đỏ (provenance assert); M3 → fetch exit 1; R4-wipe class pin bởi dir-gone asserts.
+- Perf: **cold 2.16 ms / rss 1212 kB / disk 2.04 MB — PASS** (gate không đổi).
+- Host baseline: **3/3 sha256 khớp Phiên 14/15** (unchanged); listeners nền đã biết + dọn 16 ocireg leak của các lần chạy chẩn đoán (giờ suite tự dọn); 0 minict/busybox sống.
+- Bằng chứng: `evidence/oci-crane-e2e.txt`.
+
+### Kế hoạch ngày mai
+- Chờ review/merge PR #103-A2; sau đó: S3 (ro-bind submounts) hoặc S4 (unix-socket/TLS) theo GAPS thứ tự; #109 chờ quyết định maintainer (không tự đổi posture).
+- GĐ2 tiếp: mục 2 (template), mục 3 (storage overlayfs + snapshot), mục 6 (Landlock), mục 7 (đo control plane RSS).
+- **GD3 (Web UI + console) CHƯA chạm** — per chỉ thị owner: mọi mục GĐ2 hoàn thành + GD3 sẵn sàng mở code → DỪNG + nhắc owner TRƯỚC dòng code UI đầu tiên. Trạng thái GĐ2: mục 1 còn S3–S6 + systemd-real + residual #109; mục 2–7 chưa mở.
+
+DAY PASS — 2026-11-21 Phiên 16: issue #103 done (e2e oci: offline; + fix #108 phát
+từ chính e2e; suite 28→34; mutants M1/M2b/M3 caught; CVE gate rc=0; make test 10
+suites none-failed; perf 2.16/1212/2.04 PASS; host 3/3 unchanged).

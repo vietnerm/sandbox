@@ -45,6 +45,22 @@
 #         closed (500), dir wiped (R4), nothing escapes (issue #104, D50)
 #   MD27  unpack hardening: oci: ref without crane -> Run fails closed,
 #         dir wiped (issue #104, D50)
+#   MD28  A2: crane pinned+sha256-verified via fetch-crane.sh (D37 pattern;
+#         SKIP when the env has no network to the pin host — D51)
+#   MD29  A2: ocireg in-memory harness + real crane push -> manifest served
+#         (issue #103, D51 — fully offline: 127.0.0.1 only)
+#   MD30  A2: boot instance from oci:<ref> via REAL crane export ->
+#         secureUnpack + exec sees payload marker (issue #103, D51)
+#   MD31  A2: oci: ref that does not exist -> fail-closed 500, dir wiped
+#         (extends MD27: crane PRESENT — D51)
+#   MD32  A2: hostile oci: image (../ member) pushed as a real registry
+#         image, streamed by real crane -> secureUnpack refuses mid-stream,
+#         dir wiped, nothing escapes (issue #103, D51)
+#   MD33  A2: opt-in real-world remote pull when MINICTD_OCI_REMOTE_REF is
+#         set (TLS/auth/redirect surfaces; SKIP unset — D51 residual)
+#   MD34  #108: oci: refusal AFTER >64 KB streamed (absolute-symlink member,
+#         D50 posture #109) -> 500 FAST — pins the unpackOCI no-deadlock fix
+#         (pure-drain before Wait; regression: no drain -> handler hangs)
 #
 # Exit code: 0 if all expected results hold, 1 otherwise.
 set -u
@@ -70,6 +86,13 @@ API="http://127.0.0.1:$API_PORT"
 TRAEFIK_DIR="$WORK/traefik"
 WEB_PORT_T=$(( WEB_PORT + 7 ))
 DPID=""
+# A2 (issue #103, D51): the daemon resolves `crane` via PATH (unpackOCI
+# execs it by name) — put the pinned binary first, same role pasta has
+# for test_pasta.sh.
+export PATH="$REPO/tools/bin:$PATH"
+REG_PORT=$(( 15100 + RANDOM % 300 ))
+REG="127.0.0.1:$REG_PORT"
+RPID=""
 
 PASS=0; FAIL=0; SKIPPED=0
 run_case() { # <id> <desc> <expect: pass|fail|skip> <cmd...>
@@ -93,7 +116,13 @@ run_case() { # <id> <desc> <expect: pass|fail|skip> <cmd...>
 }
 
 cleanup() {
-    for n in md-a md-b md-c md-auto md-t md-f; do
+    [[ -n "$RPID" ]] && kill "$RPID" 2>/dev/null
+    # RPID is set inside the run_case command-substitution subshell (md29 ->
+    # start_registry), so it never reaches this scope — kill by the unique
+    # repo-scoped argv pattern instead (measured leak: 1 ocireg per suite
+    # run without this, Phiên 16).
+    pkill -TERM -f -- "tools/bin/ocireg $REG_PORT" 2>/dev/null || true
+    for n in md-a md-b md-c md-auto md-t md-f md-oci md-oci-bad md-oci-h md-oci-r md-oci-a; do
         curl -s -m 5 -X POST -H "Authorization: Bearer $TOKEN" \
             "$API/v1/sandboxes/$n/remove" >/dev/null 2>&1 || true
     done
@@ -440,6 +469,190 @@ run_case MD25 "G3 routes: start -> route back + wake 200; remove -> 404" pass md
 
 api POST /v1/sandboxes/md-f/remove >/dev/null 2>&1 || true
 
+# ---------- A2: oci: e2e with real crane (issue #103, D51) ----------
+# unpackOCI (crane export <ref> - | secureUnpack, D50) had never been
+# exercised end-to-end; MD27 only pins fail-closed when the binary is
+# MISSING. Harness: tools/ocireg (in-memory registry, 127.0.0.1-only) +
+# pinned crane (fetch-crane.sh, D37 pattern). Fully offline by design —
+# no docker.io (anonymous rate-limit flake class on shared runner IPs,
+# issue #14 "CI xanh thật"), no ttl.sh (third-party uptime). Real-world
+# remote pulls stay opt-in via MINICTD_OCI_REMOTE_REF (GAPS residual).
+skip_no_oci_harness() {
+    [[ -x "$REPO/tools/bin/crane" && -x "$REPO/tools/bin/ocireg" ]] || return 125
+}
+
+md28() {
+    if ! bash "$REPO/tools/fetch-crane.sh"; then
+        # Network absent to the pin host -> env cannot exercise crane at all:
+        # SKIP, same class as the no-/dev/net/tun pasta gate (D34). A fetch
+        # failure WITH network (sha mismatch, bad asset) is a real FAIL.
+        curl -s --max-time 5 -o /dev/null https://github.com || return 125
+        return 1
+    fi
+    "$REPO/tools/bin/crane" version | grep -q "^0.22.1$" || return 1
+}
+run_case MD28 "crane pinned+sha256-verified (fetch-crane.sh, D51)" skip md28
+
+build_ocireg() {
+    [[ -x "$REPO/tools/bin/ocireg" ]] && return 0
+    command -v go >/dev/null 2>&1 || return 125
+    (cd "$REPO/tools/ocireg" && go build -o ../bin/ocireg .) \
+        || { echo "      (ocireg build failed — see CI go output)"; return 125; }
+}
+
+start_registry() {
+    build_ocireg || return $?
+    "$REPO/tools/bin/ocireg" "$REG_PORT" > "$WORK/ocireg.log" 2>&1 &
+    RPID=$!
+    for _ in $(seq 1 50); do
+        curl -s -m 1 -o /dev/null "http://$REG/v2/" 2>/dev/null && return 0
+        sleep 0.1
+    done
+    return 1
+}
+
+# happy layer: MINIMAL bootable content built with RELATIVE symlink targets.
+# The suite rootfs itself is NOT usable here (measured, #109): mkrootfs-style
+# busybox applet links are absolute (`/bin/busybox`) and secureUnpack refuses
+# absolute link targets by design (D50) — MD34 pins that refusal. A real
+# alpine-style image (relative links) extracts the same way this layer does.
+make_happy_layer() {
+    python3 - "$REPO/rootfs/bin/busybox" "$WORK/happy-layer.tar" <<'PYEOF' || return 1
+import io, os, stat, sys, tarfile
+busybox, out = sys.argv[1], sys.argv[2]
+with tarfile.open(out, "w", format=tarfile.GNU_FORMAT) as tw:
+    def add(ti, f=None):
+        ti.uid = ti.gid = 0
+        tw.addfile(ti, f)
+    d = tarfile.TarInfo("bin/"); d.type = tarfile.DIRTYPE; d.mode = 0o755
+    add(d)
+    with open(busybox, "rb") as f:
+        b = tarfile.TarInfo("bin/busybox")
+        b.size = os.fstat(f.fileno()).st_size; b.mode = 0o755
+        add(b, f)
+    s = tarfile.TarInfo("bin/sh")
+    s.type = tarfile.SYMTYPE; s.linkname = "busybox"; s.mode = 0o777
+    add(s)
+    # applets the suite's cmds need (sleep keeps the payload running;
+    # echo/cat are sh-builtins in busybox but ship as links in real images)
+    for name in ("sleep", "cat", "echo"):
+        s = tarfile.TarInfo("bin/" + name)
+        s.type = tarfile.SYMTYPE; s.linkname = "busybox"; s.mode = 0o777
+        add(s)
+    for name in ("dev/", "proc/", "tmp/"):
+        d = tarfile.TarInfo(name); d.type = tarfile.DIRTYPE; d.mode = 0o755
+        add(d)
+PYEOF
+    [[ -s "$WORK/happy-layer.tar" ]]
+}
+
+md29() {
+    skip_no_oci_harness || return $?
+    start_registry || return 1
+    make_happy_layer || return 1
+    "$REPO/tools/bin/crane" append -f "$WORK/happy-layer.tar" \
+        -t "$REG/oci-e2e:happy" >/dev/null || return 1
+    # the harness actually serves the manifest (anti-vacuous: a push that
+    # silently went nowhere would make MD30's boot vacuous)
+    "$REPO/tools/bin/crane" digest "$REG/oci-e2e:happy" >/dev/null || return 1
+}
+run_case MD29 "ocireg harness + real crane push -> manifest served" skip md29
+
+md30() {
+    skip_no_oci_harness || return $?
+    mkdir -p "$WORK/m30out"
+    # marker lands in a HOST bind (no /bin/cat needed in the minimal image —
+    # it has only bin/sh -> busybox); exec check uses sh builtins only
+    api POST /v1/run "{\"name\":\"md-oci\",\"image\":\"oci:$REG/oci-e2e:happy\",\"volumes\":[\"$WORK/m30out:/out\"],\"cmd\":[\"/bin/sh\",\"-c\",\"echo oci-marker > /out/m; sleep 600\"]}" >/dev/null || return 1
+    sleep 0.5
+    api GET /v1/sandboxes/md-oci >/dev/null && [[ "$(jget 'd["State"]["Status"]')" == running ]] || return 1
+    [[ "$(cat "$WORK/m30out/m")" == oci-marker ]] || return 1
+    xv2 md-oci '{"cmd":["/bin/sh","-c","echo exec-ok"],"timeout_s":5}' || return 1
+    [[ "$(jget 'd["stdout"].strip()')" == exec-ok ]]
+}
+run_case MD30 "boot from oci:<ref> via real crane + exec marker" skip md30
+
+md31() {
+    skip_no_oci_harness || return $?
+    # registry alive but the ref does not exist (404 from ocireg) ->
+    # crane export fails -> Run fail-closed 500 + dir wiped (R4)
+    api POST /v1/run "{\"name\":\"md-oci-bad\",\"image\":\"oci:$REG/oci-e2e:does-not-exist\",\"cmd\":[\"/bin/sleep\",\"5\"]}" >/dev/null && return 1
+    [[ "$(code)" == 500 ]] || return 1
+    [[ ! -e "$STATE/md-oci-bad" ]]
+}
+run_case MD31 "oci: nonexistent ref -> fail-closed 500, dir wiped" skip md31
+
+md32() {
+    skip_no_oci_harness || return $?
+    # hostile image through the REAL registry path: crane streams it,
+    # secureUnpack refuses the ../ member mid-stream (crane dies of EPIPE)
+    python3 - "$WORK/hostile-layer.tar" <<'PYEOF' || return 1
+import io, sys, tarfile
+with tarfile.open(sys.argv[1], "w") as tw:
+    ti = tarfile.TarInfo("../md32-escaped")
+    data = b"md32-pwned"
+    ti.size = len(data); ti.mode = 0o644
+    tw.addfile(ti, io.BytesIO(data))
+PYEOF
+    "$REPO/tools/bin/crane" append -f "$WORK/hostile-layer.tar" \
+        -t "$REG/oci-e2e:hostile" >/dev/null || return 1
+    api POST /v1/run "{\"name\":\"md-oci-h\",\"image\":\"oci:$REG/oci-e2e:hostile\",\"cmd\":[\"/bin/sleep\",\"5\"]}" >/dev/null && return 1
+    [[ "$(code)" == 500 ]] || return 1
+    # provenance (measured: TWO independent refusal layers — crane upstream
+    # refuses unsafe tar paths BEFORE writing ("unsafe tar path", stderr);
+    # secureUnpack refuses ".." members mid-stream). The 500 must name one
+    # of them, not a downstream boot sanity failure (M2b mask class).
+    grep -qE "crane export|oci unpack.*secureUnpack: member" "$WORK/resp" || return 1
+    [[ ! -e "$STATE/md-oci-h" ]] || return 1
+    # would-be escape targets (outside dst), measured vector class (MD26)
+    [[ ! -e "$STATE/md32-escaped" && ! -e "$WORK/md32-escaped" && ! -e "$REPO/md32-escaped" ]]
+}
+run_case MD32 "hostile oci: image streamed by crane -> refused, wiped" skip md32
+
+# MD34 (issue #108): refusal AFTER >64 KB has already been written — the
+# exact deadlock class MD32 cannot cover (tiny tar fits the pipe buffer).
+# Without the drain fix the Run handler hangs until curl -m 20 dies (code
+# 000 -> FAIL); with the fix crane exits EPIPE and Run returns 500 fast.
+md34() {
+    skip_no_oci_harness || return $?
+    python3 - "$WORK/abslink-layer.tar" <<'PYEOF' || return 1
+import io, sys, tarfile
+with tarfile.open(sys.argv[1], "w", format=tarfile.GNU_FORMAT) as tw:
+    d = tarfile.TarInfo("bin/"); d.type = tarfile.DIRTYPE; d.mode = 0o755
+    tw.addfile(d)
+    s = tarfile.TarInfo("bin/sh")
+    s.type = tarfile.SYMTYPE; s.linkname = "/bin/busybox"; s.mode = 0o777
+    tw.addfile(s)  # absolute link target -> refused (D50 posture, #109)
+    filler = tarfile.TarInfo("big.bin")  # keeps crane writing after refusal
+    data = b"x" * (256 * 1024)
+    filler.size = len(data); filler.mode = 0o644
+    tw.addfile(filler, io.BytesIO(data))
+PYEOF
+    "$REPO/tools/bin/crane" append -f "$WORK/abslink-layer.tar" \
+        -t "$REG/oci-e2e:abslink" >/dev/null || return 1
+    api POST /v1/run "{\"name\":\"md-oci-a\",\"image\":\"oci:$REG/oci-e2e:abslink\",\"cmd\":[\"/bin/sleep\",\"5\"]}" >/dev/null && return 1
+    [[ "$(code)" == 500 ]] || return 1
+    # provenance assert: refusal named (absolute link target, D50 posture
+    # #109) — the 500 must NOT be a downstream sanity failure (M2b mask)
+    grep -q "link target refused: absolute path" "$WORK/resp" || return 1
+    [[ ! -e "$STATE/md-oci-a" ]]
+}
+run_case MD34 "oci: refusal after >64KB -> 500 fast, no Wait deadlock" skip md34
+
+# Optional real-world remote pull (TLS/auth/redirect surfaces) — opt-in
+# because docker.io anonymous rate limits are a documented flake class on
+# shared runner IPs (D51): set MINICTD_OCI_REMOTE_REF to a small image
+# (e.g. alpine@sha256:...) to exercise it; unset -> SKIP.
+md33() {
+    skip_no_oci_harness || return $?
+    [[ -n "${MINICTD_OCI_REMOTE_REF:-}" ]] || return 125
+    api POST /v1/run "{\"name\":\"md-oci-r\",\"image\":\"oci:$MINICTD_OCI_REMOTE_REF\",\"cmd\":[\"/bin/echo\",\"remote-ok\"]}" >/dev/null || return 1
+    sleep 0.5
+    xv2 md-oci-r '{"cmd":["/bin/echo","still-ok"],"timeout_s":5}' || return 1
+    [[ "$(jget 'd["stdout"].strip()')" == still-ok ]]
+}
+run_case MD33 "opt-in remote pull (MINICTD_OCI_REMOTE_REF)" skip md33
+
 # ---------- unpack hardening (issue #104, D50) ----------
 # prepareRootfs used to pipe untrusted content into host `tar -x`; the
 # fail-closed posture leaned on incidental GNU tar 1.35 behavior (measured,
@@ -475,10 +688,19 @@ md27() {
 }
 run_case MD27 "oci: without crane -> Run fails closed, dir wiped" pass md27
 
+# NOTE: MD27 above runs with whatever PATH the suite provides. From D51 the
+# suite prepends tools/bin (crane) for the A2 block — if crane is present
+# MD27 exercises the DNS-failure fail-closed path instead of the missing-
+# binary one; both paths must fail closed with the dir wiped (assertions
+# unchanged).
+
+api POST /v1/sandboxes/md-oci/remove >/dev/null 2>&1 || true
+
 echo "=== summary: PASS=$PASS SKIP=$SKIPPED FAIL=$FAIL ==="
 if [[ $FAIL -ne 0 ]]; then
     echo "--- daemon log (tail) ---"; tail -20 "$WORK/daemon.log" 2>/dev/null
     echo "--- daemon2 log (tail) ---"; tail -20 "$WORK/daemon2.log" 2>/dev/null
     echo "--- install log (tail) ---"; tail -10 "$WORK/install.log" 2>/dev/null
+    echo "--- ocireg log (tail) ---"; tail -10 "$WORK/ocireg.log" 2>/dev/null
 fi
 [[ $FAIL -eq 0 ]]

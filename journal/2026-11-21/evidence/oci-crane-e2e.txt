@@ -1,0 +1,38 @@
+=== minictd e2e tests (2026-11-21 15:28:09) — api :17857, web :19398 ===
+MD0   seccomp blocklist identical: minict.c vs minict-exec.c       PASS
+MD3   daemon refuses to start without a token                      PASS
+MD1   /healthz with token -> 200                                   PASS
+MD2   request without token -> 401                                 PASS
+MD4   Run + Inspect -> running                                     PASS
+MD5   exec via setns sees spec hostname                            PASS
+MD6   exec shares payload mount ns (/tmp marker visible)           PASS
+MD7   spec env -> payload, request env -> exec                     PASS
+MD8   bind :ro visible and not writable                            PASS
+MD9   seccomp in exec: unshare -U -> EPERM                         PASS
+MD10  daemon env/token NOT leaked into payload or exec             PASS
+MD11  exec timeout -> 124 + timed_out                              PASS
+MD12  exec stdin passthrough                                       PASS
+MD13  execstream NDJSON stdout + single exit frame                 PASS
+MD14  preview webport: host curl -> httpd in netns                 PASS
+MD15  path-traversal name -> 400, outside untouched                PASS
+MD16  Stop -> Start keeps rootfs changes                           PASS
+MD17  symlinked bind target -> Start refused, host untouched       PASS
+MD18  exec on stopped -> 409, unknown -> 404                       PASS
+MD19  Remove -> dir gone, no instance processes                    PASS
+MD20  CLI sandbox round-trip: list/up/inspect/exec/stop/rm         PASS
+MD21  --autostart heals + wake-recreates running-after-reboot      PASS
+MD22  deploy: install.sh renders --user unit, systemd-analyze verify PASS
+MD23  G3 routes: run -> Traefik YAML written; disabled -> no file  PASS
+MD24  G3 routes: stop -> route removed; wake stopped -> 409        PASS
+MD25  G3 routes: start -> route back + wake 200; remove -> 404     PASS
+MD28  crane pinned+sha256-verified (fetch-crane.sh, D51)           PASS
+MD29  ocireg harness + real crane push -> manifest served          PASS
+MD30  boot from oci:<ref> via real crane + exec marker             PASS
+MD31  oci: nonexistent ref -> fail-closed 500, dir wiped           PASS
+MD32  hostile oci: image streamed by crane -> refused, wiped       PASS
+MD34  oci: refusal after >64KB -> 500 fast, no Wait deadlock       PASS
+MD33  opt-in remote pull (MINICTD_OCI_REMOTE_REF)                  SKIP
+      (env-blocked: see case)
+MD26  tar: hostile .. member -> Run fails closed, dir wiped, no escape PASS
+MD27  oci: without crane -> Run fails closed, dir wiped            PASS
+=== summary: PASS=34 SKIP=1 FAIL=0 ===

@@ -83,3 +83,52 @@ fail-closed đo được đến đâu?
   cầu; openat-chain đủ và đã là pattern verified của repo (D31).
 - Go extractor chậm hơn tar C trên rootfs lớn: đo được trong PR này (ngưỡng
   perf không đổi — cold path minict không đụng; unpack chỉ chạy lúc Run).
+
+## Phiên 16 — research #103 (A2: e2e `oci:` với crane thật)
+
+**Vấn đề**: đường `oci:<ref>` (`unpackOCI`: `crane export <ref> - | secureUnpack`,
+D50) đã code nhưng chưa bao giờ exercise — không binary `crane`, không image thật.
+MD27 chỉ pin fail-closed khi thiếu binary.
+
+**Đo cục bộ (2026-11-21, crane v0.22.1 linux/amd64, sha256 verified từ
+checksums.txt chính thức của release)**:
+
+1. `crane export` v0.22.1 KHÔNG đọc tarball từ path local — mọi arg đều được
+   parse thành remote registry ref (`img.oci.tar` → docker.io/library/img.oci.tar,
+   UNAUTHORIZED đo được). Không có scheme prefix `tarball:`/`oci-layout:`.
+   `crane append -o` xuất docker-archive; chỉ `crane export -` đọc image từ stdin.
+2. **Registry in-memory trên 127.0.0.1 chạy được plain-HTTP KHÔNG cần `--insecure`**:
+   server 20 dòng với `go-containerregistry/pkg/registry.New()` (in-memory,
+   stdlib http.ListenAndServe), `crane push img.oci.tar 127.0.0.1:15100/mini:dev`
+   + `crane export 127.0.0.1:15100/mini:dev -` đo được thành công. Nguyên nhân:
+   go-containerregistry thử https rồi fallback http khi connection-refused
+   (error message đo được liệt kê cả hai scheme).
+3. `crane append -f <layer.tar> -t <full-ref>` push trực tiếp vào registry,
+   không cần file trung gian.
+
+**Giải pháp đã có ở dự án tương tự**: crane CLI dùng `pkg/registry` in-memory
+chính nó làm fixture trong unit test của go-containerregistry; các e2e container
+khác (podman CI) chạy registry thật trong container — không khả thi rootless
+không Docker. ttl.sh là registry công khai ephemeral — phụ thuộc uptime bên thứ
+ba + rate/flake (chọn làm fallback opt-in, không mặc định).
+
+**Trade-off**: registry in-memory = thêm 1 module Go test-harness
+(`tools/ocireg/`, dep go-containerregistry v0.22.1 — build standalone, KHÔNG
+đụng go.mod của minictd) + binary thứ hai trong `tools/bin/` (gitignored).
+Đổi lại: e2e `oci:` **hoàn toàn offline, deterministic** (no docker.io rate
+limit — flake CI đã-documented; no ttl.sh uptime), hostile-image probe đẩy
+thật qua registry thật bằng crane thật → secureUnpack phải refuse mid-stream
+(EPIPE) — coverage mà MD26 (file `tar:`) không có.
+
+**Áp dụng cho minict**:
+- `tools/fetch-crane.sh` pin v0.22.1 + sha256 `0ab7a1d6…` (D37 pattern,
+  nguồn: checksums.txt của release + tarball khớp + `crane version` khớp).
+- `tools/ocireg/` harness (bind 127.0.0.1, port random, KHÔNG phải production
+  code; binary vào `tools/bin/` gitignored).
+- Suite `test_minictd.sh` thêm MD28–MD31: fetch-pin, happy-path boot+exec,
+  bad-ref fail-closed (crane có mặt — mở rộng MD27), hostile-layer mid-stream
+  refuse + R4 wipe + assert không escape ngoài rootfs.
+- Real-world remote pull (TLS/auth/redirect docker.io) = opt-in qua
+  `MINICTD_OCI_REMOTE_REF` (SKIP khi unset) — ghi residual minh bạch trong
+  GAPS.md; không mặc định vì docker.io anonymous rate-limit trên runner IP
+  chia sẻ là flake class đã-documented.
