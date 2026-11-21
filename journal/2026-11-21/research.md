@@ -86,6 +86,18 @@ fail-closed đo được đến đâu?
 
 ## Phiên 16 — research #103 (A2: e2e `oci:` với crane thật)
 
+**Nguồn (SIA B6, link thật — mở kiểm chứng được):**
+- crane v0.22.1 release + checksums: https://github.com/google/go-containerregistry/releases/tag/v0.22.1
+  (checksums.txt: https://github.com/google/go-containerregistry/releases/download/v0.22.1/checksums.txt —
+  sha256 `0ab7a1d6…` trích từ đây, cross-check tarball tải riêng + `crane version`)
+- go-containerregistry in-memory registry (harness): https://pkg.go.dev/github.com/google/go-containerregistry/pkg/registry
+- crane CLI export/append semantics (docs + source `cmd/crane`): https://github.com/google/go-containerregistry/tree/v0.22.1/cmd/crane
+- docker.io anonymous pull rate-limit (flake class cơ sở cho quyết định offline):
+  https://docs.docker.com/docker-hub/usage/ (đo cục bộ: UNAUTHORIZED/429 surface khi
+  ref sai được parse thành docker.io/library/... — log trong research chính)
+- unverified-fetch note: moby/moby chrootarchive (tham chiếu extractor pattern,
+  không fetch — flagged per D31/D37 discipline)
+
 **Vấn đề**: đường `oci:<ref>` (`unpackOCI`: `crane export <ref> - | secureUnpack`,
 D50) đã code nhưng chưa bao giờ exercise — không binary `crane`, không image thật.
 MD27 chỉ pin fail-closed khi thiếu binary.
