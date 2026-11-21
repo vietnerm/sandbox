@@ -109,3 +109,25 @@ unchanged 3/3, perf 2.30/1204/2.04 PASS, main xanh `22831da`, remote chỉ `main
 DAY PASS — 2026-11-21 Phiên 16: issue #103 done (e2e oci: offline; + fix #108 phát
 từ chính e2e; suite 28→34; mutants M1/M2b/M3 caught; CVE gate rc=0; make test 10
 suites none-failed; perf 2.16/1212/2.04 PASS; host 3/3 unchanged).
+
+### Pha B/C/E — kết thúc Phiên 16
+- PR **#110** draft @ `1df8574` → SCR clone trắng @25877e3 **PASS** (phát hiện +
+  sửa fake-green class: MD29–34 SKIP vĩnh viễn trên clone trắng vì guard chạy
+  trước build_ocireg) → SIA @25877e3 **CONCERNS** (2 medium: B1 hai-Closes +
+  §6 auto-close security; B6 research thiếu link) → fix `25877e3` (guard) +
+  `3636dfa` (docs) → SIA delta **PASS** @3636dfa → CI xanh (build-test ×2 +
+  perf + scan @3636dfa) → flip ready → **squash `2df3ca6`** match-head-commit
+  → **#103 auto-close**; #108 auto-close ngoài ý muốn (từ khoá "Closes #108"
+  trong commit message gốc còn nằm trong squash body) → **REOPEN ngay per §6**
+  kèm comment; chờ maintainer `verified`.
+- SBG MODE=apply: nhánh `test/103-oci-crane-e2e` DELETE_MERGED (local+remote);
+  ledger qua PR **#111** squash `4d95db1`; remote sau Phiên 16: **chỉ `main`**.
+- Roadmap: mục "Đã xong" thêm Phiên 16; GĐ2 mục 1 A2 = e2e xong; còn mở
+  GĐ2 mục 1: S3–S6, systemd-real, residual #109 (chờ maintainer); mục 2–7
+  chưa mở.
+
+DAY PASS — 2026-11-21 Phiên 16 (phần 2): PR #110 merged `2df3ca6`; SCR
+clean-room PASS ×2 SHA (phát hiện + fix fake-green guard-class); SIA
+CONCERNS → fix → PASS delta; mutants M0/M-drain/M2b/M3 caught; suite
+minictd 28→34; #108 reopened per §6 (chờ verified); ledger #111 `4d95db1`;
+remote chỉ `main`.
