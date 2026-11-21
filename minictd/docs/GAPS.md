@@ -76,10 +76,29 @@ cannot override it).
 
 ### A2 — OCI images
 
-`oci:<ref>` (crane export | tar --no-same-owner) is implemented but was NOT
-exercised in the verification environment (no crane binary). Test before
-production use; add a rootfs cache layer (content-addressed unpack) when
-images churn.
+`oci:<ref>` (crane export → **secureUnpack**, Go stdlib fail-closed extractor —
+2026-11-21, issue #104/D50: was `tar -x --no-same-owner`, which leaned on
+incidental GNU tar 1.35 protections; busybox/old tar would extract `..`
+members and follow write-through symlinks — measured matrix in
+`journal/2026-11-21/research.md`) is implemented but was NOT exercised
+end-to-end in the verification environment (no crane binary). Test before
+production use (**issue #103 tracks the e2e suite**); add a rootfs cache
+layer (content-addressed unpack) when images churn. Hardening contract
+pinned by MD26/MD27 (fail-closed Run + dir wiped, no escape) and the Go
+unit matrix in `internal/minict/unpack_test.go`.
+
+### Unpack boundary hardening — issue #104 (D50, 2026-11-21)
+
+`prepareRootfs` fed untrusted content (oci: registry refs, operator tars)
+into host `tar -x` host-side, uid operator, BEFORE pivot_root — the
+sandbox's trust boundary was incidental host-tar behavior. Now: stdlib-only
+Go extractor (`internal/minict/unpack.go`) with openat O_NOFOLLOW
+per-component discipline (D31 pattern, issue #41 webproxy precedent):
+member `..`/absolute refused, link targets validated, duplicates refused
+(O_EXCL), setuid/setgid/sticky stripped (pure `stripSpecialBits` — unit-
+verifiable on hosts whose LSM strips bits at create), FIFOs via mknodat
+(rootless-safe), char/block refused (mknod EPERM rootless). No host tar in
+the untrusted path anymore.
 
 ### A3 — state & telemetry
 
