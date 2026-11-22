@@ -27,6 +27,26 @@
 5. Ghi `journal/YYYY-MM-DD/daily-log.md` (quy tắc thư mục: PROMPT.MD §10)
 
 ## Đã xong
+- [x] 2026-11-22 (phiên 18, SDDA): **S4 — unix-socket listener fail-closed (issue #116,
+  D53, GĐ2 mục 1)**: `openUnixSocket()` (`minictd/cmd/minictd/listener.go`) — pathname
+  unix socket, perms filesystem = transport security (podman rootless service model,
+  unix(7)): socket **0600** Lstat-verified sau bind (umask-proof), dir **0700**
+  (chmod nếu lỏng; chmod lỗi/mode cuối sai → die), refuse symlink + non-socket file
+  (posture D31 #41), replace stale socket, unlink on clean shutdown; `--listen ""`
+  tắt TCP (unix-only posture — ss-pid assert), cả hai rỗng → die "no listener";
+  token auth GIỮ NGUYÊN trên mọi transport (R3 — same-uid vẫn connect được, MD36
+  401-assert); `contract.NewUnixHTTPClient` + CLI `--socket`/`$MINICTD_SOCKET`
+  (thắng `--addr`); unit systemd thêm `--unix-socket` + install.sh chmod state dir.
+  Tests: unit 6 case (stale socket tạo bằng raw syscall.Bind — Go net.Listen tự
+  unlink khi Close, không tạo được stale giả) + MD35/MD36 (test-minictd 34→36);
+  mutants M1 (socket-0666)/M2 (skip-chmod-dir) → MD35 đỏ, M-auth → MD2+MD36 đỏ,
+  M-tcp → MD36 đỏ, M3 masked-documented (nhánh non-socket vẫn refuse — defense in
+  depth). Residual: TLS cross-host cho multi-node thật (unix socket local-only);
+  TOCTOU socket-path swap same-uid-only → #119 (from-audit). SCR PASS ×2 SHA
+  (suites ×2 rc=0, mutants 4/4 + M0 collapse, bench p50 1.9/1152/~2.1, host 3/3);
+  SIA CONCERNS → fix daily-log + residuals → PASS delta; CI 4/4 ×2 SHA; perf
+  1.88 ms / 1164 kB / 2.05 MB PASS; CVE gate rc=0; squash `336373a` @ `9c4cf9c`;
+  #116 auto-close. (#116)
 - [x] 2026-11-22 (phiên 17, SDDA): **S3 — bind :ro recursive enforcement (issue #113,
   D52, GĐ2 mục 1)**: `apply_spec_binds()` (`sandbox/minict.c`) — `mount_setattr(AT_RECURSIVE,
   MOUNT_ATTR_RDONLY)` (kernel ≥ 5.12, syscall 442 khai tay x86_64) thay remount top-only;
