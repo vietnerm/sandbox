@@ -874,12 +874,16 @@ static void load_spec_file(void)
  * 5.10 and the runner, D39), so this window is the only chance to learn
  * which mounts the MS_REC bind will clone under a ":ro" src.
  */
-static size_t mntinfo_decode(const char *in, char *out, size_t outsz)
+static int mntinfo_decode(const char *in, char *out, size_t outsz)
 {
         size_t o = 0;
         const char *p;
 
-        for (p = in; *p && o + 1 < outsz; p++) {
+        for (p = in; *p; p++) {
+                if (o + 1 >= outsz)
+                        return -1; /* truncated mount point — fail-closed
+                                    * (a truncated path cannot match src and
+                                    * would silently MISS a submount) */
                 if (*p == '\\' && p[1] >= '0' && p[1] <= '7' &&
                     p[2] >= '0' && p[2] <= '7' &&
                     p[3] >= '0' && p[3] <= '7') {
@@ -892,7 +896,7 @@ static size_t mntinfo_decode(const char *in, char *out, size_t outsz)
                 out[o++] = *p;
         }
         out[o] = '\0';
-        return o;
+        return 0;
 }
 
 static void spec_scan_bind_submounts(void)
@@ -924,6 +928,15 @@ static void spec_scan_bind_submounts(void)
                 char mp[1024];
                 int k;
 
+                if (!strchr(line, '\n') && !feof(f)) {
+                        /* a line longer than the buffer would split into a
+                         * bogus second line — refuse to guess (fail-closed,
+                         * same class as the >16 submount cap) */
+                        fprintf(stderr, "minict-spec: /proc/self/mountinfo "
+                                "line exceeds %zu bytes — refusing to "
+                                "enumerate :ro submounts\n", sizeof(line));
+                        exit(125);
+                }
                 /* split off fields 1..4 (id, parent, maj:min, root) */
                 for (k = 0; k < 4; k++) {
                         while (*p == ' ')
@@ -943,7 +956,12 @@ static void spec_scan_bind_submounts(void)
                 while (*p && *p != ' ')
                         p++;   /* field 5: mount point (escaped) */
                 *p = '\0';
-                mntinfo_decode(tok, mp, sizeof(mp));
+                if (mntinfo_decode(tok, mp, sizeof(mp)) < 0) {
+                        fprintf(stderr, "minict-spec: mount point exceeds "
+                                "%zu bytes — refusing to enumerate :ro "
+                                "submounts\n", sizeof(mp));
+                        exit(125);
+                }
 
                 for (i = 0; i < g_spec_bind_n; i++) {
                         struct spec_bind *b = &g_spec_bind[i];
@@ -952,13 +970,6 @@ static void spec_scan_bind_submounts(void)
 
                         if (!b->ro || b->src[0] != '/')
                                 continue;
-                        if (b->submount_n >= SPEC_SUBMOUNT_MAX) {
-                                fprintf(stderr, "minict-spec: bind %s: "
-                                        "more than %d submounts — refusing "
-                                        "incomplete :ro (S3 cap)\n",
-                                        b->src, SPEC_SUBMOUNT_MAX);
-                                exit(125);
-                        }
                         /* strictly below src (src itself = the top mount,
                          * already covered by the top remount) */
                         if (strncmp(mp, b->src, len) || mp[len] != '/')
@@ -966,6 +977,16 @@ static void spec_scan_bind_submounts(void)
                         /* only directory srcs can carry submounts */
                         if (stat(b->src, &sst) < 0 || !S_ISDIR(sst.st_mode))
                                 continue;
+                        /* cap check AFTER the prefix match: unrelated host
+                         * mounts must not trigger the cap on a bind that
+                         * already recorded its full 16 (SIA #114 fix) */
+                        if (b->submount_n >= SPEC_SUBMOUNT_MAX) {
+                                fprintf(stderr, "minict-spec: bind %s: "
+                                        "more than %d submounts — refusing "
+                                        "incomplete :ro (S3 cap)\n",
+                                        b->src, SPEC_SUBMOUNT_MAX);
+                                exit(125);
+                        }
                         snprintf(b->submounts[b->submount_n],
                                  sizeof(b->submounts[0]), "%s", mp + len);
                         b->submount_n++;
