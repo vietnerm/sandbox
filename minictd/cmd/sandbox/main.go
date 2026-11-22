@@ -53,10 +53,10 @@ func main() {
 }
 
 func run() error {
-	var addr, token, tokenFile string
+	var addr, token, tokenFile, sock string
 	args := os.Args[1:]
 	// Extract global flags anywhere before the command, like a minimal
-	// getopt: only --addr/--token/--token-file are recognized here.
+	// getopt: only --addr/--socket/--token/--token-file are recognized here.
 loop:
 	for len(args) > 0 {
 		switch args[0] {
@@ -65,6 +65,11 @@ loop:
 				return errUsage("--addr needs a value")
 			}
 			addr, args = args[1], args[2:]
+		case "--socket":
+			if len(args) < 2 {
+				return errUsage("--socket needs a value")
+			}
+			sock, args = args[1], args[2:]
 		case "--token":
 			if len(args) < 2 {
 				return errUsage("--token needs a value")
@@ -86,15 +91,26 @@ loop:
 	if addr == "" {
 		addr = os.Getenv("MINICTD_ADDR")
 	}
-	if addr == "" {
+	if addr == "" && sock == "" {
+		sock = os.Getenv("MINICTD_SOCKET")
+	}
+	if addr == "" && sock == "" {
 		addr = "127.0.0.1:7601"
 	}
-	base := addr
-	if !strings.HasPrefix(base, "http://") && !strings.HasPrefix(base, "https://") {
-		base = "http://" + base
-	}
 
-	rt := contract.NewHTTPClient(base, resolveToken(token, tokenFile))
+	var rt *contract.HTTPClient
+	if sock != "" {
+		// S4 (issue #116): unix-socket transport — transport security
+		// via filesystem perms (socket 0600 + dir 0700, daemon-side
+		// fail-closed). Token still required by the server (R3).
+		rt = contract.NewUnixHTTPClient(sock, resolveToken(token, tokenFile))
+	} else {
+		base := addr
+		if !strings.HasPrefix(base, "http://") && !strings.HasPrefix(base, "https://") {
+			base = "http://" + base
+		}
+		rt = contract.NewHTTPClient(base, resolveToken(token, tokenFile))
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 

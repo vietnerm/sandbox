@@ -22,7 +22,7 @@
 4. D — No-Compromise Validation: `make test` (isolation 31 + seccomp 21 + netns 7 +
    alpine 9 + debian 9 + escape-alpine 31 + cve-check tool 4 + pasta 11 + cg 6 = 129, pipefail thật —
    issue #14; cg suite từ #4/D48 2026-11-20, env-gated cgroups v2; dev: 127 PASS + 13 SKIP env-blocked)
-   + `make test-web` + `make test-minictd` (23, từ 2026-11-20 #91) + lưu evidence vào
+   + `make test-web` + `make test-minictd` (36, MD0–MD36) + lưu evidence vào
    `journal/YYYY-MM-DD/evidence/` + integrity check host
 5. Ghi `journal/YYYY-MM-DD/daily-log.md` (quy tắc thư mục: PROMPT.MD §10)
 
@@ -339,7 +339,9 @@
      MD33, rootfs cache khi images churn. (**unpack boundary hardening xong
      2026-11-21 (#104, D50)**: `tar -x` host tar trong `oci:`/`tar:` thay bằng Go
      stdlib `secureUnpack` openat O_NOFOLLOW fail-closed — MD26/MD27 + unit matrix).
-   - **S2–S6** còn mở (S1 FIXED #41; **S3 FIXED #113 2026-11-22**; A3 reconcile proactive đã có — heartbeat P4 mở).
+   - **S5–S6** còn mở (S1 FIXED #41; **S3 FIXED #113 2026-11-22**; **S4 FIXED #116
+     2026-11-22 — `--unix-socket` fail-closed, token giữ nguyên trên mọi transport;
+     residual TLS cross-host**; A3 reconcile proactive đã có — heartbeat P4 mở).
 2. Template: instance từ template; lưu instance thành template.
 3. Storage: overlayfs rootless + idmapped mounts (thay private copy 2 MB/instance);
    snapshot/backup/restore (overlay layer + tar.zst).

@@ -61,6 +61,12 @@
 #   MD34  #108: oci: refusal AFTER >64 KB streamed (absolute-symlink member,
 #         D50 posture #109) -> 500 FAST — pins the unpackOCI no-deadlock fix
 #         (pure-drain before Wait; regression: no drain -> handler hangs)
+#   MD35  S4 unix socket (issue #116): --unix-socket serves the API — healthz
+#         200 on BOTH transports, socket file 0600, dir pre-created 0755 ->
+#         corrected 0700 (fail-closed hardening measured at runtime)
+#   MD36  S4 unix-only posture + auth + CLI: --listen "" -> no TCP listener
+#         (ss pid check), no-token over unix -> 401 (R3 unchanged),
+#         sandbox --socket round-trips (contract.NewUnixHTTPClient)
 #
 # Exit code: 0 if all expected results hold, 1 otherwise.
 set -u
@@ -86,6 +92,8 @@ API="http://127.0.0.1:$API_PORT"
 TRAEFIK_DIR="$WORK/traefik"
 WEB_PORT_T=$(( WEB_PORT + 7 ))
 DPID=""
+DPID3=""
+DPID4=""
 # A2 (issue #103, D51): the daemon resolves `crane` via PATH (unpackOCI
 # execs it by name) — put the pinned binary first, same role pasta has
 # for test_pasta.sh.
@@ -93,6 +101,14 @@ export PATH="$REPO/tools/bin:$PATH"
 REG_PORT=$(( 15100 + RANDOM % 300 ))
 REG="127.0.0.1:$REG_PORT"
 RPID=""
+# S4 (issue #116): separate state/socket for the MD35/MD36 daemons
+S4_DIR="$WORK/s4"
+S4_STATE="$S4_DIR/state"
+S4_SOCK="$S4_DIR/minictd.sock"
+S4_STATE2="$S4_DIR/state2"
+S4_SOCK2="$S4_DIR/minictd2.sock"
+S4_PORT=$(( 17300 + RANDOM % 200 ))
+S4_PORT2=$(( 17500 + RANDOM % 200 ))
 
 PASS=0; FAIL=0; SKIPPED=0
 run_case() { # <id> <desc> <expect: pass|fail|skip> <cmd...>
@@ -127,6 +143,8 @@ cleanup() {
             "$API/v1/sandboxes/$n/remove" >/dev/null 2>&1 || true
     done
     [[ -n "$DPID" ]] && kill "$DPID" 2>/dev/null
+    [[ -n "$DPID3" ]] && kill "$DPID3" 2>/dev/null
+    [[ -n "$DPID4" ]] && kill "$DPID4" 2>/dev/null
     # Catch-all (issue #91 dev session, measured leak): when this script's
     # stdout is a short-lived pipe consumer (grep/tail) the shell can die
     # by SIGPIPE BEFORE the EXIT trap runs — daemon2 (MD21) then outlives
@@ -700,10 +718,72 @@ run_case MD27 "oci: without crane -> Run fails closed, dir wiped" pass md27
 
 api POST /v1/sandboxes/md-oci/remove >/dev/null 2>&1 || true
 
+# ---------- S4 unix-socket listener (issue #116, GAPS S4) ----------
+# Wait for the S4 daemon to come up on the unix socket.
+s4_wait() { # <sock>
+    for _ in $(seq 1 50); do
+        [[ -S "$1" ]] && return 0
+        sleep 0.1
+    done
+    return 1
+}
+
+md35() {
+    mkdir -p "$S4_DIR"
+    # Pre-create the socket dir LOOSER (0755): the daemon must correct it
+    # to 0700 at boot (fail-closed chmod) — pins M2 (skip dir chmod).
+    mkdir -p "$S4_STATE" && chmod 755 "$S4_DIR"
+    MINICTD_TOKEN="$TOKEN" "$MINICTD" \
+        --listen "127.0.0.1:$S4_PORT" --unix-socket "$S4_SOCK" \
+        --state-dir "$S4_STATE" \
+        --minict-bin "$MINICT" --minict-exec-bin "$MEXEC" \
+        --base-rootfs "$REPO/rootfs" --webproxy "$REPO/tools/webproxy.py" \
+        > "$WORK/daemon3.log" 2>&1 &
+    DPID3=$!
+    s4_wait "$S4_SOCK" || return 1
+    # healthz over BOTH transports (same handler, auth included)
+    curl -s -m 5 -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:$S4_PORT/healthz" >/dev/null || return 1
+    curl -s -m 5 --unix-socket "$S4_SOCK" -H "Authorization: Bearer $TOKEN" http://unix/healthz >/dev/null || return 1
+    # hardened perms measured at runtime (M1: loose socket chmod -> red here)
+    [[ "$(stat -c '%a' "$S4_SOCK")" == 600 ]] || return 1
+    [[ "$(stat -c '%a' "$S4_DIR")" == 700 ]] || return 1
+}
+run_case MD35 "S4: --unix-socket serves API, socket 0600, dir corrected 0700" pass md35
+
+md36() {
+    mkdir -p "$S4_STATE2"
+    MINICTD_TOKEN="$TOKEN" "$MINICTD" \
+        --listen "" --unix-socket "$S4_SOCK2" \
+        --state-dir "$S4_STATE2" \
+        --minict-bin "$MINICT" --minict-exec-bin "$MEXEC" \
+        --base-rootfs "$REPO/rootfs" --webproxy "$REPO/tools/webproxy.py" \
+        > "$WORK/daemon4.log" 2>&1 &
+    DPID4=$!
+    s4_wait "$S4_SOCK2" || return 1
+    # unix-only posture: NO tcp listener owned by this daemon (M-tcp:
+    # binding TCP anyway -> red)
+    if command -v ss >/dev/null 2>&1; then
+        ! ss -tlnp 2>/dev/null | grep -q "pid=$DPID4," || return 1
+    else
+        ! grep -qi ":$(printf '%04X' "$S4_PORT2")" /proc/net/tcp 2>/dev/null || return 1
+    fi
+    # healthz over unix works
+    curl -s -m 5 --unix-socket "$S4_SOCK2" -H "Authorization: Bearer $TOKEN" http://unix/healthz >/dev/null || return 1
+    # R3 unchanged: no token over unix -> 401 (M-auth: skipping auth on
+    # unix socket -> red)
+    code_noauth=$(curl -s -m 5 -o /dev/null -w '%{http_code}' --unix-socket "$S4_SOCK2" http://unix/healthz)
+    [[ "$code_noauth" == 401 ]] || return 1
+    # CLI over unix socket (contract.NewUnixHTTPClient + --socket flag)
+    "$SANDBOX" --socket "$S4_SOCK2" --token "$TOKEN" list >/dev/null || return 1
+}
+run_case MD36 "S4: unix-only posture, 401 no-token, CLI --socket round-trip" pass md36
+
 echo "=== summary: PASS=$PASS SKIP=$SKIPPED FAIL=$FAIL ==="
 if [[ $FAIL -ne 0 ]]; then
     echo "--- daemon log (tail) ---"; tail -20 "$WORK/daemon.log" 2>/dev/null
     echo "--- daemon2 log (tail) ---"; tail -20 "$WORK/daemon2.log" 2>/dev/null
+    echo "--- daemon3 log (tail) ---"; tail -20 "$WORK/daemon3.log" 2>/dev/null
+    echo "--- daemon4 log (tail) ---"; tail -20 "$WORK/daemon4.log" 2>/dev/null
     echo "--- install log (tail) ---"; tail -10 "$WORK/install.log" 2>/dev/null
     echo "--- ocireg log (tail) ---"; tail -10 "$WORK/ocireg.log" 2>/dev/null
 fi
