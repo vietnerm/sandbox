@@ -229,3 +229,40 @@ Dừng?      : không
   code UI đầu tiên khi mọi mục GĐ2 hoàn thành.
 
 ### Pha C/E — cập nhật sau merge (SBG apply + ledger sẽ ghi ở phần cuối phiên)
+
+### Pha C — Gộp (SBG MODE=apply)
+- CI `9c4cf9c` xanh 4/4 (build-test ×2 + perf-guard + scan) → flip ready (GraphQL
+  `markPullRequestReadyForReview`) → **squash `336373a`** REST PUT match-head-commit
+  `9c4cf9c…` → **#116 auto-close** (precedent #113/#104 — §6 maintainer-verified vẫn
+  chờ như 113/108) + gỡ `status:in-progress`.
+- Kiểm sau merge: `git diff main 9c4cf9c` rỗng (squash tree khớp đúng head);
+  nhánh xoá local + remote; remote sau Phiên 18: **chỉ `main`** @ `336373a`.
+- SIA delta PASS @ `9c4cf9c` (delta = journal/** only — daily-log + residual notes;
+  SCR rerun bắt buộc PASS, label `audit:pass`).
+
+### Pha E — Kết ngày (SBG)
+- SBG MODE=apply: `sec/116-s3...`— `sec/116-s4-unix-socket` DELETE_MERGED (local +
+  remote sau squash); không nhánh KEEP mới; ledger qua PR này
+  (`chore(branches): ledger 2026-11-22 Phiên 18`).
+- Roadmap: "Đã xong" thêm Phiên 18 (S4); GĐ2 mục 1 còn mở: **S5–S6**, systemd-real,
+  residual #109 (chờ maintainer); mục 2–7 chưa mở; from-audit mở: #117 (truncate>255),
+  #119 (TOCTOU socket-path).
+- Self-audit cuối ngày theo §7: make test (10 suites none-failed), test-web 9/9,
+  test-minictd 36+1SKIP, cve-check rc=0, `gh pr checks` = CI main xanh (build-test
+  + perf-guard + scan chạy trên `336373a` — kết quả ghi ledger).
+
+DAY PASS — 2026-11-22 Phiên 18: issue #116 done (merge #118 `336373a` @ `9c4cf9c`;
+SCR PASS ×2 SHA — suites rc=0 ×2 byte-stable, web 9/9 ×2, minictd 36+1SKIP ×2,
+mutants 4/4 + M0 collapse ×2 SHA, bench N=50 p50 1.9/1152/~2.1; SIA CONCERNS → fix
+1 commit → PASS delta; test-minictd 34→36 + unit 6; CVE gate rc=0; host unchanged
+3/3; main xanh `336373a`; remote chỉ `main`; 2 issue mới triage #116/#117 + #119
+from-audit).
+
+=== SBG REPORT — 2026-11-22 (apply, Phiên 18) ===
+Đã gộp     : 2  — #118 (sec #116, squash `336373a`), ledger PR này
+Đã xoá     : 1  (sau merge: `sec/116-s4-unix-socket` local + remote)
+Giữ lại    : 0
+Còn lại    : main
+CI main    : xanh (336373a — build-test + scan + perf-guard, đo được qua API)
+Dừng?      : không
+=============================================
