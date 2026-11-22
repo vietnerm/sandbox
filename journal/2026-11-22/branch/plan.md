@@ -46,3 +46,34 @@ Chu trình: Phiên 18 (SDDA, issue S4-GAPS — unix-socket listener, GĐ2 mục 
 
 - Không nhánh local lẻ; nhánh làm việc `sec/<num>-s4-unix-socket` sẽ tạo trong
   Pha D và dự kiến DELETE_MERGED sau squash. Không nhánh KEEP mới.
+
+---
+
+# SBG — Branch Gate plan 2026-11-22 (MODE=plan, Pha A — Phiên 19)
+
+Chu trình: Phiên 19 (SDDA, issue #121 / GAPS S5 — spec rlimits cho exec'd
+processes, GĐ2 mục 1).
+
+## Trạng thái đầu chu trình
+
+- Pull main `336373a` (ff, ledger Phiên 18 đã vào main qua PR #120 squash
+  `e65d0e2`); working tree clean; local chỉ `main` (nhánh
+  `sec/116-s4-unix-socket` đã xoá cuối Phiên 18).
+- PR mở: **0** (REST API `pulls?state=open` rỗng) → Pha B/C đầu chu trình
+  không có việc; PR mới của Phiên 19 đi Pha B→C ngay trong lần chạy này.
+- Issue mở: 17 — không có `type:security priority:p0/p1` nào chen ngang
+  (#8 p2 track vendor backport CVE-2026-31431, không chặn). Tạo #121 (S5,
+  type:security p1) theo GAPS thứ tự (S1→S6, S5 tiếp theo sau S4) + kế hoạch
+  "ngày mai" Phiên 18.
+
+## Kế hoạch DELETE_MERGED / KEEP
+
+- Không nhánh local lẻ; nhánh làm việc `sec/121-s5-rlimits-exec` sẽ
+  DELETE_MERGED sau squash. Không nhánh KEEP mới.
+
+## Kế hoạch gộp trong ngày
+
+- PR duy nhất hôm nay: `sec/121-s5-rlimits-exec` (issue #121) — đi Pha B→C
+  ngay khi mở (draft → CI xanh → SCR → SIA → flip ready → squash
+  `--match-head-commit`). Ledger cuối ngày qua PR `chore(branches): ledger
+  2026-11-22 Phiên 19` (hoặc gộp vào PR chính theo precedent Phiên 17/18).

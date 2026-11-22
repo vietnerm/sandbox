@@ -299,6 +299,132 @@ static char g_envf_buf[ENVF_MAX_FILE + 1];
 static char *g_envkv[ENVF_MAX_ENTRIES];
 static int g_envkv_n;
 
+/* ---------- spec rlimits for exec (S5, issue #121, D54) ----------
+ *
+ * The payload path (minict.c apply_spec_rlimits) applies `ulimit nofile=…` /
+ * `nproc=…` BEFORE capdrop (D23). An exec'd process joins the instance
+ * AFTER capdrop and so missed that step — it could exceed the `nofile` the
+ * operator set (GAPS S5). The daemon now appends
+ * `MINICT_RLIMIT_<NAME>=soft[:hard]` lines to the env-file; this loader
+ * pulls them into a SEPARATE array (they are NOT exported to the exec'd
+ * cmd — the rlimit config must not leak into the payload env, R2 parity)
+ * and apply_spec_rlimits() runs them in the child AFTER harden_exec_fds
+ * (RLIMIT_CORE=0 set there stays untouched) and BEFORE drop_all_caps
+ * (raising the hard limit needs CAP_SYS_RESOURCE, held in the joined
+ * userns until capdrop — D23 parity).
+ *
+ * NAME ∈ {NOFILE, NPROC} (parity with minict.c's two-resource parser).
+ * soft/hard: decimal or "unlimited" (RLIM_INFINITY). soft > hard → die
+ * (config lie, same posture as minict.c). Parse errors are fail-closed
+ * exit 125: a malformed rlimit from the daemon is a contract bug, never
+ * silently dropped.
+ */
+#define SPEC_RLIMIT_MAX 16
+#define RLIMIT_PREFIX "MINICT_RLIMIT_"
+
+struct exec_spec_rlimit {
+        int res;
+        rlim_t soft;
+        rlim_t hard;
+};
+static struct exec_spec_rlimit g_spec_rlimit[SPEC_RLIMIT_MAX];
+static int g_spec_rlimit_n;
+
+/* numeric or "unlimited" — verbatim from minict.c spec_parse_rlim. */
+static int parse_rlim(const char *s, rlim_t *out)
+{
+        char *end = NULL;
+        unsigned long long v;
+
+        if (!strcmp(s, "unlimited")) {
+                *out = RLIM_INFINITY;
+                return 0;
+        }
+        errno = 0;
+        v = strtoull(s, &end, 10);
+        if (end == s || *end != '\0' || errno == ERANGE ||
+            v > (unsigned long long)RLIM_INFINITY)
+                return -1;
+        *out = (rlim_t)v;
+        return 0;
+}
+
+/* record one MINICT_RLIMIT_<NAME>=soft[:hard] entry from the env-file.
+ * Mutates `kv` in place (null-terminates at '=' and ':'); the caller does
+ * NOT store it into g_envkv afterwards (rlimit directives are not env).
+ * Fail-closed exit 125 on any parse error. */
+static void record_rlimit(char *kv, const char *path)
+{
+        char *eq, *colon, *name;
+        int res;
+
+        eq = strchr(kv, '=');
+        if (!eq) {
+                fprintf(stderr, "minict-exec: %s: rlimit line without '='\n",
+                        path);
+                exit(125);
+        }
+        *eq = '\0';
+        name = kv + strlen(RLIMIT_PREFIX);
+        if (!strcmp(name, "NOFILE"))
+                res = RLIMIT_NOFILE;
+        else if (!strcmp(name, "NPROC"))
+                res = RLIMIT_NPROC;
+        else {
+                fprintf(stderr, "minict-exec: %s: unknown rlimit name \"%s\" "
+                                "(NOFILE, NPROC)\n", path, name);
+                exit(125);
+        }
+        if (g_spec_rlimit_n >= SPEC_RLIMIT_MAX) {
+                fprintf(stderr, "minict-exec: %s: too many rlimit entries "
+                                "(cap %d)\n", path, SPEC_RLIMIT_MAX);
+                exit(125);
+        }
+        colon = strchr(eq + 1, ':');
+        if (colon)
+                *colon = '\0';
+        {
+                struct exec_spec_rlimit *r = &g_spec_rlimit[g_spec_rlimit_n];
+
+                if (parse_rlim(eq + 1, &r->soft) < 0) {
+                        fprintf(stderr, "minict-exec: %s: bad soft value "
+                                        "\"%s\"\n", path, eq + 1);
+                        exit(125);
+                }
+                r->hard = r->soft;
+                if (colon && parse_rlim(colon + 1, &r->hard) < 0) {
+                        fprintf(stderr, "minict-exec: %s: bad hard value "
+                                        "\"%s\"\n", path, colon + 1);
+                        exit(125);
+                }
+                if (r->hard != RLIM_INFINITY && r->soft > r->hard) {
+                        fprintf(stderr, "minict-exec: %s: soft > hard for "
+                                        "%s\n", path, name);
+                        exit(125);
+                }
+                r->res = res;
+        }
+        g_spec_rlimit_n++;
+}
+
+/* apply the recorded rlimits in the child BEFORE capdrop (D23 parity
+ * with minict.c apply_spec_rlimits). die() on failure — an ulimit that
+ * silently didn't apply is a config lie. RLIMIT_CORE=0 set by
+ * harden_exec_fds is intentionally NOT touched here. */
+static void apply_spec_rlimits(void)
+{
+        int i;
+
+        for (i = 0; i < g_spec_rlimit_n; i++) {
+                struct rlimit rl;
+
+                rl.rlim_cur = g_spec_rlimit[i].soft;
+                rl.rlim_max = g_spec_rlimit[i].hard;
+                if (setrlimit(g_spec_rlimit[i].res, &rl) < 0)
+                        die("setrlimit (spec rlimit)");
+        }
+}
+
 static void load_env_file(const char *path)
 {
         char *p;
@@ -372,6 +498,16 @@ static void load_env_file(const char *path)
                         fprintf(stderr, "minict-exec: %s: too many entries "
                                         "(cap 64)\n", path);
                         exit(125);
+                }
+                /* S5 (issue #121): MINICT_RLIMIT_<NAME>=soft[:hard] lines
+                 * are rlimit directives, NOT env vars — record them into
+                 * the separate rlimit array and do NOT export them to the
+                 * exec'd cmd (R2 parity: rlimit config must not leak into
+                 * the payload env). The line is mutated by record_rlimit
+                 * but never stored, so the mutation is harmless. */
+                if (strncmp(line, RLIMIT_PREFIX, strlen(RLIMIT_PREFIX)) == 0) {
+                        record_rlimit(line, path);
+                        continue;
                 }
                 g_envkv[g_envkv_n++] = line;
         }
@@ -557,6 +693,8 @@ int main(int argc, char **argv)
                         _exit(126);
 
                 harden_exec_fds(); /* fd leak + core dump (D33) */
+
+                apply_spec_rlimits(); /* S5: spec rlimits BEFORE capdrop (D23) */
 
                 install_seccomp(); /* NOT inherited via setns — mandatory */
 

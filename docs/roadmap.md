@@ -22,11 +22,23 @@
 4. D — No-Compromise Validation: `make test` (isolation 31 + seccomp 21 + netns 7 +
    alpine 9 + debian 9 + escape-alpine 31 + cve-check tool 4 + pasta 11 + cg 6 = 129, pipefail thật —
    issue #14; cg suite từ #4/D48 2026-11-20, env-gated cgroups v2; dev: 127 PASS + 13 SKIP env-blocked)
-   + `make test-web` + `make test-minictd` (36, MD0–MD36) + lưu evidence vào
+   + `make test-web` + `make test-minictd` (37, MD0–MD37) + lưu evidence vào
    `journal/YYYY-MM-DD/evidence/` + integrity check host
 5. Ghi `journal/YYYY-MM-DD/daily-log.md` (quy tắc thư mục: PROMPT.MD §10)
 
 ## Đã xong
+- [x] 2026-11-22 (phiên 19, SDDA): **S5 — spec rlimits cho exec'd processes (issue #121,
+  D54, GĐ2 mục 1)**: `minict-exec.c` parse `MINICT_RLIMIT_<NAME>=soft[:hard]` từ env-file
+  vào mảng riêng (KHÔNG setenv — R2 parity, rlimit config không leak vào cmd env),
+  `apply_spec_rlimits()` trong child SAU `harden_exec_fds` (RLIMIT_CORE=0 giữ) TRƯỚC
+  `drop_all_caps` (D23: raising hard limit cần CAP_SYS_RESOURCE held trong joined
+  userns đến capdrop); daemon `exec.go` (setns mode) load `spec.json`, parse
+  `spec.Ulimits` (nofile/nproc only — parity buildSpecMinict), append `MINICT_RLIMIT_*`
+  vào env-file. PidsLimit NOT mapped cho exec (cgroups v2 đã bound exec'd process qua
+  instance cgroup pids.max; không cgroups → per-uid nproc hazard S2, payload-only).
+  Test MD37: `ulimit -n` trong exec == spec nofile; mutant skip-apply → MD37 đỏ.
+  Perf cold ~2 ms / rss ~1.2 MB / disk ~2.05 MB (gate không đổi). CVE gate rc=0.
+  Residual: none (nofile/nproc parity payload; resources khác do cgroups quản). (#121)
 - [x] 2026-11-22 (phiên 18, SDDA): **S4 — unix-socket listener fail-closed (issue #116,
   D53, GĐ2 mục 1)**: `openUnixSocket()` (`minictd/cmd/minictd/listener.go`) — pathname
   unix socket, perms filesystem = transport security (podman rootless service model,
@@ -359,9 +371,11 @@
      MD33, rootfs cache khi images churn. (**unpack boundary hardening xong
      2026-11-21 (#104, D50)**: `tar -x` host tar trong `oci:`/`tar:` thay bằng Go
      stdlib `secureUnpack` openat O_NOFOLLOW fail-closed — MD26/MD27 + unit matrix).
-   - **S5–S6** còn mở (S1 FIXED #41; **S3 FIXED #113 2026-11-22**; **S4 FIXED #116
+   - **S6** còn mở (S1 FIXED #41; **S3 FIXED #113 2026-11-22**; **S4 FIXED #116
      2026-11-22 — `--unix-socket` fail-closed, token giữ nguyên trên mọi transport;
-     residual TLS cross-host**; A3 reconcile proactive đã có — heartbeat P4 mở).
+     residual TLS cross-host**; **S5 FIXED #121 2026-11-22 — exec'd processes nhận
+     spec rlimits (nofile/nproc) qua `MINICT_RLIMIT_*` directive trong env-file,
+     apply BEFORE capdrop (D54)**; A3 reconcile proactive đã có — heartbeat P4 mở).
 2. Template: instance từ template; lưu instance thành template.
 3. Storage: overlayfs rootless + idmapped mounts (thay private copy 2 MB/instance);
    snapshot/backup/restore (overlay layer + tar.zst).

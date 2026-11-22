@@ -98,3 +98,55 @@ không PKI, precedent podman.
 lỏng, die nếu chmod lỗi), socket 0600, refuse symlink + non-socket file tại
 path (chống hijack), replace stale socket (boot lại sau crash), token auth
 giữ nguyên; TCP listener trở thành opt-in (rỗng = tắt — unix-only posture).
+
+---
+
+# Research — 2026-11-22 (SDDA Phiên 19, issue #121 / GAPS S5)
+
+Chủ đề: spec rlimits cho exec'd processes — setrlimit lifecycle qua setns +
+execve; CAP_SYS_RESOURCE window; precedent runc/libcontainer exec.
+
+## Nguồn 1 — setrlimit(2) man page
+- Link: https://man7.org/linux/man-pages/man2/setrlimit.2.html
+- setrlimit đặt soft/hard limit **per-process**; limit survives `execve(2)`
+  (exec KHÔNG reset rlimits) → apply trong child của minict-exec trước
+  `execvp` sẽ tác động lên cmd chạy. Raising hard limit above current cần
+  `CAP_SYS_RESOURCE` (capabilities(7)); lowering không cần cap. Áp dụng:
+  apply trong child SAU khi join userns U1 (full cap set) và TRƯỚC
+  `drop_all_caps()` — D23 parity.
+
+## Nguồn 2 — setrlimit(2) descriptions + limits(7)
+- Link: https://man7.org/linux/man-pages/man7/limits.7.html
+- `RLIMIT_NOFILE`: max fd+1 (soft = default open max, hard = ceiling).
+  `RLIMIT_NPROC`: max processes per **real UID** — shared across processes
+  cùng uid (S2 hazard: per-uid, không per-instance). "unlimited" =
+  `RLIM_INFINITY` (`rlim_t` = ~0ULL). soft ≤ hard, hard ≤ RLIM_INFINITY.
+  Áp dụng: parser hỗ trợ "unlimited" (parity `minict.c spec_parse_rlim`).
+
+## Nguồn 3 — minict.c apply_spec_rlimits + D23 (repo nội bộ)
+- Link: `sandbox/minict.c` dòng 1204-1220; decision D23.
+- Payload path: `apply_spec_rlimits()` chạy BEFORE `drop_all_caps()` —
+  raising hard limit cần CAP_SYS_RESOURCE held trong own userns đến capdrop.
+  Sau capdrop chỉ lower được. **Cùng luật áp dụng cho exec path**: child của
+  minict-exec có full cap U1 (join user ns) trước `drop_all_caps()` của chính
+  nó → window raise hard limit tồn tại. Trước S5, exec path chỉ set
+  RLIMIT_CORE=0 (`harden_exec_fds`, D33) và bỏ qua spec rlimits = lỗ.
+
+## Nguồn 4 — runc/libcontainer exec precedent (setns + rlimit re-apply)
+- Link: https://github.com/opencontainers/runc/blob/main/libcontainer/process/exec.go
+- runc exec joins container ns qua setns (cùng model RootlessKit/podman mà
+  minict-exec D25 dùng) và re-applies spec rlimits trong exec'd process trước
+  exec. Precedent: exec KHÔNG inherit container payload's rlimits tự động
+  (rlimit per-process, không cross process) → phải re-apply tường minh.
+
+**Trade-off:** truyền rlimit qua env-file với prefix `MINICT_RLIMIT_` (thay
+thêm flag `--rlimit` repeatable) — đơn giản cho daemon, nhưng loader phải tách
+riêng để không leak vào env cmd (R2). PidsLimit NOT mapped cho exec: cgroups
+v2 (D48) đã bound exec'd process qua instance cgroup `pids.max`; không cgroups
+→ per-uid nproc mang hazard S2, để payload path alone.
+
+**Áp dụng cho minict:** `minict-exec.c` — `record_rlimit()` vào mảng riêng +
+`apply_spec_rlimits()` trong child SAU `harden_exec_fds` TRƯỚC
+`drop_all_caps`; daemon `exec.go` load `spec.json`, append
+`MINICT_RLIMIT_<NAME>=soft[:hard]` vào env-file. Hai resource NOFILE+NPROC
+parity payload. Test MD37: `ulimit -n` trong exec == spec nofile.

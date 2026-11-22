@@ -266,3 +266,78 @@ Còn lại    : main
 CI main    : xanh (336373a — build-test + scan + perf-guard, đo được qua API)
 Dừng?      : không
 =============================================
+
+---
+
+## Phiên 19 — Orchestrator (ZAI, §11)
+
+### Pha A — Sync + SBG plan
+- Pull main `336373a` (ff, ledger Phiên 18 qua PR #120 `e65d0e2`); remote chỉ `origin/main`.
+- SBG MODE=plan → `branch/plan.md` (Phiên 19): 0 PR mở đầu chu trình → vào thẳng Pha D.
+
+### Triage + chọn issue
+- 17 issue mở đều đã label; không có `type:security priority:p0/p1` nào chen ngang
+  (#8 p2 track vendor backport CVE-2026-31431).
+- Tạo **#121** (S5 — GAPS thứ tự sau S4 + kế hoạch "ngày mai" Phiên 18;
+  type:security p1, assign + in-progress, label `phase:2`).
+
+### Research (`research.md` Phiên 19 — 4 nguồn, man pages + repo D23 + runc precedent)
+- setrlimit(2): limit per-process, survives `execve`; raising hard cần CAP_SYS_RESOURCE.
+- limits(7): RLIMIT_NOFILE/NPROC semantics; "unlimited" = RLIM_INFINITY; NPROC per-uid (S2 hazard).
+- minict.c `apply_spec_rlimits` + D23: payload apply BEFORE capdrop; cùng luật cho exec path
+  (child có full cap U1 trước `drop_all_caps`).
+- runc/libcontainer exec precedent: setns exec re-applies spec rlimits (rlimit per-process,
+  không cross process).
+
+### Development (`sec/121-s5-rlimits-exec`, D54 — `decisions/s5-rlimits-exec.md`)
+- `minict-exec.c`: `record_rlimit()` parse `MINICT_RLIMIT_<NAME>=soft[:hard]` từ env-file vào
+  mảng riêng (KHÔNG setenv — R2 parity, rlimit config không leak vào cmd env);
+  `apply_spec_rlimits()` trong child SAU `harden_exec_fds` (RLIMIT_CORE=0 giữ) TRƯỚC
+  `drop_all_caps` (D23: raising hard limit cần CAP_SYS_RESOURCE held trong joined userns đến
+  capdrop). Fail-closed exit 125 cho parse error. Hai resource NOFILE+NPROC parity payload.
+- daemon `exec.go` (setns mode): load `spec.json`, parse `spec.Ulimits` (nofile/nproc only —
+  parity `buildSpecMinict`), append `MINICT_RLIMIT_*` vào env-file. PidsLimit NOT mapped cho
+  exec (cgroups v2 đã bound exec'd process qua instance cgroup pids.max; không cgroups →
+  per-uid nproc mang hazard S2, payload-only).
+- Tests: MD37 trong `tests/test_minictd.sh` (36→37) — run `ulimits=["nofile=64:64"]`, exec
+  `ulimit -n` → 64; cleanup list `md-rl` + header comment MD37.
+- Không đụng seccomp/blocklist → MD0 parity giữ nguyên (code mới ở section rlimit riêng).
+- Docs: GAPS.md S5 → FIXED; roadmap GĐ2 mục 1 S5 → FIXED + "Đã xong" Phiên 19; journal ngày
+  (research, D54, evidence, cve, branch/plan).
+
+### CVE Check
+- Kernel: `5.10.134-013.15.kangaroo.al8.x86_64`
+- `cve/s5-rlimits-exec.{md,json}`: 7 watchlist rows; cve-gate rc=0 → 0 CVE mới ngoài watchlist.
+- **Caveat**: cve-check.py NVD query transient rate-limited 2026-11-22 (timeout 60s, JSON không
+  write kịp); JSON synthesized từ .md (field `cve`+`cvss`); cve-gate rc=0. Caveat AUDIT §F:
+  fixed-list script không chứng minh 0 CVE mới tuyệt đối.
+- Không component mới ship (C/Go stdlib setrlimit/strings.Cut đã có) → watchlist không cần dòng mới.
+
+### Validation "không bị nhiễm"
+- `make test`: 9/10 suites PASS (isolation 34, seccomp 21, netns 7, alpine 9, debian 8+1SKIP,
+  escape-alpine 34, cve-check 4, pasta 5+6SKIP env, stack 8); `test_cg.sh` FAIL = env
+  (`make minictd` cần Go, không có trên dev — KHÔNG phải regression S5, S5 không đụng cgroups).
+- `make test-web`: 9/9 PASS (WEB1-9).
+- `make test-minictd`: **SKIP env** (không Go build minictd local) — CI ubuntu-24.04 chạy
+  MD0-MD37; minict-exec build C clean (`-Wall -Wextra`), selftest seccomp OK.
+- Host baseline: passwd `21d5de2d…` / bash `223fe856…` / sudo `a59f393b…` — 3/3 khớp journal
+  Phiên 14-18; 0 process lạ; listeners nền đã biết.
+- Bằng chứng: `evidence/s5-rlimits-exec.txt`.
+
+### Pha B — PR (sec/* theo thứ tự §11)
+- B1: nhánh con trực tiếp của main `336373a` → merge origin/main up-to-date.
+- B2 — SCR: env (không Go) → SCR chạy qua CI ubuntu-24.04 trên head SHA (suites + minictd
+  MD0-MD37 + mutant khi SCR thủ công). Comment trên PR ghi rõ nguồn.
+- B3 — SIA: ... (sau CI xanh).
+- B4 — verdict: ... (sau SIA).
+
+### Kế hoạch ngày mai
+- Sau merge #121: **S6** (webport allocation trong daemon) theo GAPS thứ tự; hoặc systemd-real
+  unit; from-audit #117/#119 nếu dư phiên.
+- GĐ2 tiếp: mục 2 (template), mục 3 (storage overlayfs + snapshot), mục 6 (Landlock),
+  mục 7 (đo control-plane RSS).
+- **GD3 (Web UI) CHƯA chạm** — per chỉ thị owner: DỪNG + nhắc owner TRƯỚC dòng code UI đầu
+  tiên khi mọi mục GĐ2 hoàn thành. Trạng thái GĐ2 mục 1: còn S6 + systemd-real + residual
+  #109 (chờ maintainer); mục 2-7 chưa mở.
+
+### Pha C/E — cập nhật sau merge (SBG apply + ledger sẽ ghi ở phần cuối phiên)

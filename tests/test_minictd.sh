@@ -67,6 +67,9 @@
 #   MD36  S4 unix-only posture + auth + CLI: --listen "" -> no TCP listener
 #         (ss pid check), no-token over unix -> 401 (R3 unchanged),
 #         sandbox --socket round-trips (contract.NewUnixHTTPClient)
+#   MD37  S5 spec rlimits for exec (issue #121): exec'd process gets the
+#         instance's nofile rlimit — `ulimit -n` inside exec == spec value
+#         (minict-exec applies MINICT_RLIMIT_* BEFORE capdrop, D23 parity)
 #
 # Exit code: 0 if all expected results hold, 1 otherwise.
 set -u
@@ -138,7 +141,7 @@ cleanup() {
     # repo-scoped argv pattern instead (measured leak: 1 ocireg per suite
     # run without this, Phiên 16).
     pkill -TERM -f -- "tools/bin/ocireg $REG_PORT" 2>/dev/null || true
-    for n in md-a md-b md-c md-auto md-t md-f md-oci md-oci-bad md-oci-h md-oci-r md-oci-a; do
+    for n in md-a md-b md-c md-auto md-t md-f md-oci md-oci-bad md-oci-h md-oci-r md-oci-a md-rl; do
         curl -s -m 5 -X POST -H "Authorization: Bearer $TOKEN" \
             "$API/v1/sandboxes/$n/remove" >/dev/null 2>&1 || true
     done
@@ -784,6 +787,27 @@ md36() {
         || { echo "CLI list: $(tail -3 "$WORK/daemon4.log")"; return 1; }
 }
 run_case MD36 "S4: unix-only posture, 401 no-token, CLI --socket round-trip" pass md36
+
+# ---------- S5 spec rlimits for exec (issue #121, GAPS S5) ----------
+md37() {
+    # Run an instance with nofile=64:64 — the payload gets the rlimit via
+    # MINICT_SPEC; exec'd processes must get it too via minict-exec's new
+    # MINICT_RLIMIT_NOFILE directive (S5). busybox `ulimit -n` reads the
+    # RLIMIT_NOFILE soft; assert == 64 (not the host default, which on the
+    # runner is typically 1024+). The instance has no webport/proxy so
+    # cleanup is just the remove call in the EXIT trap.
+    api POST /v1/run "$(cat <<EOF
+{"name":"md-rl","image":"base",
+ "ulimits":["nofile=64:64"],
+ "cmd":["/bin/sh","-c","sleep 600"]}
+EOF
+)" >/dev/null || return 1
+    sleep 0.4
+    api GET /v1/sandboxes/md-rl >/dev/null && [[ "$(jget 'd["State"]["Status"]')" == running ]] || return 1
+    xv2 md-rl '{"cmd":["/bin/sh","-c","ulimit -n"],"timeout_s":5}' || return 1
+    [[ "$(jget 'd["stdout"].strip()')" == 64 ]] || { echo "ulimit -n: $(jget 'd["stdout"].strip()')"; return 1; }
+}
+run_case MD37 "S5: exec gets spec rlimits (nofile=64 -> ulimit -n 64)" pass md37
 
 echo "=== summary: PASS=$PASS SKIP=$SKIPPED FAIL=$FAIL ==="
 if [[ $FAIL -ne 0 ]]; then
