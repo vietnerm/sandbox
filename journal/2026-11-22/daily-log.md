@@ -127,3 +127,105 @@ Còn lại    : main
 CI main    : xanh (67c55ca — build-test + scan + perf-guard, đo được qua API)
 Dừng?      : không
 =============================================
+
+---
+
+## Phiên 18 — Orchestrator (ZAI, §11)
+
+### Pha A — Sync + SBG plan
+- Pull main `69ecedb` (up to date); 0 PR mở đầu chu trình → Pha B/C đầu phiên không có việc.
+- SBG MODE=plan → `branch/plan.md` (Phiên 18): nhánh `sec/116-s4-unix-socket` dự kiến DELETE_MERGED sau squash.
+
+### Triage + chọn issue
+- 15 issue mở đều đã label; tạo 2 issue mới: **#116** (S4 — GAPS thứ tự + kế hoạch
+  "ngày mai" Phiên 17; type:security p1, assign + in-progress, gỡ `needs-repro`
+  vì repro đo được trong issue) và **#117** (from-audit truncate>255 của SIA PR
+  #114 — loose end Phiên 17 chưa mở, tạo bù, p3).
+- Chọn theo §8 ưu tiên 1: **#116** (type:security p1). #8 (security p2) thấp hơn
+  không chen ngang.
+
+### Research (`research.md` Phiên 18 — 4 nguồn, HEAD-check: 3×200 + 1×403 bot-block)
+- unix(7): pathname socket honor dir perms; tạo socket cần write+search trên dir.
+- podman-system-service: rootless REST mặc định unix socket — perms fs là security
+  model (precedent thiết kế trùng mục tiêu minict).
+- Docker daemon socket precedent: 0660 = access control; 0666 = class lỗi đã biết.
+- SO_PEERCRED: COULD xác thực peer-uid, nhưng giữ token trên MỌI transport (R3)
+  — một code-path auth duy nhất, MD36 pin 401 qua socket.
+
+### Development (`sec/116-s4-unix-socket`, D53 — `decisions/s4-unix-socket.md`)
+- `cmd/minictd/listener.go` (mới): openUnixSocket fail-closed — dir 0700 (chmod nếu
+  lỏng; chmod lỗi → die), socket 0600 + Lstat verify (umask-proof), refuse symlink
+  (D31 posture) + non-socket file, replace stale socket (chỉ sau khi verify LÀ
+  socket), unlink lúc shutdown sạch.
+- `cmd/minictd/main.go`: `--unix-socket`; `--listen ""` tắt TCP (unix-only posture);
+  cả hai rỗng → die "no listener"; serve nhiều listener cùng handler; listeners mở
+  trước background work (die nhanh khi cấu hình sai).
+- `contract/httpclient.go`: `NewUnixHTTPClient`; `cmd/sandbox`: `--socket` /
+  `$MINICTD_SOCKET` thắng `--addr`; README + docs transport.
+- `deploy/minictd.service.in` + install.sh: `--unix-socket` vào ExecStart; chmod 700
+  state dir. GAPS.md S4 → FIXED (residual TLS cross-host); roadmap GĐ2 mục 1.
+- Tests: unit `listener_test.go` 6 case (stale tạo bằng raw syscall.Bind — bài học:
+  Go net.Listen("unix") tự unlink khi Close nên không tạo stale được); MD35 (healthz
+  cả hai transport + stat 600/700 với dir pre-created 0755) + MD36 (unix-only qua
+  ss-pid check + 401 no-token + CLI --socket) vào test-minictd (34→36).
+- Mutants: M1 socket-0666 → MD35 đỏ; M2 skip-chmod-dir → MD35 đỏ; M-auth → MD2+MD36
+  đỏ; M-tcp → MD36 đỏ; M3 symlink-branch disable → masked-documented (nhánh
+  non-socket vẫn refuse — defense in depth, precedent D50).
+- Perf: cold 1.88 ms / rss 1164 kB / disk 2.05 MB (perf-check N=20) — PASS; runtime
+  path không đổi, lệch trong nhiễu so baseline Phiên 17 (2.06/1244/2.05).
+
+### CVE Check
+- Kernel: `5.10.134-013.15.kangaroo.al8.x86_64`
+- `cve/s4-unix-socket.{md,json}`: cve-check rc=0 + cve-gate rc=0 → 0 CVE mới ngoài
+  watchlist (caveat fixed-list vẫn đúng — ghi từ Phiên 17).
+- Không component mới ship (net/net-http stdlib đã có; không thêm dependency) →
+  watchlist không cần dòng mới.
+
+### Validation "không bị nhiễm"
+- `make test`: 10 suites, failed: none (isolation 34, seccomp 21, netns 7, alpine 9,
+  debian 8+1SKIP, escape-alpine 34, cve-check 4, pasta 5+6SKIP env, stack 8,
+  cg 0+6SKIP env-gated); `make test-web` 9/9; `make test-minictd` **36 PASS + 1 SKIP**
+  (MD33 opt-in) ×2 runs trên working tree.
+- SCR clone trắng @ `89a583a` (fetch `refs/pull/118/head`): suites ×2 rc=0 byte-stable,
+  web 9/9 ×2, minictd 36+1SKIP ×2; mutants M1/M2/M-tcp/M-auth caught + M0 collapse;
+  bench N=50 cold p50 1.9 / p95 2.4, rss 1152, disk ~2.1; host 3/3 unchanged.
+- Host baseline: passwd `21d5de2d…` / bash `223fe856…` / sudo `a59f393b…` — 3/3 khớp
+  journal 11-19→11-22; listeners nền đã biết (81/12600/12700/19001/19005/19006);
+  0 process lạ; instances/ rỗng sau suite.
+- Bằng chứng: `evidence/s4-unix-socket.txt`.
+
+### Pha B — PR #118 (sec/* theo thứ tự §11)
+- B1: nhánh con trực tiếp của main `69ecedb` → merge origin/main up-to-date.
+- B2 — SCR clone trắng @ `89a583a`: **PASS** (bằng chứng = comment SCR trên PR; lesson
+  đo được: fetch SHA trần qua GitHub thất bại im lặng → FETCH_HEAD cũ — lần chạy đầu
+  nhầm 69ecedb, bỏ kết quả lần đó, dùng pull/118/head từ lần hai).
+- B3 — SIA @ `89a583a`: **CONCERNS** — 10/11 OK; B10 VIOLATION (daily-log thiếu trong
+  PR — precedent #106); claims 0 sai; test rỗng 0; bảo mật 2 low (TOCTOU same-uid
+  socket-path swap; dual-transport opt-in). Label `audit:concerns`. Comment trên PR.
+- B4 — SDDA sửa: (1) [medium] commit này thêm daily-log Phiên 18 vào nhánh; (2) [low]
+  mở issue #119 (TOCTOU socket-path, from-audit) + residual vào D53; (3) [low] M3
+  provenance ghi vào D53; (4) [low] dual-transport đã tài liệu đủ (log tcp=off +
+  README) — không đổi code. Push → CI → SCR (bắt buộc chạy lại) → SIA delta.
+
+### Bài học đo được (giữ minh bạch)
+- **Binary stale qua command-chain timeout**: build mutant M-tcp còn nằm trong
+  `minictd/bin/` vì chuỗi lệnh bị timeout-kill giữa `make` — lần chạy "clean" đầu
+  sau đó fail MD36;Probe thủ công lần 1 là FALSE NEGATIVE (`$!` captured sau
+  `sleep 1` — pid của sleep, không phải daemon). Bài học: kiểm `md5sum` binary
+  trước khi kết luận hành vi; touch + rebuild sạch → MD36 PASS.
+- **Leak class mới — daemon3/daemon4 trong subshell**: DPID3/DPID4 set trong
+  command-substitution subshell không về parent scope (cùng class RPID Phiên 16)
+  → cleanup kill vô hiệu → daemon leak giữa các run. Fix: `pkill -f -- "$S4_DIR"`
+  (argv per-run unique) + failure diagnostics cho từng assert của MD36.
+- CI trên nhánh: 4/4 checks xanh @ `89a583a` (build-test ×2 + perf-guard + scan).
+
+### Kế hoạch tiếp theo
+- Sau merge #118: S5 (spec rlimits cho exec — minict-exec) hoặc S6 (webport
+  allocation trong daemon) theo GAPS thứ tự; GĐ2 mục 1 còn S5–S6 + systemd-real +
+  residual #109 (chờ maintainer); mục 2 (template) / 3 (storage) / 6 (Landlock) /
+  7 (đo control-plane RSS) chưa mở.
+- #117 (truncate>255) + #119 (TOCTOU) — from-audit, lấy nếu còn dư phiên.
+- **GD3 (Web UI) CHƯA chạm** — per chỉ thị owner: DỪNG + nhắc owner TRƯỚC dòng
+  code UI đầu tiên khi mọi mục GĐ2 hoàn thành.
+
+### Pha C/E — cập nhật sau merge (SBG apply + ledger sẽ ghi ở phần cuối phiên)

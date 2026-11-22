@@ -59,3 +59,16 @@ Chọn **unix-socket listener** (không TLS trong phiên này):
   tạo được qua crash/c-bind; test stale dùng raw `syscall.Bind` để mô phỏng đúng.
 - `ss -tlnp` lọc theo `pid=<n>,` là cách chắc nhất khẳng định "daemon này KHÔNG
   bind TCP" — probe connect tới port trống chỉ chứng minh "port đó rỗng".
+
+## Residual từ SIA PR #118 (Phiên 18)
+
+- **TOCTOU Lstat→Remove→ListenUnix** (#119, from-audit low): cửa sổ swap file cùng
+  path giữa check và bind — chỉ same-uid exploit được (dir đã ép 0700 trước),
+  không elevation; fix hướng bind-then-verify-by-inode khi GĐ2 chạm lại.
+- **M3 provenance**: M3 (disable symlink-branch) bị mask ở mức branch — nhánh
+  non-socket refuse vẫn chặn symlink (defense in depth, property giữ). Mutant
+  chạy trên working-tree SDDA (unit TestOpenUnixSocketRefusesSymlink PASS =
+  property giữ); SCR chạy 4/4 mutant còn lại (M1/M2/M-tcp/M-auth) trên clone trắng.
+- **Dual-transport opt-in**: `--unix-socket` + `--listen` cùng đặt = phục vụ cả
+  hai (unix-only là opt-in qua `--listen ""`); log listening ghi rõ `tcp=off`;
+  README tài liệu resolve order. Không đổi code (SIA low #4).
