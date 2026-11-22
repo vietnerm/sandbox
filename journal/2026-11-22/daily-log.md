@@ -89,3 +89,41 @@
   thành + GD3 sẵn sàng mở code → DỪNG + nhắc owner TRƯỚC dòng code UI đầu
   tiên. Trạng thái GĐ2: mục 1 còn S4–S6 + systemd-real + residual #109;
   mục 2–7 chưa mở.
+
+### Pha C — Gộp (SBG MODE=apply)
+- CI `957791d` xanh (build-test ×2 + perf + scan) → flip ready (GraphQL
+  `markPullRequestReadyForReview` — REST PATCH không flip draft, đo được Phiên 16)
+  → **squash `67c55ca`** REST PUT match-head-commit `957791d` → **#113 auto-close**
+  08:21:02Z (precedent #104) + gỡ `needs-repro` khỏi #113 (SIA việc low #3 —
+  repro pre-fix đã đo được và commit vào evidence).
+- Kiểm sau merge: `git diff main 957791d` rỗng (squash tree khớp đúng head);
+  nhánh xoá local + remote (DELETE_MERGED, nội dung trọn trong main — không cần
+  tag lưu trữ); CI main `67c55ca` chạy (kết quả ghi ở Pha E).
+
+### Pha E — Kết ngày (SBG)
+- SBG MODE=apply: `sec/113-s3-ro-bind-recursive` DELETE_MERGED; residue local
+  `chore/ledger-2026-11-19-p3` DELETE_MERGED (đã xoá đầu phiên theo plan.md);
+  ledger qua PR này; remote sau Phiên 17: **chỉ `main`** @ `67c55ca`.
+- Roadmap: GĐ2 mục 1 S3 → FIXED (GAPS.md); "Đã xong" thêm Phiên 17; GĐ2 mục 1
+  còn mở: S4–S6, systemd-real, residual #109 (chờ maintainer); mục 2–7 chưa mở.
+- Lưu ý minh bạch: trong phiên phát hiện commit chồng thời điểm `a9caee3`
+  (fix(review) hardening mountinfo, author Z @ 08:12:01Z — phiên chạy song song
+  trên cùng workspace). Xử lý: review từ đầu trong SIA delta @ `957791d`, SCR
+  chạy lại ĐẦY ĐỦ trên SHA mới (code đổi — verdict không mang sang), mutants
+  áp patch sạch 4/4. Không để nhánh dở Merge; mọi thay đổi qua PR.
+
+DAY PASS — 2026-11-22 Phiên 17: issue #113 done (merge #114 `67c55ca` @
+`957791d`; SCR PASS ×2 SHA — suites rc=0 ×2 byte-stable, web 9/9, minictd
+34/34+1SKIP ×2, mutants 4/4 + M0 collapse ×2 SHA, bench N=50 2.1/1244/~2.05;
+SIA CONCERNS → fix 2 commits → PASS delta 11/11; isolation 31→34; CVE gate
+rc=0; host unchanged 3/3; main xanh `67c55ca`; remote chỉ `main`).
+
+=== SBG REPORT — 2026-11-22 (apply) ===
+Đã gộp     : 2  — #114 (sec #113, squash `67c55ca`), ledger PR này
+Đã xoá     : 2  (đã gộp từ trước: `chore/ledger-2026-11-19-p3` residue local;
+                  sau merge: `sec/113-s3-ro-bind-recursive`)
+Giữ lại    : 0
+Còn lại    : main
+CI main    : xanh (67c55ca — build-test + scan + perf-guard, đo được qua API)
+Dừng?      : không
+=============================================
