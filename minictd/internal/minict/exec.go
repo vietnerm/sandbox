@@ -157,7 +157,26 @@ func (s *Store) execStart(ctx context.Context, name string, req contract.ExecV2R
 	if mode == ExecSetns {
 		id := randHex(8)
 		envf := filepath.Join(execDir, id+".env")
-		if err := os.WriteFile(envf, []byte(strings.Join(env, "\n")+"\n"), 0600); err != nil {
+		// S5 (issue #121, D54): the payload path applies spec.Ulimits
+		// via MINICT_SPEC `ulimit` lines BEFORE capdrop; exec'd
+		// processes joined AFTER capdrop and missed that step. The
+		// daemon appends MINICT_RLIMIT_<NAME>=soft[:hard] directives
+		// to the env-file — minict-exec pulls them into a separate
+		// array (NOT exported to the cmd env, R2 parity) and applies
+		// them in the child before capdrop (D23 parity). PidsLimit
+		// is NOT mapped here: under cgroups v2 the exec'd process
+		// lives inside the instance's cgroup (pids.max already
+		// bounds it); without cgroups the per-uid nproc approximation
+		// carries the S2 shared-limit hazard and is left to the
+		// payload path only.
+		rlimitLines, err := s.execRlimitLines(name)
+		if err != nil {
+			return nil, err
+		}
+		fileLines := make([]string, 0, len(env)+len(rlimitLines))
+		fileLines = append(fileLines, env...)
+		fileLines = append(fileLines, rlimitLines...)
+		if err := os.WriteFile(envf, []byte(strings.Join(fileLines, "\n")+"\n"), 0600); err != nil {
 			return nil, err
 		}
 		cleanup = func() { _ = os.Remove(envf) }
@@ -270,6 +289,36 @@ func cwdOrDefault(w string) string {
 		return "/"
 	}
 	return w
+}
+
+// execRlimitLines builds the MINICT_RLIMIT_<NAME>=soft[:hard] directives for
+// the setns exec path (S5, issue #121, D54). Only nofile/nproc are emitted —
+// parity with the payload's MINICT_SPEC parser (store.go buildSpecMinict).
+// spec.Ulimits was validated at Run time; unknown names are silently skipped
+// here (they were already recorded as a Note on Run). A missing spec.json
+// (instance created before spec.json was mandatory, or corrupted) yields no
+// rlimit lines — exec then behaves exactly as before (host default rlimit),
+// no regression on upgrade.
+func (s *Store) execRlimitLines(name string) ([]string, error) {
+	spec, err := s.loadSpec(name)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var out []string
+	for _, u := range spec.Ulimits {
+		resName, val, ok := strings.Cut(u, "=")
+		if !ok {
+			continue
+		}
+		switch resName {
+		case "nofile", "nproc":
+			out = append(out, "MINICT_RLIMIT_"+strings.ToUpper(resName)+"="+val)
+		}
+	}
+	return out, nil
 }
 
 func orEmpty(in []byte) []byte {
