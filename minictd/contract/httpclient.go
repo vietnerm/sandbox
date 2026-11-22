@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -27,6 +28,20 @@ type HTTPClient struct {
 // logs/execstream are long-lived streams; per-op timeouts live in ctx.
 func NewHTTPClient(base, token string) *HTTPClient {
 	return &HTTPClient{Base: base, Token: token, HC: &http.Client{}}
+}
+
+// NewUnixHTTPClient builds a client that dials a unix socket (S4, issue
+// #116): the base URL is fixed to "http://unix" (host is ignored — the
+// DialContext below routes every request to socketPath). Token semantics
+// unchanged: the daemon requires it on every transport (R3).
+func NewUnixHTTPClient(socketPath, token string) *HTTPClient {
+	tr := &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			var d net.Dialer
+			return d.DialContext(ctx, "unix", socketPath)
+		},
+	}
+	return &HTTPClient{Base: "http://unix", Token: token, HC: &http.Client{Transport: tr}}
 }
 
 func (c *HTTPClient) newReq(ctx context.Context, method, path string, in any) (*http.Request, error) {

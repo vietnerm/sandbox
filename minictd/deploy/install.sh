@@ -48,6 +48,9 @@ BINDIR_ABS="$HOME_DIR/$BINDIR"
 mkdir -p "$BINDIR_ABS" "$HOME_DIR/.config/systemd/user" \
          "$HOME_DIR/.config/minictd" "$HOME_DIR/.config/minictd/traefik" \
          "$HOME_DIR/.local/state/minictd"
+# S4 (issue #116): the unix socket lives under the state dir — keep the dir
+# 0700 even if it pre-existed looser (daemon re-enforces at boot, fail-closed).
+chmod 700 "$HOME_DIR/.local/state/minictd" 2>/dev/null || true
 
 # Binaries: copy from repo bin/ if present (build first: make -C minictd).
 for b in minictd minict-exec; do

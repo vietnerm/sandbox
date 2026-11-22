@@ -32,7 +32,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=@HOME@/@BINDIR@/minictd --listen 127.0.0.1:7601 --token-file @HOME@/.config/minictd/token --autostart --state-dir @HOME@/.local/state/minictd --traefik-dir @HOME@/.config/minictd/traefik
+ExecStart=@HOME@/@BINDIR@/minictd --listen 127.0.0.1:7601 --unix-socket @HOME@/.local/state/minictd/minictd.sock --token-file @HOME@/.config/minictd/token --autostart --state-dir @HOME@/.local/state/minictd --traefik-dir @HOME@/.config/minictd/traefik
 Restart=on-failure
 RestartSec=2
 # options that apply only to the daemon process itself (no mount ns, no

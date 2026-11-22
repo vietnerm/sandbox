@@ -1,0 +1,333 @@
+make -C sandbox
+make[1]: Entering directory '/home/z/my-project/sandbox/sandbox'
+cc -O2 -Wall -Wextra -std=gnu11 -o minict minict.c
+make[1]: Leaving directory '/home/z/my-project/sandbox/sandbox'
+bash sandbox/mkrootfs.sh rootfs
+rootfs 'rootfs' already exists, skipping (rm -rf it to rebuild)
+bash tests/run-suites.sh
+### suite: test_isolation.sh
+=== minict isolation tests (2026-11-22 08:51:39) ===
+FS1   sandbox sees OUR /etc/passwd (marker)                    PASS
+FS2   host home dir /home/z unreachable                        PASS
+FS3   no /old-* escape path after pivot_root+umount            PASS
+FS4   mount --bind host / fails (no caps post-drop)            PASS
+FS5   post-capdrop tmpfs mount also fails                      PASS
+FS6   write to /home lands on-disk in rootfs (host view)       PASS
+NOTE: host refuses procfs in an unprivileged userns — /proc cases run in 'absent' mode (D39)
+PID1  payload is PID 2 behind pidns-1 signal shim              PASS
+PID2  no host processes visible (ps lists none)                PASS
+PID3  pidns live: shim is pidns-1, payload pidns-2 (host NSpid) PASS
+UID1  uid=0 inside, no foreign gid visible (0/overflow only)   PASS
+UID2  files created inside owned by real host uid              PASS
+BIND1 bind :ro plain tree: visible, top mount read-only        PASS
+BIND2 bind :ro tree WITH submount: submount ro too (mountinfo-fallback) PASS
+BIND3 control: same tree WITHOUT :ro — top+submount writable PASS
+NNP1  PR_SET_NO_NEW_PRIVS=1 verified via host /proc            PASS
+CAPD1 capdrop real: shim+payload CapEff=0 (host /proc)         PASS
+HOST1 hostname isolated ('minict')                             PASS
+FD1   fd-based escape closed: inherited host fd EBADF in payload PASS
+CHROOT1 chroot(2) EPERM post-capdrop (jail-escape primitive)     PASS
+SETUID2 suid exec: NNP=1 + CapEff=0 survive (host /proc)         PASS
+CORE1 core dump disabled: RLIMIT_CORE=0 forced in payload      PASS
+CORE2 SIGSEGV leaves no core file in rootfs/repo cwd           PASS
+SIG1  SIGKILL wrapper: PDEATHSIG+pidns teardown, no orphan     PASS
+SIG2  SIGTERM wrapper: tree exits 143 (128+15), no orphan      PASS
+SIG3  SIGINT wrapper: tree exits 130 (128+2)                   PASS
+SIG4  control: TERM to payload (non-init) delivered (143)      PASS
+SIG5  orphan grandchildren reaped by shim, no zombies          PASS
+NET1  netns isolated: only lo inside, no host iface            PASS
+NET2  loopback is UP inside sandbox netns                      PASS
+PROC1 /proc absent (host refuses procfs in userns)             PASS(expected-fail)
+PROC2 /proc/self/root unreachable (no procfs mounted)          PASS
+PROC3 (absent mode) no procfs in /proc/mounts either           PASS
+PROC4 payload cannot mount a second procfs                     PASS
+CG1   no cgroup limits (cgroups v1 only — known gap)         PASS(expected-fail)
+=== summary: PASS=34 FAIL=0 ===
+### suite: test_isolation.sh — OK
+### suite: test_seccomp.sh
+=== minict seccomp tests (2026-11-22 08:51:46) ===
+SC0   shell workload works under filter                        PASS
+SC1   keyctl blocked (EPERM)                                   PASS
+SC2   open_by_handle_at blocked (EPERM)                        PASS
+SC3   bpf blocked (EPERM)                                      PASS
+SC4   setns blocked (EPERM)                                    PASS
+SC5   unshare blocked (EPERM)                                  PASS
+SC6   io_uring_setup blocked (EPERM)                           PASS
+SC7   clone(CLONE_NEWUSER) blocked (EPERM)                     PASS
+SC8   ptrace blocked (EPERM)                                   PASS
+SC9   socket(AF_ALG) blocked (EPERM)                           PASS
+SC10  clone3 returns ENOSYS (fallback-friendly)                PASS
+SC11  control: setns NOT EPERM without filter                  PASS
+SC12  control: io_uring NOT EPERM without filter               PASS
+SC13  process_vm_readv blocked (EPERM)                         PASS
+SC14  control: keyctl works without filter                     PASS
+SC15  mount inside sandbox fails under filter (EPERM)          PASS
+SC16  control: process_vm NOT EPERM without filter             PASS
+SC17  socket(AF_NETLINK) blocked (EPERM)                       PASS
+SC18  control: netlink socket works without filter             PASS
+SC19  control: socket(AF_INET) still allowed (httpd)           PASS
+SC20  blocklist hit survives: rc=1 (EPERM), no SIGSYS death    PASS
+=== summary: PASS=21 FAIL=0 ===
+### suite: test_seccomp.sh — OK
+### suite: test_netns.sh
+=== minict netns tests (2026-11-22 08:51:46) — ports 18492/18581, host srv 18671 ===
+NS1   sandbox netns CANNOT reach host loopback listener        PASS
+NS2   control: MINICT_NO_NETNS=1 reaches the same listener     PASS
+NS3   host curl -> unix bridge -> httpd in netns (200+marker)  PASS
+NS4   relay unix socket exists on instance rootfs              PASS
+NS5   host proxy binds loopback-only (no 0.0.0.0)              PASS
+NS6   two instances: each proxy serves its OWN sandbox         PASS
+NS7   down kills proxy, frees port, removes instance           PASS
+=== summary: PASS=7 FAIL=0 ===
+### suite: test_netns.sh — OK
+### suite: test_alpine.sh
+=== minict alpine-rootfs tests (2026-11-22 08:51:48) — alpine 3.22.8, pkg acpid-openrc=2.0.34-r6 ===
+AL1   alpine rootfs boots (busybox alpine build)               PASS
+AL2   sandbox sees OUR passwd marker (not host)                PASS
+AL3   apk-tools present and runnable in sandbox                PASS
+AL4   /proc absent: host refuses procfs (env, D39)             PASS(expected-fail)
+AL5   offline apk add works, signature-verified (copy, 2-step #80) PASS
+AL6   single-uid ownership: 0:0 in ns = real uid on host       PASS
+AL7   chown foreign uid: EINVAL (unmapped), sandbox alive      PASS
+AL8   hostname isolated ('minict') on alpine rootfs            PASS
+AL9   shared rootfs pristine + no churn in suite — #80       PASS
+=== summary: PASS=9 FAIL=0 ===
+### suite: test_alpine.sh — OK
+### suite: test_debian.sh
+=== minict debian-rootfs tests (2026-11-22 08:51:56) — bookworm-slim 12.15 amd64 (epoch 1794787200), sha256 2a7a09296874…, 83308 KB ===
+DB1   debian rootfs boots (dash, NO busybox) — #88           PASS
+DB2   dpkg --version works (glibc dynamic) — #88             PASS
+DB3   /proc absent: host refuses procfs (env, D39)             PASS(expected-fail)
+DB4   single-uid ownership: ns 0:0 = real uid on host          PASS
+DB5   chown foreign uid: EINVAL (unmapped), alive              PASS
+DB6   control: WITHOUT pasta, apt cannot fetch/install         PASS
+DB7   with pasta: apt update+install tree ONLINE — #88       SKIP
+        (env-blocked: see case — D34/D37)
+DB8   shared rootfs pristine (manifest+dpkg DB) — #80 class  PASS
+DB9   self-symlink /bin/sh: rc=125 fast, no hang (SIA)         PASS
+=== summary: PASS=8 SKIP=1 FAIL=0 ===
+(SKIP = env-blocked on this host: no /dev/net/tun — real run on CI runners, D34/D37)
+### suite: test_debian.sh — OK
+### suite: test_escape_alpine.sh
+=== minict isolation tests (2026-11-22 08:52:13) ===
+FS1   sandbox sees OUR /etc/passwd (marker)                    PASS
+FS2   host home dir /home/z unreachable                        PASS
+FS3   no /old-* escape path after pivot_root+umount            PASS
+FS4   mount --bind host / fails (no caps post-drop)            PASS
+FS5   post-capdrop tmpfs mount also fails                      PASS
+FS6   write to /home lands on-disk in rootfs (host view)       PASS
+NOTE: host refuses procfs in an unprivileged userns — /proc cases run in 'absent' mode (D39)
+PID1  payload is PID 2 behind pidns-1 signal shim              PASS
+PID2  no host processes visible (ps lists none)                PASS
+PID3  pidns live: shim is pidns-1, payload pidns-2 (host NSpid) PASS
+UID1  uid=0 inside, no foreign gid visible (0/overflow only)   PASS
+UID2  files created inside owned by real host uid              PASS
+BIND1 bind :ro plain tree: visible, top mount read-only        PASS
+BIND2 bind :ro tree WITH submount: submount ro too (mountinfo-fallback) PASS
+BIND3 control: same tree WITHOUT :ro — top+submount writable PASS
+NNP1  PR_SET_NO_NEW_PRIVS=1 verified via host /proc            PASS
+CAPD1 capdrop real: shim+payload CapEff=0 (host /proc)         PASS
+HOST1 hostname isolated ('minict')                             PASS
+FD1   fd-based escape closed: inherited host fd EBADF in payload PASS
+CHROOT1 chroot(2) EPERM post-capdrop (jail-escape primitive)     PASS
+SETUID2 suid exec: NNP=1 + CapEff=0 survive (host /proc)         PASS
+CORE1 core dump disabled: RLIMIT_CORE=0 forced in payload      PASS
+CORE2 SIGSEGV leaves no core file in rootfs/repo cwd           PASS
+SIG1  SIGKILL wrapper: PDEATHSIG+pidns teardown, no orphan     PASS
+SIG2  SIGTERM wrapper: tree exits 143 (128+15), no orphan      PASS
+SIG3  SIGINT wrapper: tree exits 130 (128+2)                   PASS
+SIG4  control: TERM to payload (non-init) delivered (143)      PASS
+SIG5  orphan grandchildren reaped by shim, no zombies          PASS
+NET1  netns isolated: only lo inside, no host iface            PASS
+NET2  loopback is UP inside sandbox netns                      PASS
+PROC1 /proc absent (host refuses procfs in userns)             PASS(expected-fail)
+PROC2 /proc/self/root unreachable (no procfs mounted)          PASS
+PROC3 (absent mode) no procfs in /proc/mounts either           PASS
+PROC4 payload cannot mount a second procfs                     PASS
+CG1   no cgroup limits (cgroups v1 only — known gap)         PASS(expected-fail)
+=== summary: PASS=34 FAIL=0 ===
+### suite: test_escape_alpine.sh — OK
+### suite: test_cve_check.sh
+=== cve-check tool tests (2026-11-22 08:52:20) ===
+CV1   error row renders ERR, no KeyError (#44 repro)           PASS
+CV2   parse_nvd defensive: malformed/empty NVD dicts           PASS
+CV3   normal row + cvssMetricV30 fallback                      PASS
+CV4   control: OLD renderer KeyErrors on error row             PASS
+=== summary: PASS=4 FAIL=0 ===
+### suite: test_cve_check.sh — OK
+### suite: test_pasta.sh
+=== minict pasta tests (2026-11-22 08:52:20) — host listener 19527, fwd 19867, gw 21.0.0.1 ===
+PT1     pasta binary pinned+verified+static built                PASS
+PT2     pasta --version == pin exactly (2026_10_02.cba3570)      PASS
+NET11C  control: WITHOUT pasta, gateway unreachable              PASS
+PT3C    control: WITHOUT pasta, resolver unavailable             PASS
+PT4C    control: WITHOUT pasta, apk update unreachable           PASS
+NET10   with pasta: tap iface + default route inside             SKIP
+        (env-blocked: no /dev/net/tun on this host — D34/D37)
+NET11   with pasta: egress wget sandbox→host via gateway       SKIP
+        (env-blocked: no /dev/net/tun on this host — D34/D37)
+NET12   with pasta: host→instance port-forward (-t FPORT:8080) SKIP
+        (env-blocked: no /dev/net/tun on this host — D34/D37)
+PT3     with pasta: resolver injected + nslookup resolves        SKIP
+        (env-blocked: no /dev/net/tun on this host — D34/D37)
+PT4     with pasta: apk add ONLINE (HTTPS+signature) in alpine   SKIP
+        (env-blocked: no /dev/net/tun on this host — D34/D37)
+AB1     with pasta: attach latency measured (host-side)          SKIP
+        (env-blocked: no /dev/net/tun on this host — D34/D37)
+=== summary: PASS=5 SKIP=6 FAIL=0 ===
+(SKIP = pasta env-blocked on this host: no /dev/net/tun — real run happens on CI runners, D34/D37)
+### suite: test_pasta.sh — OK
+### suite: test_stack.sh
+=== minict web-stack tests (2026-11-22 08:52:23) — port free-check active (issue #75 class) ===
+ST1   stack binaries present in rootfs-alpine                  PASS
+ST2   stack up -> index 200 via host bridge                    PASS
+ST3   GET /api/health -> status ok                             PASS
+ST4   POST->GET persistence: real SQLite row                   PASS
+ST5   SQL metachars sanitized (D45 allowlist)                  PASS
+ST6   down -> port closed, zero leaks, fs gone                 PASS
+ST7   stack cold start median < 5000 ms                        PASS
+ST8   name guard rejects traversal (SIA #86)                   PASS
+=== summary: PASS=8 FAIL=0 SKIP=0 ===
+### suite: test_stack.sh — OK
+### suite: test_cg.sh
+=== cgroups v2 enforcement tests (2026-11-22 08:52:25) — api :17807 ===
+no cgroups v2 unified hierarchy
+env gate: bootstrap unavailable — probe said no
+CG-BOOT bootstrap+probe:enforced                                     SKIP
+      (env-blocked: see case)
+CG-MEM memory.max file written                                      SKIP
+      (env-blocked: see case)
+CG-OOM kernel OOM heal->stopped                                     SKIP
+      (env-blocked: see case)
+CG-PIDS pids.max blocks fork burst                                   SKIP
+      (env-blocked: see case)
+CG-STATS stats from cgroup accounting                                 SKIP
+      (env-blocked: see case)
+CG-RM remove reclaims cgroup dir                                   SKIP
+      (env-blocked: see case)
+=== cg suite: 0 PASS + 6 SKIP (env-gated) + 0 FAIL ===
+### suite: test_cg.sh — OK
+=== run-suites summary: 10 suites, failed: none ===
+=== minictd e2e tests (2026-11-22 08:52:35) — api :17607, web :19050 ===
+MD0   seccomp blocklist identical: minict.c vs minict-exec.c       PASS
+MD3   daemon refuses to start without a token                      PASS
+MD1   /healthz with token -> 200                                   PASS
+MD2   request without token -> 401                                 PASS
+MD4   Run + Inspect -> running                                     PASS
+MD5   exec via setns sees spec hostname                            PASS
+MD6   exec shares payload mount ns (/tmp marker visible)           PASS
+MD7   spec env -> payload, request env -> exec                     PASS
+MD8   bind :ro visible and not writable                            PASS
+MD9   seccomp in exec: unshare -U -> EPERM                         PASS
+MD10  daemon env/token NOT leaked into payload or exec             PASS
+MD11  exec timeout -> 124 + timed_out                              PASS
+MD12  exec stdin passthrough                                       PASS
+MD13  execstream NDJSON stdout + single exit frame                 PASS
+MD14  preview webport: host curl -> httpd in netns                 PASS
+MD15  path-traversal name -> 400, outside untouched                PASS
+MD16  Stop -> Start keeps rootfs changes                           PASS
+MD17  symlinked bind target -> Start refused, host untouched       PASS
+MD18  exec on stopped -> 409, unknown -> 404                       PASS
+MD19  Remove -> dir gone, no instance processes                    PASS
+MD20  CLI sandbox round-trip: list/up/inspect/exec/stop/rm         PASS
+MD21  --autostart heals + wake-recreates running-after-reboot      PASS
+MD22  deploy: install.sh renders --user unit, systemd-analyze verify PASS
+MD23  G3 routes: run -> Traefik YAML written; disabled -> no file  PASS
+MD24  G3 routes: stop -> route removed; wake stopped -> 409        PASS
+MD25  G3 routes: start -> route back + wake 200; remove -> 404     PASS
+MD28  crane pinned+sha256-verified (fetch-crane.sh, D51)           PASS
+MD29  ocireg harness + real crane push -> manifest served          PASS
+MD30  boot from oci:<ref> via real crane + exec marker             PASS
+MD31  oci: nonexistent ref -> fail-closed 500, dir wiped           PASS
+MD32  hostile oci: image streamed by crane -> refused, wiped       PASS
+MD34  oci: refusal after >64KB -> 500 fast, no Wait deadlock       PASS
+MD33  opt-in remote pull (MINICTD_OCI_REMOTE_REF)                  SKIP
+      (env-blocked: see case)
+MD26  tar: hostile .. member -> Run fails closed, dir wiped, no escape PASS
+MD27  oci: without crane -> Run fails closed, dir wiped            PASS
+MD35  S4: --unix-socket serves API, socket 0600, dir corrected 0700 PASS
+MD36  S4: unix-only posture, 401 no-token, CLI --socket round-trip FAIL
+      output:  
+=== summary: PASS=35 SKIP=1 FAIL=1 ===
+--- daemon log (tail) ---
+time=2026-11-22T08:52:41.050Z level=INFO msg="minictd remove" name=md-b
+time=2026-11-22T08:52:41.050Z level=INFO msg=http method=POST path=/v1/sandboxes/md-b/remove dur_ms=2
+time=2026-11-22T08:52:41.567Z level=INFO msg=http method=GET path=/v1/sandboxes dur_ms=0
+time=2026-11-22T08:52:41.603Z level=INFO msg="minictd note" name=md-c note="cgroups v2 unavailable: daemon sits at the v2 hierarchy root without a delegated subtree (no systemd delegation; bootstrap with MINICTD_CGROUP_ROOT) (CG1 fallback: notes + rlimit nproc)"
+time=2026-11-22T08:52:41.603Z level=INFO msg="minictd run" name=md-c pid=2772 image=base ports=[]
+time=2026-11-22T08:52:41.603Z level=INFO msg=http method=POST path=/v1/run dur_ms=34
+time=2026-11-22T08:52:42.108Z level=INFO msg=http method=GET path=/v1/sandboxes dur_ms=0
+time=2026-11-22T08:52:42.115Z level=INFO msg=http method=GET path=/v1/sandboxes/md-c dur_ms=0
+time=2026-11-22T08:52:42.132Z level=INFO msg=http method=POST path=/v1/sandboxes/md-c/execv2 dur_ms=2
+time=2026-11-22T08:52:42.135Z level=WARN msg="payload exited" name=md-c pid=2772 err="exit status 143"
+time=2026-11-22T08:52:42.185Z level=INFO msg="minictd stop" name=md-c timeout_sec=1
+time=2026-11-22T08:52:42.185Z level=INFO msg=http method=POST path=/v1/sandboxes/md-c/stop dur_ms=50
+time=2026-11-22T08:52:42.192Z level=INFO msg=http method=GET path=/v1/sandboxes/md-c dur_ms=0
+time=2026-11-22T08:52:42.209Z level=INFO msg="minictd remove" name=md-c
+time=2026-11-22T08:52:42.209Z level=INFO msg=http method=POST path=/v1/sandboxes/md-c/remove dur_ms=2
+time=2026-11-22T08:52:42.246Z level=INFO msg="minictd note" name=md-auto note="cgroups v2 unavailable: daemon sits at the v2 hierarchy root without a delegated subtree (no systemd delegation; bootstrap with MINICTD_CGROUP_ROOT) (CG1 fallback: notes + rlimit nproc)"
+time=2026-11-22T08:52:42.246Z level=INFO msg="minictd run" name=md-auto pid=2826 image=base ports=[]
+time=2026-11-22T08:52:42.246Z level=INFO msg=http method=POST path=/v1/run dur_ms=33
+time=2026-11-22T08:52:42.750Z level=INFO msg=http method=GET path=/v1/sandboxes/md-auto dur_ms=0
+time=2026-11-22T08:52:42.768Z level=INFO msg="minictd: shutting down (instances keep running; re-attach with Start)"
+--- daemon2 log (tail) ---
+time=2026-11-22T08:52:47.133Z level=INFO msg="minictd remove" name=md-t
+time=2026-11-22T08:52:47.133Z level=INFO msg=http method=POST path=/v1/sandboxes/md-t/remove dur_ms=102
+time=2026-11-22T08:52:47.442Z level=INFO msg=http method=POST path=/v1/sandboxes/md-t/wake dur_ms=0
+time=2026-11-22T08:52:47.450Z level=WARN msg="payload exited" name=md-f pid=2935 err="exit status 143"
+time=2026-11-22T08:52:47.501Z level=WARN msg="webproxy exited" name=md-f port=19058 pid=2937 err="signal: terminated"
+time=2026-11-22T08:52:47.553Z level=INFO msg="minictd remove" name=md-f
+time=2026-11-22T08:52:47.553Z level=INFO msg=http method=POST path=/v1/sandboxes/md-f/remove dur_ms=103
+time=2026-11-22T08:52:47.822Z level=INFO msg="minictd note" name=md-oci note="cgroups v2 unavailable: daemon sits at the v2 hierarchy root without a delegated subtree (no systemd delegation; bootstrap with MINICTD_CGROUP_ROOT) (CG1 fallback: notes + rlimit nproc)"
+time=2026-11-22T08:52:47.822Z level=INFO msg="minictd run" name=md-oci pid=3027 image=oci:127.0.0.1:15175/oci-e2e:happy ports=[]
+time=2026-11-22T08:52:47.822Z level=INFO msg=http method=POST path=/v1/run dur_ms=27
+time=2026-11-22T08:52:48.331Z level=INFO msg=http method=GET path=/v1/sandboxes/md-oci dur_ms=0
+time=2026-11-22T08:52:48.363Z level=INFO msg=http method=POST path=/v1/sandboxes/md-oci/execv2 dur_ms=2
+time=2026-11-22T08:52:48.396Z level=INFO msg=http method=POST path=/v1/run dur_ms=6
+time=2026-11-22T08:52:48.441Z level=INFO msg=http method=POST path=/v1/run dur_ms=4
+time=2026-11-22T08:52:48.487Z level=INFO msg=http method=POST path=/v1/run dur_ms=5
+time=2026-11-22T08:52:48.521Z level=INFO msg=http method=POST path=/v1/run dur_ms=0
+time=2026-11-22T08:52:48.535Z level=INFO msg=http method=POST path=/v1/run dur_ms=5
+time=2026-11-22T08:52:48.544Z level=WARN msg="payload exited" name=md-oci pid=3027 err="exit status 143"
+time=2026-11-22T08:52:48.594Z level=INFO msg="minictd remove" name=md-oci
+time=2026-11-22T08:52:48.594Z level=INFO msg=http method=POST path=/v1/sandboxes/md-oci/remove dur_ms=50
+--- daemon3 log (tail) ---
+time=2026-11-22T08:52:48.600Z level=INFO msg="minictd: listening" tcp=127.0.0.1:17364 unix=/tmp/tmp.O0LeDrN45R/s4/minictd.sock state_dir=/tmp/tmp.O0LeDrN45R/s4/state minict=/home/z/my-project/sandbox/sandbox/minict exec_mode=setns version=0.1.0
+time=2026-11-22T08:52:48.706Z level=INFO msg=http method=GET path=/healthz dur_ms=0
+time=2026-11-22T08:52:48.712Z level=INFO msg=http method=GET path=/healthz dur_ms=0
+--- daemon4 log (tail) ---
+time=2026-11-22T08:52:48.719Z level=INFO msg="minictd: listening" tcp=off unix=/tmp/tmp.O0LeDrN45R/s4/minictd2.sock state_dir=/tmp/tmp.O0LeDrN45R/s4/state2 minict=/home/z/my-project/sandbox/sandbox/minict exec_mode=setns version=0.1.0
+--- install log (tail) ---
+installed: /tmp/tmp.O0LeDrN45R/home/bin/minictd
+installed: /tmp/tmp.O0LeDrN45R/home/bin/minict-exec
+token created: /tmp/tmp.O0LeDrN45R/home/.config/minictd/token (first line)
+unit written: ~/.config/systemd/user/minictd.service
+systemd-analyze verify: OK
+
+Next steps (run yourself, not from this script):
+  systemctl --user daemon-reload
+  systemctl --user enable --now minictd
+  loginctl enable-linger "$USER"   # boot-time user manager (no session needed)
+--- ocireg log (tail) ---
+2026/11/22 08:52:48 POST /v2/oci-e2e/blobs/uploads/
+2026/11/22 08:52:48 POST /v2/oci-e2e/blobs/uploads/
+2026/11/22 08:52:48 PATCH /v2/oci-e2e/blobs/uploads/5227850057863804117
+2026/11/22 08:52:48 PATCH /v2/oci-e2e/blobs/uploads/3345379541801805935
+2026/11/22 08:52:48 PUT /v2/oci-e2e/blobs/uploads/5227850057863804117?digest=sha256%3Ad8567eb044de6c2e45c1c4474bbb917193696f7b59826bc8a16a3eead06bcab6
+2026/11/22 08:52:48 PUT /v2/oci-e2e/blobs/uploads/3345379541801805935?digest=sha256%3Ab37fcd23525514a0505ea4e638534704ab4305419ac2b159ef6533808c283ef4
+2026/11/22 08:52:48 PUT /v2/oci-e2e/manifests/abslink
+2026/11/22 08:52:48 GET /v2/
+2026/11/22 08:52:48 GET /v2/oci-e2e/manifests/abslink
+2026/11/22 08:52:48 GET /v2/oci-e2e/blobs/sha256:b37fcd23525514a0505ea4e638534704ab4305419ac2b159ef6533808c283ef4
+
+=== RERUN after clean rebuild (stale-bin lesson: M-tcp mutant build survived in bin/ because the earlier command chain was timeout-killed mid-make; $! false-negative in manual probe — pid captured after sleep belonged to sleep, not the daemon) ===
+MD35  S4: --unix-socket serves API, socket 0600, dir corrected 0700 PASS
+MD36  S4: unix-only posture, 401 no-token, CLI --socket round-trip PASS
+=== summary: PASS=36 SKIP=1 FAIL=0 ===
+
+=== Host baseline (end of Phiên 18 dev) ===
+passwd 21d5de2d… bash 223fe856… sudo a59f393b… = 3/3 khớp journal 11-19/11-20/11-22 -> UNCHANGED (/etc/shadow: permission-denied as uid z — consistent with all prior sessions)
+=== listeners ===
+81, 19005, 19006, 12600, 12700, 19001 — all known background (matches Phiên 17); 0 new listeners; pgrep minictd after suite: none
+=== perf (perf-check N=20) ===
+cold_start_ms 1.88 / rss_kb 1164 / disk_base_mb 2.05 — PASS (baseline gate unchanged; binary unchanged on runtime path)

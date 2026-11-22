@@ -11,6 +11,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -26,7 +27,8 @@ import (
 
 func main() {
 	var (
-		listen     = flag.String("listen", "127.0.0.1:7601", "listen address (host:port)")
+		listen     = flag.String("listen", "127.0.0.1:7601", "listen address (host:port); empty disables TCP (unix-socket-only posture, S4)")
+		unixSocket = flag.String("unix-socket", "", "unix socket path (S4, issue #116; socket 0600 + dir 0700 fail-closed, symlink/non-socket refused; empty = off; token auth stays REQUIRED on every transport)")
 		token      = flag.String("token", "", "bearer token (DISCOURAGED: visible in /proc/<pid>/cmdline; prefer $MINICTD_TOKEN or --token-file)")
 		tokenFile  = flag.String("token-file", "", "file holding the bearer token (first line)")
 		noAuth     = flag.Bool("insecure-no-auth", false, "allow running without a token (dev only: any local user could drive sandboxes as this uid)")
@@ -124,6 +126,29 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
+	// S4 (issue #116): open listeners BEFORE any background work so a
+	// bad transport config dies fast and nothing half-boots. Both
+	// transports serve the SAME handler (auth included — R3: the token
+	// stays required on the unix socket too).
+	var listeners []net.Listener
+	if *listen != "" {
+		ln, err := net.Listen("tcp", *listen)
+		if err != nil {
+			fatal(log, "listen tcp %s: %v", *listen, err)
+		}
+		listeners = append(listeners, ln)
+	}
+	if *unixSocket != "" {
+		ln, err := openUnixSocket(*unixSocket)
+		if err != nil {
+			fatal(log, "%v", err)
+		}
+		listeners = append(listeners, ln)
+	}
+	if len(listeners) == 0 {
+		fatal(log, "no listener: set --listen host:port and/or --unix-socket PATH")
+	}
+
 	ctx, cancelCtx := context.WithCancel(context.Background())
 	defer cancelCtx()
 
@@ -186,16 +211,43 @@ func main() {
 		cancelCtx()
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_ = httpServer.Shutdown(ctx)
+		_ = httpServer.Shutdown(ctx) // also closes every listener (Shutdown closes ln)
+		if *unixSocket != "" {
+			// Unlink the socket on clean shutdown — stale sockets are
+			// handled by openUnixSocket, but leaving a socket file that
+			// nothing serves behind is confusing for operators and keeps
+			// the 0700 dir looking "live".
+			if err := os.Remove(*unixSocket); err != nil && !os.IsNotExist(err) {
+				log.Warn("minictd: unlink unix socket", "err", err.Error())
+			}
+		}
 	}()
 
-	log.Info("minictd: listening", "addr", *listen,
+	log.Info("minictd: listening",
+		"tcp", map[bool]string{true: *listen, false: "off"}[*listen != ""],
+		"unix", map[bool]string{true: *unixSocket, false: "off"}[*unixSocket != ""],
 		"state_dir", *stateDir,
 		"minict", *minictBin,
 		"exec_mode", map[bool]string{true: "setns", false: "newns"}[*execBin != ""],
 		"version", contract.Version)
-	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		fatal(log, "listen: %v", err)
+	// S4 (issue #116): serve the same handler on every listener. First
+	// serve error wins; http.ErrServerClosed (graceful shutdown path) is
+	// not an error.
+	servErr := make(chan error, len(listeners))
+	for _, ln := range listeners {
+		l := ln
+		go func() {
+			err := httpServer.Serve(l)
+			if err != nil && err != http.ErrServerClosed {
+				err = fmt.Errorf("serve %s: %w", l.Addr(), err)
+			} else {
+				err = nil
+			}
+			servErr <- err
+		}()
+	}
+	if err := <-servErr; err != nil {
+		fatal(log, "%v", err)
 	}
 }
 

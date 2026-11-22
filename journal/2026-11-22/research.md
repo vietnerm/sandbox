@@ -58,3 +58,43 @@ remount; quyền mount trong userns lồng nhau.
   {MOUNT_ATTR_RDONLY})` khi syscall tồn tại; ENOSYS → remount từng submount
   (từ mountinfo host-side) rồi top; mountinfo không đọc được → die()
   fail-closed. Không đụng seccomp → không cần đồng bộ `minict-exec.c` (D25).
+
+---
+
+# Phiên 18 — S4 unix-socket listener (issue #116)
+
+**Vấn đề:** daemon chỉ serve HTTP trên TCP loopback; bearer token đi clear trong
+header — user cùng host khác connect được nếu biết port, và transport không đủ
+cho non-loopback (VPS cluster). GAPS S4 đề xuất "unix-socket listener or TLS".
+
+**Giải pháp đã có trong các dự án tương tự:**
+1. **unix(7) (man7.org/kernel.org):** pathname unix socket honor permissions
+   của directory chứa nó; tạo socket cần write+search trên dir; socket file
+   0600 + dir 0700 → chỉ uid owner connect được. Không cần PKI, không root.
+   https://man7.org/linux/man-pages/man7/unix.7.html
+2. **podman-system-service(1):** rootless REST API mặc định listen
+   `unix:///run/user/<uid>/podman/podman.sock`; mô hình bảo mật "built upon
+   access via a Unix socket with access restricted via standard file
+   permissions" — precedent thiết kế trùng khớp mục tiêu minict (rootless,
+   user-level control plane).
+   https://docs.podman.io/en/latest/markdown/podman-system-service.1.html
+3. **Docker daemon socket precedent:** `/var/run/docker.sock` root:docker
+   0660 — control-plane socket perms CHÍNH là access control; 0666 = any
+   local user full daemon access (class lỗi đã biết).
+   https://docs.docker.com/engine/daemon/remote-access/#daemon-socket
+4. **SO_PEERCRED (unix.stackexchange / Go recipe):** daemon xác thực peer uid
+   không cần token — COULD dùng, nhưng minictd giữ token trên MỌI transport
+   (R3): same-uid process vẫn connect được socket; auth = phòng thủ sâu, đồng
+   thời giữ một code-path auth duy nhất (mảng MD2 chạy trên cả TCP lẫn unix).
+   https://unix.stackexchange.com/questions/556068
+
+**Trade-off:** unix socket chỉ bảo vệ LOCAL (không thay TLS cho multi-node
+qua mạng) — đủ theo chữ GAPS ("before any non-loopback use" = chặn non-loopback
+clear-text BẰNG không expose TCP public + cho local path an toàn); TLS là
+residual khi cluster thật cần cross-host. Chọn unix socket trước vì rootless,
+không PKI, precedent podman.
+
+**Áp dụng cho minict:** `--unix-socket PATH` fail-closed: dir 0700 (chmod nếu
+lỏng, die nếu chmod lỗi), socket 0600, refuse symlink + non-socket file tại
+path (chống hijack), replace stale socket (boot lại sau crash), token auth
+giữ nguyên; TCP listener trở thành opt-in (rỗng = tắt — unix-only posture).

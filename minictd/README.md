@@ -23,7 +23,7 @@ minictd ── state dir ~/.local/state/minictd/<name>/{spec.json,state.json,spe
 ```bash
 make build rootfs minictd          # minict, busybox rootfs, minictd + minict-exec
 export MINICTD_TOKEN=$(head -c16 /dev/urandom | od -An -tx1 | tr -d ' \n')
-./minictd/bin/minictd --listen 127.0.0.1:7601 \
+./minictd/bin/minictd --listen 127.0.0.1:7601 --unix-socket ~/.local/state/minictd/minictd.sock \
     --minict-bin ./sandbox/minict --base-rootfs ./rootfs \
     --webproxy ./tools/webproxy.py      # minict-exec tự tìm cạnh binary
 
@@ -36,12 +36,24 @@ curl -s -H "Authorization: Bearer $MINICTD_TOKEN" -X POST localhost:7601/v1/sand
 Token bắt buộc (`$MINICTD_TOKEN` hoặc `--token-file`; `--insecure-no-auth` chỉ cho dev).
 Image: `base`, `dir:<abs>`, `tar:<abs>`, `oci:<ref>` (cần `crane`, **chưa test** — A2).
 
+## Transport (S4, issue #116)
+
+- `--unix-socket PATH` — listener unix socket harden fail-closed: socket **0600**,
+  dir **0700** (tự chmod nếu lỏng, die nếu chmod lỗi), refuse symlink/non-socket
+  file, replace stale socket từ run trước. Mô hình như podman rootless service:
+  perms filesystem là transport security, không cần PKI.
+- `--listen host:port` — TCP truyền thống (mặc định 127.0.0.1:7601); rỗng = tắt
+  (unix-only posture).
+- Token **bắt buộc trên MỌI transport** (R3 — same-uid process vẫn connect được
+  socket; auth là lớp phòng thủ sâu).
+
 ## CLI `sandbox` (#91, D47)
 
 Client đầy đủ cùng binary API, không thêm logic (NO MAGIC DEFAULTS):
 
 ```bash
 sandbox --addr 127.0.0.1:7601 --token "$MINICTD_TOKEN" list
+sandbox --socket ~/.local/state/minictd/minictd.sock --token "$MINICTD_TOKEN" list
 sandbox --addr 127.0.0.1:7601 --token "$MINICTD_TOKEN" up s1 base \
     --cmd "/bin/sh,-c,sleep 300" --webport 8125
 sandbox --addr 127.0.0.1:7601 --token "$MINICTD_TOKEN" exec s1 /bin/hostname
@@ -50,14 +62,18 @@ sandbox --addr 127.0.0.1:7601 --token "$MINICTD_TOKEN" rm s1
 ```
 
 Token resolve theo thứ tự: `--token` → `$MINICTD_TOKEN` → `$MINICTD_TOKEN_FILE`
-→ `~/.config/minictd/token` (install.sh ghi).
+→ `~/.config/minictd/token` (install.sh ghi). Transport resolve: `--socket`/
+`$MINICTD_SOCKET` (unix) thắng `--addr`/`$MINICTD_ADDR` (TCP); cả hai rỗng →
+TCP 127.0.0.1:7601.
 
 ## Test
 
-`make test-minictd` → `tests/test_minictd.sh`, 23 case (MD0–MD22): parity seccomp
+`make test-minictd` → `tests/test_minictd.sh`, 36 case (MD0–MD36): parity seccomp
 minict.c ↔ minict-exec.c, auth, lifecycle, exec setns, env không rò, timeout, stdin,
 NDJSON, preview, path traversal, stop/start, bind-symlink, 404/409, remove sạch,
-CLI round-trip (MD20), autostart wake-recreate (MD21), deploy unit verify (MD22).
+CLI round-trip (MD20), autostart wake-recreate (MD21), deploy unit verify (MD22),
+G3 routes (MD23–25), unpack hardening (MD26/27), A2 oci e2e offline (MD28–MD32,
+MD33 opt-in remote, MD34), S4 unix socket (MD35/36).
 
 ## Service người dùng thường (systemd --user, #91 D47)
 
