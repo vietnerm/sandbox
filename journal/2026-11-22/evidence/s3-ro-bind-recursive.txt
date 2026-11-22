@@ -1,0 +1,82 @@
+S3 evidence — bind :ro recursive enforcement (issue #113, D52)
+Host: kernel 5.10.134-013.15.kangaroo.al8.x86_64, uid 1001, no sudo
+Date: 2026-11-22, SDDA Phiên 17
+
+=== 1. Pre-fix repro (captured 07:33 UTC, ORIGINAL binary, run_e2e harness) ===
+harness: unshare --user --map-root-user --mount -- /tmp/s3probe/run_e2e.sh
+  (outer userns tạo tmpfs submount tại <src>/sub, chạy minict thật với
+   MINICT_SPEC 'bind <src>:/data:ro')
+minict: warn: mount /proc: Operation not permitted
+BOOT_OK
+touch: /data/top.txt: Read-only file system
+TOP_RO                                   <- top mount ro ĐÚNG
+(submount KHÔNG có dòng SUB_RO —
+ touch /data/sub/inner.txt THÀNH CÔNG)   <- SUBMOUNT VẪN GHI ĐƯỢC = bug S3
+ls /data -> sub, top.txt
+rc=0
+
+=== 2. Capability probes (07:26-07:30 UTC) ===
+mount_setattr no-op probe (syscall 442): r=-1 errno=38 (Function not implemented)
+  -> kernel 5.10 KHÔNG có mount_setattr -> nhánh chính chỉ chạy runner >= 5.12
+outer-userns tmpfs mount probe: MOUNT_OUTER_USERNS_OK
+  -> harness submount khả thi trên dev
+probe rec3 (rbind + per-submount remount từ userns con, 5.10):
+  rbind src->dst                       OK
+  write TOP (baseline rw)              WRITABLE
+  write SUB (baseline rw)              WRITABLE
+  top bind-remount ro (old code)       OK
+  write TOP after top-remount          blocked (Read-only file system)
+  write SUB after top-remount          WRITABLE      <- THE S3 BUG (raw syscall level)
+  SUB bind-remount ro (fallback?)      OK            <- quyền per-submount remount đo được
+  write SUB after sub-remount          blocked (Read-only file system)
+  -> fallback per-submount remount HỢP LỆ trên 5.10 (không cần die-only)
+
+=== 3. Post-fix e2e (07:37 UTC, FIXED binary, cùng harness) ===
+touch: /data/top.txt: Read-only file system
+TOP_RO
+touch: /data/sub/inner.txt: Read-only file system
+SUB_RO                                   <- SUBMOUNT GIỜ EROFS (fallback hoạt động)
+ls /data -> sub, top.txt
+rc=0
+
+=== 4. Isolation suite BIND section (07:52 UTC, sau fix) ===
+BIND1 bind :ro plain tree: visible, top mount read-only        PASS
+BIND2 bind :ro tree WITH submount: submount ro too (mountinfo-fallback) PASS
+BIND3 control: same tree WITHOUT :ro — top+submount writable   PASS
+=== summary: PASS=34 FAIL=0 ===                                (isolation 31→34)
+
+=== 5. Mutant matrix (scripts/mutant_s3.sh, dev 5.10 — fallback path) ===
+--- M-A: fallback submount remount loses MS_RDONLY (expect BIND2 red)
+BIND1 PASS / BIND2 FAIL / BIND3 PASS   -> caught
+--- M-B: top remount loses MS_RDONLY (expect BIND1+BIND2 red)
+BIND1 FAIL / BIND2 FAIL / BIND3 PASS   -> caught
+--- M-C: mountinfo unreadable -> fail-closed die (expect BIND1+BIND2 red)
+BIND1 FAIL / BIND2 FAIL / BIND3 PASS   -> caught (pins fail-closed branch)
+BIND3 xanh xuyên suốt -> 0 vacuous kill
+=== restore check ===
+minict.c restored OK
+(residual: mutant nhánh mount_setattr — drop AT_RECURSIVE — chỉ đo được
+ trên runner >= 5.12; dev 5.10 luôn đi fallback)
+
+=== 6. Full validation (07:53-07:57 UTC) ===
+make test : 10 suites, failed: none
+  isolation 34/34 | seccomp 21/21 | netns 7/7 | alpine 9/9
+  | debian 8+1 SKIP | escape-alpine 34/34 | cve-check tool 4/4 | pasta 5+6 SKIP
+  (env-blocked tun) | stack 8/8 | cg 0+6 SKIP (env-gated, như baseline)
+make test-web    : 9/9 PASS
+make test-minictd: 34/34 + 1 SKIP (MD33 opt-in) — MD8 (bind :ro) không regress
+
+=== 7. Perf (tools/perf-check.sh, N=20) ===
+cold_start_ms  :     2.06  (threshold 100)      | Phiên 16: 2.16
+rss_kb         :     1244  (threshold 10240)   | Phiên 16: 1212
+disk_base_mb   :     2.05  (threshold 20)      | Phiên 16: 2.04
+perf-check: PASS (gate không đổi; lệch trong nhiễu đo; chỉ bind :ro thêm syscall)
+
+=== 8. Host baseline + listeners ===
+21d5de2dc39f2ceb19e33f8cc124b311b57a48aea6d7703a9a98b93079d412bd  /etc/passwd
+223fe8564b60636bc738b6178d3ba9a50ef7d791266b0efae6363bb716e4c47f  /bin/bash
+a59f393bad5037644b89de64fe558ae6d5d1473c25c63022241e7c7019ad2f0c  /usr/bin/sudo
+(/etc/shadow: Permission denied — như các phiên trước)
+-> 3/3 sha256 KHỚP chính xác Phiên 14/15/16 (unchanged)
+listeners: 81, 19005, 19006, 12600, 12700, 19001 — nền đã biết (khớp Phiên 15/16)
+0 minict sống, 0 busybox sống sau suite

@@ -27,6 +27,20 @@
 5. Ghi `journal/YYYY-MM-DD/daily-log.md` (quy tắc thư mục: PROMPT.MD §10)
 
 ## Đã xong
+- [x] 2026-11-22 (phiên 17, SDDA): **S3 — bind :ro recursive enforcement (issue #113,
+  D52, GĐ2 mục 1)**: `apply_spec_binds()` (`sandbox/minict.c`) — `mount_setattr(AT_RECURSIVE,
+  MOUNT_ATTR_RDONLY)` (kernel ≥ 5.12, syscall 442 khai tay x86_64) thay remount top-only;
+  ENOSYS (kernel < 5.12, đo được trên dev 5.10.134) → per-submount bind-remount từ
+  enumeration `/proc/self/mountinfo` host-side **pre-unshare** (cửa sổ duy nhất còn /proc —
+  D39); mountinfo không đọc được hoặc > 16 submount → **fail-closed die**. Bug tái hiện
+  đo được trước vá (tmpfs submount vẫn ghi được sau khi top EROFS) rồi xác nhận submount
+  EROFS sau vá trên cùng harness (`unshare --user --map-root-user --mount` — submount
+  do userns cha tạo được rbind-clone bởi userns con, probe rec3 + minict thật). Test
+  BIND1 (cây phẳng :ro) / BIND2 (submount ro — assert giống nhau 2 kernel, tên cơ chế
+  in trong case) / BIND3 (rw control chống-vacuous) vào isolation suite (31→34);
+  mutants M-A/M-B/M-C caught (BIND3 xanh xuyên suốt — 0 vacuous, M-C pin nhánh
+  fail-closed); residual: nhánh mount_setattr chỉ đo e2e trên runner ≥ 5.12.
+  minictd hưởng qua spec (MD8 không regress). (#113)
 - [x] 2026-11-21 (phiên 16, SDDA): **A2 e2e — `oci:` với crane thật (issue #103, D51,
   GĐ2 mục 1 residual; + fix #108)**: crane v0.22.1 pin+sha256 (`tools/fetch-crane.sh`,
   D37 pattern) + registry in-memory 127.0.0.1 (`tools/ocireg`, module riêng — go.mod
@@ -325,7 +339,7 @@
      MD33, rootfs cache khi images churn. (**unpack boundary hardening xong
      2026-11-21 (#104, D50)**: `tar -x` host tar trong `oci:`/`tar:` thay bằng Go
      stdlib `secureUnpack` openat O_NOFOLLOW fail-closed — MD26/MD27 + unit matrix).
-   - **S2–S6** còn mở (S1 FIXED #41; A3 reconcile proactive đã có — heartbeat P4 mở).
+   - **S2–S6** còn mở (S1 FIXED #41; **S3 FIXED #113 2026-11-22**; A3 reconcile proactive đã có — heartbeat P4 mở).
 2. Template: instance từ template; lưu instance thành template.
 3. Storage: overlayfs rootless + idmapped mounts (thay private copy 2 MB/instance);
    snapshot/backup/restore (overlay layer + tar.zst).
