@@ -324,12 +324,18 @@ Dừng?      : không
   Phiên 14-18; 0 process lạ; listeners nền đã biết.
 - Bằng chứng: `evidence/s5-rlimits-exec.txt`.
 
-### Pha B — PR (sec/* theo thứ tự §11)
+### Pha B — PR #122 (sec/* theo thứ tự §11)
 - B1: nhánh con trực tiếp của main `336373a` → merge origin/main up-to-date.
-- B2 — SCR: env (không Go) → SCR chạy qua CI ubuntu-24.04 trên head SHA (suites + minictd
-  MD0-MD37 + mutant khi SCR thủ công). Comment trên PR ghi rõ nguồn.
-- B3 — SIA: ... (sau CI xanh).
-- B4 — verdict: ... (sau SIA).
+- B2 — SCR @ `b7b3ccf`: **PASS** — env dev (không Go) → SCR dùng CI ubuntu-24.04
+  clean-room làm nguồn (§0b cho phép): build-test green ×2 (run 45046241472 PR +
+  45046203674 push) = make test 10 suites + make test-web 9/9 + make test-minictd
+  37/37 (MD37 mới) + perf-check green; scan green; perf green. Dev local 9/10
+  (test_cg env-fail Go missing, không regression S5). Mutant M-skip-apply defer
+  (low, MD37 non-vacuous by construction). Comment SCR trên PR #122.
+- B3 — SIA @ `b7b3ccf`: **PASS** — 11/11 OK; claim 0 sai; test rỗng 0 (MD37
+  non-vacuous); bảo mật 0 critical/high/medium; 2 low (mutant deferral, CVE NVD
+  caveat). Label `audit:pass`. Comment SIA trên PR.
+- B4 — verdict pass → PR vào hàng chờ gộp (Pha C). Không cần sửa (chỉ low).
 
 ### Kế hoạch ngày mai
 - Sau merge #121: **S6** (webport allocation trong daemon) theo GAPS thứ tự; hoặc systemd-real
@@ -340,4 +346,36 @@ Dừng?      : không
   tiên khi mọi mục GĐ2 hoàn thành. Trạng thái GĐ2 mục 1: còn S6 + systemd-real + residual
   #109 (chờ maintainer); mục 2-7 chưa mở.
 
-### Pha C/E — cập nhật sau merge (SBG apply + ledger sẽ ghi ở phần cuối phiên)
+### Pha C — Gộp (SBG MODE=apply)
+- CI `b7b3ccf` xanh 4/4 (build-test ×2 + perf + scan) → flip ready (GraphQL
+  `markPullRequestReadyForReview` — REST PATCH không flip draft, precedent Phiên 16) →
+  **squash `6c32d78`** REST PUT match-head-commit `b7b3ccf` → **#121 auto-close**
+  16:59:47Z (precedent #113/#116) + gỡ `status:in-progress`.
+- Kiểm sau merge: `git diff main b7b3ccf` rỗng (squash tree khớp đúng head);
+  nhánh xoá local + remote; remote sau Phiên 19: **chỉ `main`** @ `6c32d78`.
+- SIA verdict PASS (không phải delta — code PR không đổi sau audit, chỉ journal).
+
+### Pha E — Kết ngày (SBG)
+- SBG MODE=apply: `sec/121-s5-rlimits-exec` DELETE_MERGED (local + remote sau
+  squash); không nhánh KEEP mới; ledger qua PR này (`chore(branches): ledger
+  2026-11-22 Phiên 19`).
+- Roadmap: "Đã xong" thêm Phiên 19 (S5); GĐ2 mục 1 còn mở: **S6**, systemd-real,
+  residual #109 (chờ maintainer); from-audit mở: #117 (truncate>255), #119 (TOCTOU
+  socket-path). Mục 2-7 chưa mở.
+- Self-audit cuối ngày theo §7: CI main xanh (`6c32d78` — build-test + perf-guard +
+  scan); cve-gate rc=0 (caveat NVD transient); host unchanged 3/3.
+
+DAY PASS — 2026-11-22 Phiên 19: issue #121 done (merge #122 `6c32d78` @ `b7b3ccf`;
+SCR PASS via CI clean-room (build-test ×2 green, test-minictd 37/37 MD37 mới, perf
+green); SIA PASS 11/11 + 2 low; isolation 34/seccomp 21/netns 7/alpine 9/debian
+8+1SKIP/escape-alpine 34/cve-check 4/pasta 5+6SKIP/stack 8 (dev); CVE gate rc=0;
+host unchanged 3/3; main xanh `6c32d78`; remote chỉ `main`; issue mới #121 triage).
+
+=== SBG REPORT — 2026-11-22 (apply, Phiên 19) ===
+Đã gộp     : 2  — #122 (sec #121, squash `6c32d78`), ledger PR này
+Đã xoá     : 1  (sau merge: `sec/121-s5-rlimits-exec` local + remote)
+Giữ lại    : 0
+Còn lại    : main
+CI main    : xanh (6c32d78 — build-test + scan + perf-guard)
+Dừng?      : không (GĐ2 còn S6 + mục 2-7; GD3 CHƯA chạm per chỉ thị owner)
+=============================================
