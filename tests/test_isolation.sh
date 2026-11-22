@@ -442,6 +442,91 @@ run_case PID3 "pidns live: shim is pidns-1, payload pidns-2 (host NSpid)" pass \
 run_case UID1 "uid=0 inside, no foreign gid visible (0/overflow only)" pass uid1_test
 run_case UID2 "files created inside owned by real host uid" pass uid2_test
 
+# ---------- bind :ro recursive enforcement (S3, issue #113, D52) ----------
+# An unprivileged process cannot mount on the host, but a userns CAN mount
+# inside itself; a submount created there is visible to minict run from
+# within that userns (minict's own userns is a CHILD of it, and MS_REC
+# clones ancestor-owned mounts — measured 2026-11-22). Pre-fix state also
+# measured: the rbind clone kept the tmpfs submount WRITABLE while the top
+# mount went ro — exactly the S3 gap in GAPS.md. Post-fix the ASSERTION is
+# identical on every kernel; the MECHANISM differs and is named in the
+# case description: kernel >= 5.12 mount_setattr(AT_RECURSIVE), kernel
+# < 5.12 (dev 5.10) per-submount bind-remounts from the host-side
+# /proc/self/mountinfo enumeration (the new mountns has no /proc and
+# cannot mount one there — EPERM, D39).
+S3WORK="$(mktemp -d /tmp/minict-s3.XXXXXX)"
+mkdir -p "$S3WORK/plain" "$S3WORK/withsub/sub"
+echo ro-marker > "$S3WORK/plain/ro.txt"
+echo top-marker > "$S3WORK/withsub/top.txt"
+# NB: no marker inside withsub/sub at setup — the tmpfs mounted over it in
+# s3_run would hide it; inner-marker is written onto the tmpfs AFTER mount.
+
+S3_ENV=blocked
+if unshare --user --map-root-user --mount -- sh -c \
+        'mount -t tmpfs none "$1"' s3env "$S3WORK/withsub/sub" 2>/dev/null; then
+    S3_ENV=ok
+fi
+KVER_MM="$(uname -r | awk -F. '{print $1"."$2}')"
+if awk -v k="$KVER_MM" 'BEGIN{split(k,a,".");
+    exit !(a[1]>5 || (a[1]==5 && a[2]>=12))}'; then
+    S3_MECH="mount_setattr"
+else
+    S3_MECH="mountinfo-fallback"
+fi
+
+# s3_run <payload-sh> <host-src> <suffix>: run minict with a spec bind of
+# <host-src> to /data<suffix> inside a userns+mountns that carries the
+# tmpfs submount at <src>/sub. The submount marker file is written AFTER
+# the mount (before it, the mount would hide it). Payloads end with
+# `true` so an expected EROFS does not turn into a fake rc failure; only
+# a boot refusal (die, rc=126) or harness failure propagates rc.
+s3_run() {
+    printf 'bind %s:/data%s\n' "$2" "$3" > "$S3WORK/spec"
+    MINICT_SPEC="$S3WORK/spec" unshare --user --map-root-user --mount -- sh -c \
+        'mount -t tmpfs none "$1/withsub/sub" >/dev/null 2>&1 || {
+             echo S3ENVFAIL; exit 9; }
+         echo inner-marker > "$1/withsub/sub/inner.txt"
+         "$2" "$3" /bin/sh -c "$4"' \
+        s3run "$S3WORK" "$MINICT" "$ROOTFS" "$1"
+}
+
+bind1_test() {
+    local out
+    out="$(s3_run 'cat /data/ro.txt; touch /data/w 2>&1; true' \
+        "$S3WORK/plain" ':ro')" || return 1
+    grep -q ro-marker <<<"$out" \
+        && grep -q "Read-only file system" <<<"$out"
+}
+bind2_test() {
+    local out
+    out="$(s3_run 'cat /data/top.txt; touch /data/top.txt 2>&1;
+                   touch /data/sub/inner.txt 2>&1;
+                   cat /data/sub/inner.txt; true' \
+        "$S3WORK/withsub" ':ro')" || return 1
+    [[ "$(grep -c "Read-only file system" <<<"$out")" == 2 ]] || return 1
+    grep -q top-marker <<<"$out" && grep -q inner-marker <<<"$out"
+}
+bind3_test() {
+    local out
+    out="$(s3_run 'echo w-top >> /data/top.txt;
+                   echo w-sub >> /data/sub/inner.txt;
+                   cat /data/top.txt /data/sub/inner.txt; true' \
+        "$S3WORK/withsub" '')" || return 1
+    grep -q w-top <<<"$out" && grep -q w-sub <<<"$out"
+}
+
+run_case BIND1 "bind :ro plain tree: visible, top mount read-only" pass \
+    bind1_test
+if [[ $S3_ENV == ok ]]; then
+    run_case BIND2 "bind :ro tree WITH submount: submount ro too ($S3_MECH)" \
+        pass bind2_test
+    run_case BIND3 "control: same tree WITHOUT :ro — top+submount writable" \
+        pass bind3_test
+else
+    echo "SKIP BIND2/BIND3: userns tmpfs submount unavailable on this host"
+fi
+rm -rf "$S3WORK"
+
 # ---------- privilege state ----------
 run_case NNP1 "PR_SET_NO_NEW_PRIVS=1 verified via host /proc" pass nnp1_test
 run_case CAPD1 "capdrop real: shim+payload CapEff=0 (host /proc)" pass capd1_test

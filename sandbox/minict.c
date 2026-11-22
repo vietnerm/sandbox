@@ -67,6 +67,33 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+/* ---------- mount_setattr (S3, issue #113, D52) ----------
+ *
+ * Kernel >= 5.12 makes a recursive read-only bind a ONE-syscall operation:
+ * mount_setattr(AT_RECURSIVE, MOUNT_ATTR_RDONLY) walks the whole mount
+ * tree under VFS locks — no TOCTOU, covers submounts a plain bind-remount
+ * leaves writable. Introduced in 5.12 (glibc wrapper 2.36), so call the
+ * raw syscall and fall back on ENOSYS (kernel < 5.12, measured on the
+ * 5.10 dev host). x86_64 is the only arch this repo measures; other
+ * arches get the syscall number from <sys/syscall.h> when their headers
+ * are new enough, else take the fallback path directly.
+ */
+#ifndef AT_RECURSIVE
+#define AT_RECURSIVE 0x8000
+#endif
+#ifndef MOUNT_ATTR_RDONLY
+#define MOUNT_ATTR_RDONLY 0x00000001
+#endif
+#ifndef AT_SYMLINK_NOFOLLOW
+#define AT_SYMLINK_NOFOLLOW 0x100
+#endif
+struct minict_mount_attr {
+        unsigned long long attr_set;
+        unsigned long long attr_clr;
+        unsigned long long propagation;
+        unsigned long long userns_fd;
+};
+
 static void die(const char *ctx)
 {
         fprintf(stderr, "minict: %s: %s\n", ctx, strerror(errno));
@@ -218,6 +245,11 @@ static const char *g_proxy_sock = NULL; /* MINICT_PROXY_SOCK (in new root) */
 #define SPEC_MAX_ENTRIES 64
 #define SPEC_MAX_LINE 1024
 #define SPEC_MAX_FILE (64 * 1024)
+/* S3 (D52): per-":ro" bind cap for src-relative submount paths recorded
+ * host-side from /proc/self/mountinfo. Exceeding the cap dies — a ro bind
+ * whose submounts we refuse to enumerate must not boot half-protected. */
+#define SPEC_SUBMOUNT_MAX 16
+#define SPEC_SUBMOUNT_PATH 256
 
 static char g_hostname[HOST_NAME_MAX + 1] = "minict";
 
@@ -225,6 +257,15 @@ struct spec_bind {              /* host src bind-mounted into the rootfs */
         char src[512];
         char dst[512];          /* path INSIDE the rootfs (absolute) */
         int ro;                 /* ":ro" suffix -> MS_RDONLY remount */
+        /* S3 (D52): MS_REC clones the mounts BENEATH src into the sandbox;
+         * a top-only ro remount leaves them writable. Enumerated host-side
+         * pre-unshare (the only window with /proc — the new mountns has
+         * none and cannot mount one there: EPERM measured, D39) from
+         * /proc/self/mountinfo, stored as src-relative suffixes ("/sub").
+         * Used by the ENOSYS fallback of the recursive ro enforcement. */
+        char submounts[SPEC_SUBMOUNT_MAX][SPEC_SUBMOUNT_PATH];
+        int submount_n;
+        int mountinfo_ok;       /* enumeration ran (else fail-closed later) */
 };
 static struct spec_bind g_spec_bind[SPEC_MAX_ENTRIES];
 static int g_spec_bind_n;
@@ -749,6 +790,10 @@ static void spec_parse_line(char *line, int lineno)
 
 static char g_spec_text[SPEC_MAX_FILE + 1];
 
+/* defined after this file's spec parse section (S3, D52): must run AFTER
+ * the full spec is parsed, BEFORE unshare removes /proc from view */
+static void spec_scan_bind_submounts(void);
+
 static void load_spec_file(void)
 {
         const char *spec = getenv("MINICT_SPEC");
@@ -815,6 +860,142 @@ static void load_spec_file(void)
                 lineno++;
                 spec_parse_line(line, lineno);
         }
+        spec_scan_bind_submounts();
+}
+
+/* ---------- S3 (issue #113, D52): submount enumeration for :ro binds ----------
+ *
+ * /proc/self/mountinfo (man 5 proc) lines look like:
+ *   36 35 98:0 /mnt1 /mnt2 rw,... master:1 - ext3 /dev/sda1 ...
+ * Fields 4 (root) and 5 (mount point) are escaped with exactly four
+ * sequences: \040 ' ', \011 '\t', \012 '\n', \134 '\\'. Only field 5 is
+ * needed here. Runs host-side BEFORE unshare — inside the new mountns
+ * there is no /proc and one cannot be mounted there (EPERM measured on
+ * 5.10 and the runner, D39), so this window is the only chance to learn
+ * which mounts the MS_REC bind will clone under a ":ro" src.
+ */
+static int mntinfo_decode(const char *in, char *out, size_t outsz)
+{
+        size_t o = 0;
+        const char *p;
+
+        for (p = in; *p; p++) {
+                if (o + 1 >= outsz)
+                        return -1; /* truncated mount point — fail-closed
+                                    * (a truncated path cannot match src and
+                                    * would silently MISS a submount) */
+                if (*p == '\\' && p[1] >= '0' && p[1] <= '7' &&
+                    p[2] >= '0' && p[2] <= '7' &&
+                    p[3] >= '0' && p[3] <= '7') {
+                        out[o++] = (char)((p[1] - '0') * 64 +
+                                          (p[2] - '0') * 8 +
+                                          (p[3] - '0'));
+                        p += 3;
+                        continue;
+                }
+                out[o++] = *p;
+        }
+        out[o] = '\0';
+        return 0;
+}
+
+static void spec_scan_bind_submounts(void)
+{
+        int i, any_ro = 0;
+        FILE *f;
+        char line[2048];
+
+        for (i = 0; i < g_spec_bind_n; i++)
+                if (g_spec_bind[i].ro)
+                        any_ro = 1;
+        if (!any_ro)
+                return; /* nothing to enforce recursively */
+
+        f = fopen("/proc/self/mountinfo", "r");
+        if (!f) {
+                /* fail-closed: mark every ro bind unverified. On a kernel
+                 * WITH mount_setattr this flag is unused (the one-syscall
+                 * path needs no enumeration); without it a ro bind whose
+                 * submounts are unknown must NOT boot half-protected. */
+                for (i = 0; i < g_spec_bind_n; i++)
+                        g_spec_bind[i].mountinfo_ok = 0;
+                warn("open /proc/self/mountinfo — :ro submounts unverified");
+                return;
+        }
+
+        while (fgets(line, sizeof(line), f)) {
+                char *p = line, *tok;
+                char mp[1024];
+                int k;
+
+                if (!strchr(line, '\n') && !feof(f)) {
+                        /* a line longer than the buffer would split into a
+                         * bogus second line — refuse to guess (fail-closed,
+                         * same class as the >16 submount cap) */
+                        fprintf(stderr, "minict-spec: /proc/self/mountinfo "
+                                "line exceeds %zu bytes — refusing to "
+                                "enumerate :ro submounts\n", sizeof(line));
+                        exit(125);
+                }
+                /* split off fields 1..4 (id, parent, maj:min, root) */
+                for (k = 0; k < 4; k++) {
+                        while (*p == ' ')
+                                p++;
+                        tok = p;
+                        while (*p && *p != ' ')
+                                p++;
+                        if (!*p)
+                                break;
+                        *p++ = '\0';
+                }
+                if (k < 4)
+                        continue; /* malformed line — skip */
+                while (*p == ' ')
+                        p++;
+                tok = p;
+                while (*p && *p != ' ')
+                        p++;   /* field 5: mount point (escaped) */
+                *p = '\0';
+                if (mntinfo_decode(tok, mp, sizeof(mp)) < 0) {
+                        fprintf(stderr, "minict-spec: mount point exceeds "
+                                "%zu bytes — refusing to enumerate :ro "
+                                "submounts\n", sizeof(mp));
+                        exit(125);
+                }
+
+                for (i = 0; i < g_spec_bind_n; i++) {
+                        struct spec_bind *b = &g_spec_bind[i];
+                        struct stat sst;
+                        size_t len = strlen(b->src);
+
+                        if (!b->ro || b->src[0] != '/')
+                                continue;
+                        /* strictly below src (src itself = the top mount,
+                         * already covered by the top remount) */
+                        if (strncmp(mp, b->src, len) || mp[len] != '/')
+                                continue;
+                        /* only directory srcs can carry submounts */
+                        if (stat(b->src, &sst) < 0 || !S_ISDIR(sst.st_mode))
+                                continue;
+                        /* cap check AFTER the prefix match: unrelated host
+                         * mounts must not trigger the cap on a bind that
+                         * already recorded its full 16 (SIA #114 fix) */
+                        if (b->submount_n >= SPEC_SUBMOUNT_MAX) {
+                                fprintf(stderr, "minict-spec: bind %s: "
+                                        "more than %d submounts — refusing "
+                                        "incomplete :ro (S3 cap)\n",
+                                        b->src, SPEC_SUBMOUNT_MAX);
+                                exit(125);
+                        }
+                        snprintf(b->submounts[b->submount_n],
+                                 sizeof(b->submounts[0]), "%s", mp + len);
+                        b->submount_n++;
+                }
+        }
+        fclose(f);
+
+        for (i = 0; i < g_spec_bind_n; i++)
+                g_spec_bind[i].mountinfo_ok = 1; /* enumeration succeeded */
 }
 
 /* Create <rootfs><rel> component by component WITHOUT following symlinks
@@ -925,13 +1106,63 @@ static void apply_spec_binds(const char *rootfs)
                 /* one mount() with MS_BIND|MS_RDONLY is NOT read-only: the
                  * kernel ignores MS_RDONLY on the bind step itself — a
                  * second bind-remount applies it (mount(2) semantics).
-                 * NOTE: only the top mount becomes ro; submounts of a
-                 * recursive bind keep their flags (open gap, GAPS.md). */
-                if (b->ro &&
-                    mount(NULL, dst, NULL,
-                          MS_BIND | MS_REC | MS_REMOUNT | MS_RDONLY,
-                          NULL) < 0)
-                        die(why);
+                 * S3 (issue #113, D52): MS_REC cloned the mounts BELOW the
+                 * src into the sandbox; a top-only remount leaves them
+                 * writable — measured 2026-11-22 (tmpfs submount under a
+                 * :ro bind stayed rw). Enforce the WHOLE tree:
+                 *   - kernel >= 5.12: mount_setattr(AT_RECURSIVE,
+                 *     MOUNT_ATTR_RDONLY) — one syscall, VFS-locked walk,
+                 *     no TOCTOU;
+                 *   - ENOSYS (kernel < 5.12): per-submount bind-remounts
+                 *     from the host-side mountinfo enumeration, then the
+                 *     top. Any submount that cannot go ro -> die(): the
+                 *     operator asked for ro; shipping silently-partial ro
+                 *     is the exact "silently NOT what the operator asked
+                 *     for" class binds already die() for. */
+                if (b->ro) {
+#ifdef __NR_mount_setattr
+                        struct minict_mount_attr ma;
+
+                        memset(&ma, 0, sizeof(ma));
+                        ma.attr_set = MOUNT_ATTR_RDONLY;
+                        if (syscall(__NR_mount_setattr, AT_FDCWD, dst,
+                                    AT_RECURSIVE | AT_SYMLINK_NOFOLLOW,
+                                    &ma, sizeof(ma)) == 0) {
+                                /* whole tree (top + submounts) is ro */
+                                continue;
+                        }
+                        if (errno != ENOSYS)
+                                die(why); /* real failure, fail-closed */
+                        /* ENOSYS: kernel < 5.12 — per-submount fallback */
+#endif
+                        if (!b->mountinfo_ok)
+                                die("spec bind :ro: kernel lacks "
+                                    "mount_setattr and /proc/self/mountinfo "
+                                    "was unreadable — recursive ro cannot "
+                                    "be guaranteed");
+                        {
+                                int j;
+
+                                for (j = 0; j < b->submount_n; j++) {
+                                        char sdst[1024];
+
+                                        if ((size_t)snprintf(sdst,
+                                                             sizeof(sdst),
+                                                             "%s%s", dst,
+                                                             b->submounts[j]) >=
+                                            sizeof(sdst))
+                                                die(why);
+                                        if (mount(NULL, sdst, NULL,
+                                                  MS_BIND | MS_REMOUNT |
+                                                  MS_RDONLY, NULL) < 0)
+                                                die(why);
+                                }
+                        }
+                        if (mount(NULL, dst, NULL,
+                                  MS_BIND | MS_REC | MS_REMOUNT | MS_RDONLY,
+                                  NULL) < 0)
+                                die(why);
+                }
         }
 }
 
