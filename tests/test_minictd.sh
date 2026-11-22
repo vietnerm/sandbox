@@ -145,6 +145,11 @@ cleanup() {
     [[ -n "$DPID" ]] && kill "$DPID" 2>/dev/null
     [[ -n "$DPID3" ]] && kill "$DPID3" 2>/dev/null
     [[ -n "$DPID4" ]] && kill "$DPID4" 2>/dev/null
+    # DPID3/DPID4 are set inside the run_case command-substitution subshell
+    # (MD35/MD36) and never reach this scope (measured leak: daemon3/daemon4
+    # outlived the run — same class as RPID, Phiên 16). Kill by the per-run
+    # unique argv paths instead.
+    pkill -TERM -f -- "$S4_DIR" 2>/dev/null || true
     # Catch-all (issue #91 dev session, measured leak): when this script's
     # stdout is a short-lived pipe consumer (grep/tail) the shell can die
     # by SIGPIPE BEFORE the EXIT trap runs — daemon2 (MD21) then outlives
@@ -759,22 +764,24 @@ md36() {
         --base-rootfs "$REPO/rootfs" --webproxy "$REPO/tools/webproxy.py" \
         > "$WORK/daemon4.log" 2>&1 &
     DPID4=$!
-    s4_wait "$S4_SOCK2" || return 1
+    s4_wait "$S4_SOCK2" || { echo "daemon4 boot: $(tail -3 "$WORK/daemon4.log")"; return 1; }
     # unix-only posture: NO tcp listener owned by this daemon (M-tcp:
     # binding TCP anyway -> red)
     if command -v ss >/dev/null 2>&1; then
-        ! ss -tlnp 2>/dev/null | grep -q "pid=$DPID4," || return 1
+        ss -tlnp 2>/dev/null | grep -q "pid=$DPID4," && { echo "tcp listener found for $DPID4"; return 1; }
     else
-        ! grep -qi ":$(printf '%04X' "$S4_PORT2")" /proc/net/tcp 2>/dev/null || return 1
+        grep -qi ":$(printf '%04X' "$S4_PORT2")" /proc/net/tcp 2>/dev/null && { echo "tcp port open"; return 1; }
     fi
     # healthz over unix works
-    curl -s -m 5 --unix-socket "$S4_SOCK2" -H "Authorization: Bearer $TOKEN" http://unix/healthz >/dev/null || return 1
+    curl -s -m 5 --unix-socket "$S4_SOCK2" -H "Authorization: Bearer $TOKEN" http://unix/healthz >/dev/null \
+        || { echo "healthz via sock: $(tail -3 "$WORK/daemon4.log")"; return 1; }
     # R3 unchanged: no token over unix -> 401 (M-auth: skipping auth on
     # unix socket -> red)
     code_noauth=$(curl -s -m 5 -o /dev/null -w '%{http_code}' --unix-socket "$S4_SOCK2" http://unix/healthz)
-    [[ "$code_noauth" == 401 ]] || return 1
+    [[ "$code_noauth" == 401 ]] || { echo "no-auth code=$code_noauth"; return 1; }
     # CLI over unix socket (contract.NewUnixHTTPClient + --socket flag)
-    "$SANDBOX" --socket "$S4_SOCK2" --token "$TOKEN" list >/dev/null || return 1
+    "$SANDBOX" --socket "$S4_SOCK2" --token "$TOKEN" list \
+        || { echo "CLI list: $(tail -3 "$WORK/daemon4.log")"; return 1; }
 }
 run_case MD36 "S4: unix-only posture, 401 no-token, CLI --socket round-trip" pass md36
 
