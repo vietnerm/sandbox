@@ -248,3 +248,38 @@ write-to-/ workloads — Docker parity).
 **Áp dụng:** `landlock_enforce()` in payload child (after seccomp, before exec) — "/" ro +
 "/tmp"/"/dev/shm" rw, restrict_self. `readonly` directive. LL1 test CI-gated (probe
 create_ruleset).
+
+---
+
+# Research — 2026-11-23 (SDDA Phiên 27, issue #30 / signal race fork→g_child_pid)
+
+Chủ đề: signal mask + fork semantics; parent block propagation; child UNBLOCK vs restore-old.
+
+## Nguồn 1 — signal(7) + sigprocmask(2) (man7)
+- Link: https://man7.org/linux/man-pages/man2/sigprocmask.2.html + https://man7.org/linux/man-pages/man7/signal.7.html
+- `sigprocmask(SIG_BLOCK, &set, &old)` — adds `set` to blocked, saves previous in `old`.
+  `SIG_SETMASK` replaces; `SIG_UNBLOCK` removes `set` from blocked. A signal blocked when
+  delivered is QUEUED (not lost) — delivered when unblocked (if handler installed).
+
+## Nguồn 2 — fork(2) + signal mask inheritance (man7)
+- Link: https://man7.org/linux/man-pages/man2/fork.2.html
+- fork(2): child inherits the parent's signal MASK (blocked set) + dispositions. A parent
+  block before fork propagates to the child. The child must explicitly UNBLOCK to reset.
+
+## Nguồn 3 — minict.c shim signal flow (repo D19)
+- Link: `sandbox/minict.c` fwd_sig + g_child_pid + sigprocmask (D19 pidns-1 shim).
+- Parent installs fwd_sig (g_child_pid=0), forks pidns, sets g_child_pid after. Child
+  (shim) BLOCKs fwd around payload fork, restores `old` after. Race: fork→BLOCK window
+  + fork→g_child_pid window → fwd_sig no-op → swallowed.
+
+## Nguồn 4 — pthread_sigmask / async-signal-safety (signal-safety(7))
+- Link: https://man7.org/linux/man-pages/man7/signal-safety.7.html
+- sigprocmask is async-signal-safe (safe in handler/fork window). The parent block around
+  fork is safe. UNBLOCK in child is safe.
+
+**Trade-off:** parent block + child UNBLOCK (not restore-`old`) — closes both races (parent
+fork→g_child_pid, child fork→BLOCK) without breaking child handlers. `old` captures inherited
+block; restore-`old` would keep blocked. UNBLOCK fwd → clean. Effective mask unchanged.
+
+**Áp dụng:** parent sigprocmask(SIG_BLOCK {SIGTERM,SIGINT}) before pidns fork, unblock after
+g_child_pid; child shim+payload restore → SIG_UNBLOCK &fwd (not SIG_SETMASK &old).

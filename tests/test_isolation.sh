@@ -583,6 +583,30 @@ run_case SIG4 "control: TERM to payload (non-init) delivered (143)" pass \
     sigfwd_test TERM 143 payload
 run_case SIG5 "orphan grandchildren reaped by shim, no zombies" pass sig5_test
 
+# SIG_STRESS (#30/D62): spawn N instances, send SIGTERM to the minict parent
+# right after launch (racing the pidns fork window), verify the payload exits
+# 143 (SIGTERM forwarded, not swallowed). With the #30 fix the parent blocks
+# SIGTERM/SIGINT around the fork → queued → forwarded after g_child_pid set.
+# Best-effort stress (µs window); SIG1-SIG5 are the deterministic regression.
+sig_stress_test() {
+    local i rc ok=0 spec
+    spec="$(mktemp /tmp/minict-sigstress.XXXXXX)"
+    : > "$spec"   # empty spec (no directives)
+    for i in $(seq 1 20); do
+        MINICT_SPEC="$spec" "$MINICT" "$ROOTFS" /bin/sh -c 'sleep 30' &
+        local pid=$!
+        kill -TERM "$pid" 2>/dev/null
+        wait "$pid"; rc=$?
+        [[ $rc -eq 143 ]] && ok=$((ok+1))
+        # cleanup any surviving sleep (race loser)
+        pkill -f "sleep 30" 2>/dev/null || true
+    done
+    rm -f "$spec"
+    # all 20 must forward SIGTERM (exit 143); a swallowed one exits 0/timeout
+    [[ $ok -eq 20 ]] || { echo "sig_stress: $ok/20 forwarded (race leak?)"; return 1; }
+}
+run_case SIG_STRESS "#30 stress: SIGTERM during spawn forwarded (20x)" pass sig_stress_test
+
 # ---------- network isolation (netns ON since issue #3) ----------
 run_case NET1 "netns isolated: only lo inside, no host iface" pass \
     ic 'busybox ifconfig -a | grep -q "^lo " && busybox ifconfig -a \

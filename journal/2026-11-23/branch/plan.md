@@ -178,3 +178,24 @@ Chu trình: Phiên 26 (SDDA, issue #149 / GĐ2 mục 6 Landlock ro-root, CI-only
 
 - PR `feat/149-landlock` (issue #149) — Pha B→C (draft → CI → SCR → SIA → squash). Ledger
   qua PR `chore(branches): ledger 2026-11-23 Phiên 26`.
+
+---
+
+# SBG — Branch Gate plan 2026-11-23 (MODE=plan, Pha A — Phiên 27)
+
+Chu trình: Phiên 27 (SDDA, issue #30 / signal race fork→g_child_pid + stress test CI).
+
+## Trạng thái đầu chu trình
+
+- Pull main `9ff9539` (ff, ledger Phiên 26 #151); local chỉ `main`.
+- PR mở: **0** → Pha B/C rỗng → Pha D.
+- Theo chỉ thị user: #30 (signal race + stress test CI). Assign #30 + in-progress.
+
+## Kế hoạch DELETE_MERGED / KEEP
+
+- `fix/30-signal-race` DELETE_MERGED sau squash. Không KEEP.
+
+## Kế hoạch gộp trong ngày
+
+- PR `fix/30-signal-race` (issue #30) — Pha B→C (draft → CI → SCR → SIA → squash). Ledger
+  qua PR `chore(branches): ledger 2026-11-23 Phiên 27`.

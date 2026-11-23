@@ -1646,6 +1646,7 @@ static void install_seccomp(void)
 }
 
 static volatile sig_atomic_t g_child_pid = 0;
+static sigset_t g_parent_sig_old;  /* #30/D62: parent mask saved around pidns fork */
 
 /* ---------- pidns-1 signal shim (issue #6, D19) ----------
  *
@@ -1908,6 +1909,20 @@ int main(int argc, char **argv)
         signal(SIGINT, fwd_sig);
         signal(SIGTERM, fwd_sig);
 
+/* #30/D62: block the forwardable signals in the PARENT around the pidns
+ * fork so a SIGTERM/SIGINT arriving between fork() and g_child_pid being
+ * set (below) is QUEUED, not delivered to the no-op fwd_sig (g_child_pid=0)
+ * and swallowed. The child inherits the blocked mask; the UNBLOCK restores
+ * below (shim + payload) give them clean masks. */
+        {
+                sigset_t pfwd;
+
+                sigemptyset(&pfwd);
+                sigaddset(&pfwd, SIGINT);
+                sigaddset(&pfwd, SIGTERM);
+                if (sigprocmask(SIG_BLOCK, &pfwd, &g_parent_sig_old) < 0)
+                        die("sigprocmask(SIG_BLOCK parent)");
+        }
         pid = fork();
         if (pid < 0)
                 die("fork (enter pidns)");
@@ -1983,8 +1998,12 @@ int main(int argc, char **argv)
                          * (pid_namespaces(7) rule only targets init) ---- */
                         if (prctl(PR_SET_PDEATHSIG, SIGKILL) < 0)
                                 warn("payload PDEATHSIG");
-                        /* a blocked mask SURVIVES exec(2) — restore ours */
-                        if (sigprocmask(SIG_SETMASK, &old, NULL) < 0)
+                        /* a blocked mask SURVIVES exec(2) — restore a CLEAN mask
+ * (UNBLOCK the fwd set). #30/D62: the parent blocks SIGTERM/SIGINT around
+ * the pidns fork; the child inherits that, so restoring &old (which
+ * captures the inherited block) would keep them blocked. UNBLOCK fwd
+ * gives the payload the clean default mask it expects. */
+                        if (sigprocmask(SIG_UNBLOCK, &fwd, NULL) < 0)
                                 _exit(126);
                         /* so do signal DISPOSITIONS: reset everything the
                          * launcher/shim chain may have left ignored or
@@ -2060,14 +2079,23 @@ int main(int argc, char **argv)
                 /* pending signals queued during the fork window fire NOW,
                  * with g_payload_pid already set (race closed) — including
                  * the queued SIGCHLD of an early payload death */
-                if (sigprocmask(SIG_SETMASK, &old, NULL) < 0)
-                        die("sigprocmask(SIG_SETMASK)");
+                /* #30/D62: UNBLOCK the fwd set (not restore &old) so the shim's
+ * fwd_to_payload handlers actually receive the signals queued during the
+ * fork window. &old captures the parent's inherited SIGTERM/SIGINT block;
+ * restoring it would leave them blocked. */
+                if (sigprocmask(SIG_UNBLOCK, &fwd, NULL) < 0)
+                        die("sigprocmask(SIG_UNBLOCK)");
 
                 shim_wait_loop(); /* never returns */
         }
 
         /* ---- host side: supervisor, no extra privileges ---- */
         g_child_pid = pid;
+/* #30/D62: unblock the signals blocked around the pidns fork — pending
+ * SIGTERM/SIGINT now fires fwd_sig with g_child_pid set (forwarded to the
+ * shim). Race closed. */
+        if (sigprocmask(SIG_SETMASK, &g_parent_sig_old, NULL) < 0)
+                die("sigprocmask(SIG_SETMASK parent)");
         setpgid(pid, pid); /* also from parent to avoid the pgid race */
         /* (INT/TERM forwarders installed BEFORE the fork — see above) */
 
