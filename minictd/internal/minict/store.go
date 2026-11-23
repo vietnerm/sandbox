@@ -311,6 +311,43 @@ func webportsOf(spec *contract.RunSpec) ([]int, error) {
 	return ports, nil
 }
 
+// ErrPortInUse is returned when a Run/Start declares a webport already held
+// by another running instance (S6, issue #124, D55). The API maps it to 409
+// Conflict (parity ErrNotRunning) so the operator gets a clear error instead
+// of a silently broken preview (the second webproxy would EADDRINUSE and only
+// a Note would record it).
+var ErrPortInUse = errors.New("webport already in use by another running instance")
+
+// portsHeldBy returns the set of preview ports currently held by OTHER
+// running instances (port -> instance name). `except` is the instance being
+// Run/Start'd (so its own stale state doesn't false-positive on Start).
+// Stopped/dead instances don't hold ports (Stop/Remove kill the webproxies;
+// alive() heals a dead-pid running state to stopped).
+func (s *Store) portsHeldBy(except string) (map[int]string, error) {
+	held := map[int]string{}
+	names, err := s.ListByNamePrefix(context.Background(), "")
+	if err != nil {
+		return nil, err
+	}
+	for _, n := range names {
+		if n == except {
+			continue
+		}
+		st, err := s.loadState(n)
+		if err != nil {
+			continue // ghost dir / missing state — skip, not a port holder
+		}
+		st = s.alive(st)
+		if st.State != StateRunning {
+			continue
+		}
+		for _, p := range st.Ports {
+			held[p] = n
+		}
+	}
+	return held, nil
+}
+
 func parseLabels(pairs []string) map[string]string {
 	m := make(map[string]string)
 	for _, kv := range pairs {
