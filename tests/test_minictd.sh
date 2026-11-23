@@ -76,6 +76,9 @@
 #   MD39  GĐ2 mục 2 template (issue #127): save-template on stopped instance ->
 #         run from `template:<name>` clones rootfs (marker seen); save-template
 #         on RUNNING -> 409 (ErrInstanceRunning, fail-closed)
+#   MD40  GĐ2 mục 3 snapshot (issue #130): snapshot stopped instance -> tar.gz;
+#         run from `backup:<name>` restores rootfs (marker seen); snapshot
+#         on RUNNING -> 409 (trusted tar.gz path, D57)
 #
 # Exit code: 0 if all expected results hold, 1 otherwise.
 set -u
@@ -148,7 +151,7 @@ cleanup() {
     # repo-scoped argv pattern instead (measured leak: 1 ocireg per suite
     # run without this, Phiên 16).
     pkill -TERM -f -- "tools/bin/ocireg $REG_PORT" 2>/dev/null || true
-    for n in md-a md-b md-c md-auto md-t md-f md-oci md-oci-bad md-oci-h md-oci-r md-oci-a md-rl md-s6a md-s6b md-tpl-src md-tpl-dst; do
+    for n in md-a md-b md-c md-auto md-t md-f md-oci md-oci-bad md-oci-h md-oci-r md-oci-a md-rl md-s6a md-s6b md-tpl-src md-tpl-dst md-snap-src md-snap-dst; do
         curl -s -m 5 -X POST -H "Authorization: Bearer $TOKEN" \
             "$API/v1/sandboxes/$n/remove" >/dev/null 2>&1 || true
     done
@@ -877,6 +880,38 @@ EOF
     [[ "$(jget 'd["stdout"].strip()')" == template-marker ]]
 }
 run_case MD39 "GĐ2 mục 2: save-template (stopped) + run from template (marker seen)" pass md39
+
+# ---------- GĐ2 mục 3 snapshot/backup/restore (issue #130, D57) ----------
+md40() {
+    # Run src, write marker to / (persistent rootfs), stop, snapshot -> md-snap
+    # (tar.gz). Run dst image=backup:md-snap -> exec sees marker (rootfs restored
+    # from tar.gz). Also: snapshot on RUNNING -> 409 (ErrInstanceRunning).
+    api POST /v1/run "$(cat <<EOF
+{"name":"md-snap-src","image":"base",
+ "cmd":["/bin/sh","-c","echo snap-marker > /snap-marker; sleep 600"]}
+EOF
+)" >/dev/null || return 1
+    sleep 0.4
+    api GET /v1/sandboxes/md-snap-src >/dev/null && [[ "$(jget 'd["State"]["Status"]')" == running ]] || return 1
+    # snapshot on RUNNING -> 409 Conflict (ErrInstanceRunning)
+    local code_run
+    code_run=$(curl -s -m 10 -o "$WORK/resp" -w '%{http_code}' -X POST \
+        -H "Authorization: Bearer $TOKEN" \
+        -d '{"backup":"md-snap"}' \
+        "$API/v1/sandboxes/md-snap-src/snapshot")
+    [[ "$code_run" == 409 ]] || { echo "running snapshot expected 409 got $code_run"; return 1; }
+    # stop src -> snapshot succeeds (stopped)
+    api POST /v1/sandboxes/md-snap-src/stop >/dev/null || return 1
+    sleep 0.5
+    api POST /v1/sandboxes/md-snap-src/snapshot '{"backup":"md-snap"}' >/dev/null || return 1
+    # run dst from backup -> exec sees marker (rootfs restored from tar.gz)
+    api POST /v1/run '{"name":"md-snap-dst","image":"backup:md-snap","cmd":["/bin/sh","-c","sleep 600"]}' >/dev/null || return 1
+    sleep 0.4
+    api GET /v1/sandboxes/md-snap-dst >/dev/null && [[ "$(jget 'd["State"]["Status"]')" == running ]] || return 1
+    xv2 md-snap-dst '{"cmd":["/bin/cat","/snap-marker"],"timeout_s":5}' || return 1
+    [[ "$(jget 'd["stdout"].strip()')" == snap-marker ]]
+}
+run_case MD40 "GĐ2 mục 3: snapshot (stopped) + restore from backup:md-snap (marker seen)" pass md40
 
 echo "=== summary: PASS=$PASS SKIP=$SKIPPED FAIL=$FAIL ==="
 if [[ $FAIL -ne 0 ]]; then

@@ -361,6 +361,12 @@ func (s *Store) templatesDir() string {
 	return filepath.Join(s.Root, "_templates")
 }
 
+// backupsDir returns the snapshot/backup store directory (<Root>/_backups/).
+// Skipped by ListByNamePrefix (nameRe rejects the "_" prefix, Phiên 21).
+func (s *Store) backupsDir() string {
+	return filepath.Join(s.Root, "_backups")
+}
+
 func parseLabels(pairs []string) map[string]string {
 	m := make(map[string]string)
 	for _, kv := range pairs {

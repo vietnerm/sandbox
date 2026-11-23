@@ -47,3 +47,26 @@ Chu trình: Phiên 21 (SDDA, issue #127 / GĐ2 mục 2 — template).
 - PR duy nhất: `feat/127-template` (issue #127) — Pha B→C (draft → CI → SCR → SIA →
   flip ready → squash `--match-head-commit`). Ledger qua PR `chore(branches): ledger
   2026-11-23 Phiên 21`.
+
+---
+
+# SBG — Branch Gate plan 2026-11-23 (MODE=plan, Pha A — Phiên 22)
+
+Chu trình: Phiên 22 (SDDA, issue #130 / GĐ2 mục 3 sub — snapshot/backup/restore).
+
+## Trạng thái đầu chu trình
+
+- Pull main `2634286` (ff, ledger Phiên 21 qua PR #129 squash `2634286`); local chỉ `main`.
+- PR mở: **0** (REST API rỗng) → Pha B/C đầu chu trình rỗng → vào thẳng Pha D.
+- Issue mở: 17 — không `type:security priority:p0/p1`. GĐ2 mục 1 (S-series done + residuals
+  blocked), mục 2 (done Phiên 21). Move tới mục 3. Tạo #130 (snapshot, type:feature p2) —
+  mục 3 sub (snapshot/backup/restore); overlayfs (phần a) env-gated kernel 5.10, deferred.
+
+## Kế hoạch DELETE_MERGED / KEEP
+
+- `feat/130-snapshot` DELETE_MERGED sau squash. Không KEEP mới.
+
+## Kế hoạch gộp trong ngày
+
+- PR `feat/130-snapshot` (issue #130) — Pha B→C (draft → CI → SCR → SIA → flip ready →
+  squash `--match-head-commit`). Ledger qua PR `chore(branches): ledger 2026-11-23 Phiên 22`.

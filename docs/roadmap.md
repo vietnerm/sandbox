@@ -22,11 +22,25 @@
 4. D — No-Compromise Validation: `make test` (isolation 31 + seccomp 21 + netns 7 +
    alpine 9 + debian 9 + escape-alpine 31 + cve-check tool 4 + pasta 11 + cg 6 = 129, pipefail thật —
    issue #14; cg suite từ #4/D48 2026-11-20, env-gated cgroups v2; dev: 127 PASS + 13 SKIP env-blocked)
-   + `make test-web` + `make test-minictd` (39, MD0–MD39) + lưu evidence vào
+   + `make test-web` + `make test-minictd` (40, MD0–MD40) + lưu evidence vào
    `journal/YYYY-MM-DD/evidence/` + integrity check host
 5. Ghi `journal/YYYY-MM-DD/daily-log.md` (quy tắc thư mục: PROMPT.MD §10)
 
 ## Đã xong
+- [x] 2026-11-23 (phiên 22, SDDA): **GĐ2 mục 3 sub — snapshot/backup/restore (issue #130,
+  D57)**: `snapshot.go` mới — `tarGzTree` (Go archive/tar + compress/gzip stdlib,
+  symlink-aware) + `extractGzTar` (**trusted path**: refuse `..`/absolute member paths,
+  ALLOW absolute symlink TARGETS — busybox applet pattern `/bin/busybox`, khác secureUnpack
+  D50 refuse abs symlinks cho untrusted OCI #109). gzip thay tar.zst (stdlib-only, no zstd
+  dep — D20 no-vendor; zstd deferred). `store.go backupsDir()` (`<Root>/_backups/`, nameRe
+  skip). `runtime.go Snapshot(name, backupName)` — yêu cầu STOPPED (fail-closed
+  `ErrInstanceRunning` → 409), tarGzTree rootfs → `<backupsDir>/<name>.tar.gz`. `rootfs.go`
+  case `backup:<name>` → extractGzTar. `server.go` route `POST /v1/sandboxes/{name}/snapshot`.
+  Test MD40: run src (marker), snapshot RUNNING → 409, stop, snapshot OK, run dst
+  `backup:md-snap` → exec sees marker. Perf không đổi. CVE gate rc=0. Residual:
+  overlayfs rootless + idmapped mounts (phần (a) mục 3) env-gated kernel 5.10 dev
+  (cần ≥5.11), separate phiên; zstd compression (gzip tạm, cần dep decision); list/remove-backup API.
+  (#130)
 - [x] 2026-11-23 (phiên 21, SDDA): **GĐ2 mục 2 — template (issue #127, D56)**:
   `rootfs.go prepareRootfs` thêm case `template:<name>` → copy `<Root>/_templates/<name>/rootfs`
   (cp -a, parity `base`/`dir:`). `runtime.go SaveTemplate(name, templateName)` — validate
@@ -405,6 +419,10 @@
    list/remove-template API (cleanup qua state dir).
 3. Storage: overlayfs rootless + idmapped mounts (thay private copy 2 MB/instance);
    snapshot/backup/restore (overlay layer + tar.zst).
+   → **Snapshot/restore xong 2026-11-23 Phiên 22 (#130, D57)**: `snapshot` API + `backup:<name>`
+   image form; tar.gz trusted (gzip stdlib, zstd deferred); MD40 e2e. Residual: overlayfs
+   rootless + idmapped mounts (env-gated kernel 5.10 dev, cần ≥5.11; CI ubuntu-24.04 OK);
+   zstd compression (gzip tạm); overlay layer (hiện full tar.gz, không thin-provision).
 4. Port-forward theo instance qua pasta, khai báo trong config instance.
 5. Quota CPU/RAM/pid qua cgroups v2 delegation; disk quota dạng cảnh báo.
    → **Xong phần core 2026-11-20 phiên 13 (#4, D48)**: cgroups v2 islands

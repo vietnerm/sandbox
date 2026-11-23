@@ -189,3 +189,64 @@ Còn lại    : main
 CI main    : xanh (bed9664 — build-test + scan + perf-guard)
 Dừng?      : không (GĐ2 còn systemd-real + mục 3-7; GD3 CHƯA chạm per chỉ thị owner)
 =============================================
+
+---
+
+## Phiên 22 — Orchestrator (ZAI, §11)
+
+### Pha A — Sync + SBG plan
+- Pull main `2634286` (ff, ledger Phiên 21 qua PR #129); remote chỉ `origin/main`.
+- SBG MODE=plan → `branch/plan.md` (Phiên 22): 0 PR mở → vào thẳng Pha D.
+
+### Triage + chọn issue
+- 17 issue mở; không security p0/p1. GĐ2 mục 1 (S-series done + residuals blocked), mục 2
+  (done Phiên 21). Move tới mục 3. Tạo **#130** (snapshot, type:feature p2, GĐ2 mục 3 sub).
+  overlayfs (phần a) env-gated kernel 5.10 → snapshot/restore (phần b) trước.
+
+### Research (`research.md` Phiên 22 — 4 nguồn)
+- archive/tar stdlib: symlink-aware round-trip (Lstat + Readlink).
+- secureUnpack (D50/#109 untrusted) vs extractGzTar (D57 trusted): 271 abs symlinks in alpine
+  rootfs → KHÔNG reuse secureUnpack (refuse abs); trusted path allow abs targets.
+- gzip stdlib vs zstd (needs dep, D20 no-vendor) → gzip.
+- overlayfs rootless kernel ≥5.11 (dev 5.10 env-gated) → phần (a) deferred.
+
+### Development (`feat/130-snapshot`, D57 — `decisions/snapshot.md`)
+- `snapshot.go` mới: `tarGzTree` (archive/tar + compress/gzip, symlink-aware) + `extractGzTar`
+  (trusted: refuse `..`/abs member paths, ALLOW abs symlink targets).
+- `store.go backupsDir()` (`<Root>/_backups/`, nameRe skip).
+- `runtime.go Snapshot(name, backupName)`: STOPPED only (fail-closed `ErrInstanceRunning` →
+  409), tarGzTree rootfs → `<backupsDir>/<name>.tar.gz`.
+- `rootfs.go prepareRootfs`: case `backup:<name>` → extractGzTar.
+- `server.go`: route `POST /v1/sandboxes/{name}/snapshot` + handleSnapshot.
+- Tests: MD40 (39→40) — run src (marker `/snap-marker`), snapshot RUNNING → 409, stop,
+  snapshot OK, run dst `backup:md-snap` → exec sees marker.
+- Không đụng C (minict/minict-exec unchanged).
+- Docs: roadmap "Đã xong" Phiên 22 + mục 3 snapshot/restore → "Xong"; journal ngày.
+
+### CVE Check
+- Kernel: `5.10.134-013.15.kangaroo.al8.x86_64`
+- `cve/snapshot.{md,json}`: watchlist rows; cve-gate rc=0 → 0 mới ngoài watchlist.
+- Caveat AUDIT §F fixed-list (NVD transient).
+- Không component mới ship (Go stdlib archive/tar + compress/gzip đã có) → watchlist không cần dòng.
+
+### Validation "không bị nhiễm"
+- `make test`: 9/10 PASS (test_cg env Go, không regression snapshot).
+- `make test-web`: 9/9 PASS.
+- `make test-minictd`: SKIP env (không Go local) — CI ubuntu-24.04 chạy MD0-MD40.
+- Host baseline: unchanged 3/3.
+- Bằng chứng: `evidence/snapshot.txt`.
+
+### Pha B — PR (feat/* theo thứ tự §11)
+- B1: nhánh con trực tiếp của main `2634286` → up-to-date.
+- B2 — SCR: ... (sau CI).
+- B3 — SIA: ... (sau CI).
+- B4 — verdict: ... (sau SIA).
+
+### Kế hoạch ngày mai
+- Sau merge #130: GĐ2 mục 3 snapshot/restore done; tiếp overlayfs rootless (phần a, env-gated,
+  CI-only) hoặc systemd-real / from-audit #117/#119.
+- **GD3 (Web UI) CHƯA chạm** — per chỉ thị owner: DỪNG + nhắc owner TRƯỚC dòng code UI đầu
+  tiên khi mọi mục GĐ2 hoàn thành. GĐ2: mục 1 (S-series done, residuals blocked), mục 2 done,
+  mục 3 snapshot done (overlayfs deferred), mục 4-7 chưa mở.
+
+### Pha C/E — cập nhật sau merge (SBG apply + ledger sẽ ghi ở phần cuối phiên)
