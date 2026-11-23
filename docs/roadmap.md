@@ -432,7 +432,54 @@
    runner nếu sudo bootstrap được. Residual: memory.swap.max/io.max mapping,
    cpu.weight mapping tuyến tính (D48).
 6. Landlock LSM cho fs-policing (kernel ≥ 5.13, runner đạt).
-7. Đo: control plane idle ≤ 30 MB RSS; destroy không rò rỉ process/mount/netns.
+7. **Observability** (mới 2026-11-23, owner duyệt; manifest DoD GĐ2). Thứ tự:
+   sau mục 4 (port-forward), **trước mục 8** vì mục 8 đo RSS phải tính cả phần này;
+   mục 6 (Landlock) độc lập, làm trước hay sau đều được. Chỉ Go stdlib (`log/slog`, `net/http`,
+   đọc file cgroup); **không** OpenTelemetry SDK, **không** `prometheus/client_golang`.
+   a. **Log JSON có cấu trúc**: `minictd` đổi `slog.NewTextHandler` → `slog.NewJSONHandler`
+      (giữ cờ `--log-format text|json`, mặc định `json`). Mỗi sự kiện vòng đời ghi
+      đúng một dòng: `create`, `start`, `stop`, `destroy`, `exec`, `snapshot`,
+      `save-template`, `reconcile`/`heal`, `autostart`, và mọi lỗi trả về client
+      (HTTP ≥ 400) hoặc lỗi nền. Trường bắt buộc: `time`, `level`, `msg` (= tên sự
+      kiện), `instance`, `op`, `result` (`ok`/`error`), `duration_ms`, `error` (khi
+      lỗi), `request_id` (nếu từ API). **Không bao giờ** ghi token, nội dung env-file,
+      hay giá trị biến môi trường của instance.
+   b. **Metrics từng instance** đọc từ cgroups v2 (tái dùng phần đọc của `Stats`
+      đã có từ #4/D48, không viết đường đọc thứ hai): `cpu.stat` (usage_usec),
+      `memory.current`, `memory.max`, `io.stat` (rbytes/wbytes), `pids.current`,
+      `pids.max`. Xuất dạng Prometheus text exposition (viết tay, ~100 dòng):
+      `minict_instance_cpu_usage_seconds_total`, `minict_instance_memory_bytes`,
+      `minict_instance_memory_limit_bytes`, `minict_instance_io_read_bytes_total`,
+      `minict_instance_io_write_bytes_total`, `minict_instance_pids`,
+      `minict_instance_pids_limit`, `minict_instance_up` (label `instance`,
+      `state`); thêm của daemon: `minictd_instances{state}`,
+      `minictd_process_resident_memory_bytes`, `minictd_build_info`.
+      Instance không có cgroup (fail-soft, không có base) → chỉ xuất `up`/`state`,
+      không bịa số 0.
+   c. **Endpoint `GET /metrics`** trên listener API sẵn có (TCP 127.0.0.1 và/hoặc
+      `--unix-socket`), **yêu cầu cùng token** như `/v1/*`. Không mở listener mới;
+      nếu sau này cần `--metrics-listen` thì phải từ chối (fail-closed, exit ≠ 0)
+      mọi địa chỉ không phải loopback. Đọc theo yêu cầu (scrape-time), không có
+      goroutine thu thập nền, không giữ lịch sử trong RAM.
+   d. **Test** (vào `make test-minictd` + Go unit):
+      - MD41 log schema: chạy create/start/stop/destroy + một lỗi (vd. 409), parse
+        từng dòng stderr bằng JSON, kiểm đủ trường bắt buộc; grep không thấy token.
+      - MD42 metrics khớp cgroup: instance chạy `sleep`, đọc `/metrics` và đọc trực
+        tiếp file cgroup của instance, `memory_bytes`/`pids` khớp (pids chính xác,
+        memory sai lệch ≤ 5 % hoặc ≤ 256 KiB), counter CPU không giảm giữa 2 lần scrape.
+        Env-gated như CG0–CG5 (SKIP khi không có cgroups v2 delegation).
+      - MD43 bind/auth: `/metrics` không token → 401; daemon chạy `--listen
+        127.0.0.1:<port>` thì kết nối tới IP không phải loopback của máy bị từ chối;
+        `--metrics-listen 0.0.0.0:…` (nếu có cờ) → daemon thoát lỗi.
+      - Go unit: renderer Prometheus text (escape label, `# HELP`/`# TYPE`, thứ tự ổn
+        định), parser `cpu.stat`/`io.stat`, instance không cgroup.
+   e. **Ngân sách**: ghi RSS idle của `minictd` trước/sau vào `docs/perf-baseline.md`;
+      tăng thêm > 2 MB phải giải trình trong PR (perf-guard manifest §3).
+   Ngoài phạm vi GĐ2 (ghi để không làm sớm): biểu đồ là GĐ3 mục 3 (dùng lại
+   `/metrics`); OTLP exporter / collector ngoài là hướng cluster nhiều VPS (xem
+   "Hướng xa" cuối file).
+8. Đo: control plane idle ≤ 30 MB RSS (**tính cả observability mục 7**); destroy không
+   rò rỉ process/mount/netns.
 
 ## Giai đoạn 3 — Web UI + console (chưa mở code — **DỪNG + nhắc owner trước khi mở**, chỉ thị owner)
 
@@ -443,7 +490,8 @@
 1. UI tĩnh single-user (không framework nặng), bind 127.0.0.1 + token: danh sách,
    tạo từ template, start/stop, snapshot/restore, port-forward, quota.
 2. Web terminal vào instance qua `exec` của GĐ2.
-3. Biểu đồ CPU/RAM/IO theo instance từ thống kê cgroup.
+3. Biểu đồ CPU/RAM/IO theo instance: UI scrape `/metrics` của GĐ2 mục 7 (cùng token,
+   qua 127.0.0.1), giữ lịch sử ngắn phía trình duyệt; không thêm collector trong daemon.
 4. Test bảo mật UI: CSRF/token, không bind 0.0.0.0 mặc định, path traversal API.
 
 ## Giai đoạn 4 — Backend microVM Firecracker (chưa mở code)
@@ -458,6 +506,16 @@
 1. Image tối giản (NixOS/distro nhẹ) ≤ 300 MB, boot vào user thường đã có điều
    kiện tiên quyết (pasta, cgroup delegation, quyền /dev/kvm); control plane chạy dưới user đó.
 2. Health + update tối thiểu; tài liệu từ máy trắng. (Chi tiết khi GĐ4 xong.)
+
+## Hướng xa (chưa thuộc giai đoạn nào)
+
+- **Cluster nhiều VPS** (mong muốn của owner 2026-11-17: cài lên nhiều VPS rồi gom
+  về quản lý chung như Proxmox). Manifest §4 hiện vẫn ghi "không cluster nhiều
+  node", nên **chưa được viết code**; cần owner sửa manifest trước. Khi mở, observability
+  nối tiếp từ GĐ2 mục 7: hoặc một collector ngoài (Prometheus/VictoriaMetrics/Grafana
+  Agent) scrape `/metrics` của từng node qua đường hầm có xác thực, hoặc thêm OTLP
+  exporter tuỳ chọn trong `minictd` (tắt mặc định, không tính vào ngân sách 30 MB
+  khi tắt). Log JSON của mục 7a đi theo cùng đường.
 
 ## Parked thật (lý do thiết kế, KHÔNG phải môi trường)
 - seccomp **allowlist mode** — chỉ làm khi có matrix workload httpd được audit đầy
