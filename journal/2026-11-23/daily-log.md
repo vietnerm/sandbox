@@ -145,11 +145,11 @@ Dừng?      : không (GĐ2 mục 1 S-series done, còn systemd-real + mục 2-7
 - Host baseline: unchanged 3/3 (passwd/bash/sudo khớp Phiên 14-20).
 - Bằng chứng: `evidence/template.txt`.
 
-### Pha B — PR (feat/* theo thứ tự §11)
+### Pha B — PR #128 (feat/* theo thứ tự §11)
 - B1: nhánh con trực tiếp của main `2d18aeb` → merge origin/main up-to-date.
-- B2 — SCR: ... (sau CI).
-- B3 — SIA: ... (sau CI).
-- B4 — verdict: ... (sau SIA).
+- B2 — SCR @ `f5520bf`: **PASS** — CI clean-room (§0b): build-test green ×2 = make test 10 suites + make test-web 9/9 + make test-minictd 39/39 (MD39 mới) + perf-check green; scan green. Dev local 9/10 (test_cg env Go missing, không regression template). Mutant M-skip-stopped + M-skip-validName defer (low, MD39 non-vacuous by construction). Comment SCR trên PR #128.
+- B3 — SIA @ `f5520bf`: **PASS** — 11/11 OK; claim 0 sai; test rỗng 0 (MD39 non-vacuous); bảo mật 0 critical/high/medium; 2 low (mutant deferral, CVE NVD partial). Label `audit:pass`. Comment SIA trên PR.
+- B4 — verdict pass → PR vào hàng chờ gộp (Pha C). Không cần sửa (chỉ low).
 
 ### Kế hoạch ngày mai
 - Sau merge #127: GĐ2 mục 2 (template) xong; tiếp mục 3 (storage overlayfs rootless +
@@ -158,4 +158,34 @@ Dừng?      : không (GĐ2 mục 1 S-series done, còn systemd-real + mục 2-7
   tiên khi mọi mục GĐ2 hoàn thành. GĐ2: mục 1 (S-series done, còn systemd-real + #109),
   mục 2 (done Phiên 21), mục 3-7 chưa mở.
 
-### Pha C/E — cập nhật sau merge (SBG apply + ledger sẽ ghi ở phần cuối phiên)
+### Pha C — Gộp (SBG MODE=apply)
+- CI `f5520bf` xanh 4/4 (build-test ×2 + perf + scan) → flip ready (GraphQL
+  `markPullRequestReadyForReview`) → **squash `bed9664`** REST PUT match-head-commit
+  `f5520bf` → **#127 auto-close** 02:45:04Z (precedent #113/#116/#121/#124) +
+  gỡ `status:in-progress`.
+- Kiểm sau merge: nhánh xoá local + remote; remote sau Phiên 21: **chỉ `main`** @ `bed9664`.
+- SIA verdict PASS (không phải delta — code PR không đổi sau audit, chỉ journal).
+
+### Pha E — Kết ngày (SBG)
+- SBG MODE=apply: `feat/127-template` DELETE_MERGED (local + remote sau squash);
+  không nhánh KEEP mới; ledger qua PR này (`chore(branches): ledger 2026-11-23 Phiên 21`).
+- Roadmap: "Đã xong" thêm Phiên 21 (template); **GĐ2 mục 2 (template) xong**;
+  còn mở: mục 1 residuals (systemd-real env-gated, #109 chờ maintainer), mục 3-7.
+- Self-audit cuối ngày theo §7: CI main xanh (`bed9664` — build-test + perf-guard +
+  scan); cve-gate rc=0 (caveat NVD transient); host unchanged 3/3.
+
+DAY PASS — 2026-11-23 Phiên 21: issue #127 done (merge #128 `bed9664` @ `f5520bf`;
+SCR PASS via CI clean-room (build-test ×2 green, test-minictd 39/39 MD39 mới, perf green);
+SIA PASS 11/11 + 2 low; isolation 34/seccomp 21/netns 7/alpine 9/debian 8+1SKIP/
+escape-alpine 34/cve-check 4/pasta 5+6SKIP/stack 8 (dev); CVE gate rc=0;
+host unchanged 3/3; main xanh `bed9664`; remote chỉ `main`; issue mới #127 triage;
+GĐ2 mục 2 xong).
+
+=== SBG REPORT — 2026-11-23 (apply, Phiên 21) ===
+Đã gộp     : 2  — #128 (feat #127, squash `bed9664`), ledger PR này
+Đã xoá     : 1  (sau merge: `feat/127-template` local + remote)
+Giữ lại    : 0
+Còn lại    : main
+CI main    : xanh (bed9664 — build-test + scan + perf-guard)
+Dừng?      : không (GĐ2 còn systemd-real + mục 3-7; GD3 CHƯA chạm per chỉ thị owner)
+=============================================
