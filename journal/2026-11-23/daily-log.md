@@ -270,3 +270,81 @@ Còn lại    : main
 CI main    : xanh (32072aa)
 Dừng?      : không (GĐ2 còn overlayfs (env-gated) + systemd-real + mục 4-7; GD3 CHƯA chạm)
 =============================================
+
+---
+
+## Phiên 23 — Orchestrator (ZAI, §11)
+
+### Pha A — Sync + SBG plan
+- Pull main `a5b83fd` (concurrent activity #132-134 + ledger Phiên 22 #135); remote chỉ `main`.
+- SBG MODE=plan → `branch/plan.md` (Phiên 23): 0 PR mở → Pha D.
+
+### Triage + chọn issue
+- 17 issue mở; không security p0/p1. GĐ2 mục 1-3 done; mục 4-7 env-gated (overlayfs/
+  port-forward/Landlock/systemd-real — kernel ≥5.11/Go/pasta). #117 (from-audit Phiên 17,
+  C fix minict.c mountinfo truncation) — actionable + locally testable → chọn. Assign + in-progress.
+
+### Research (`research.md` Phiên 23 — 4 nguồn)
+- snprintf(3): silent truncation nếu src >n-1; check strlen hoặc return value.
+- minict.c sibling caps (D52): >16 submounts die, mp>1024 die — truncation cùng class → die.
+- NAME_MAX 255 / PATH_MAX 4096: 255-byte name → suffix 256 → die (boundary test).
+- mount_setattr (≥5.12) vs mountinfo-fallback (<5.12): truncation chỉ trong fallback path (dev 5.10).
+
+### Development (`fix/117-mountinfo-truncate`, D58 — `decisions/mountinfo-truncate.md`)
+- `sandbox/minict.c`: trước `snprintf(b->submounts[n], ...)`, check `strlen(mp+len) >=
+  SPEC_SUBMOUNT_PATH` → die (exit 125) với message (bind src, suffix len, cap). Sau check,
+  `memcpy` (an toàn). Die thay warn (issue gợi ý warn low) — consistent sibling caps (>16/>1024),
+  đóng lỗ silent-truncation outright (partial-ro config lie worse than refuse).
+- Tests: BIND4 trong `tests/test_isolation.sh` (isolation 34→35) — 255-byte submount name
+  → suffix 256 byte → die. Assert rc != 0 + stderr "exceeds cap / refusing truncated".
+  Gated `S3_ENV == ok && S3_MECH == mountinfo-fallback` (kernel <5.12); ≥5.12 SKIP
+  (mount_setattr path, no enumeration).
+- Không đụng Go/test-minictd (chỉ C + isolation test).
+- Docs: journal ngày (research, D58, branch/plan).
+
+### CVE Check
+- Kernel: `5.10.134-013.15.kangaroo.al8.x86_64`
+- `cve/mountinfo-truncate.{md,json}`: 4 rows (partial NVD); cve-gate rc=0.
+- Caveat AUDIT §F fixed-list.
+- Không component mới ship → watchlist không cần dòng.
+
+### Validation "không bị nhiễm"
+- `make test`: 9/10 PASS (isolation 35 gồm BIND4 mới, seccomp 21, netns 7, alpine 9, debian
+  8+1SKIP, escape-alpine 34, cve-check 4, pasta 5+6SKIP, stack 8); test_cg FAIL env Go.
+- `make test-web`: 9/9 PASS.
+- Host baseline: unchanged 3/3.
+- Bằng chứng: `evidence/mountinfo-truncate.txt`.
+- **BIND4 PASS trên dev 5.10** (mountinfo-fallback) — fix verified locally.
+
+### Pha B — PR #138 (fix/* theo thứ tự §11)
+- B1: nhánh con của main `a5b83fd` → up-to-date.
+- B2 — SCR @ `afda9c6`: **PASS** — CI clean-room (latest build-test green 137486446233 + re-run 137487796978 green; first push-run 137485805170 pasta flake PT1/PT2/NET10 — binary fetch infra, NOT regression #117, re-run pass) + dev local (isolation 35 BIND4 PASS mountinfo-fallback). C mutant (revert snprintf) buildable local → BIND4 đỏ (non-vacuous).
+- B3 — SIA @ `afda9c6`: **PASS** — 11/11 OK; claim 0 sai; test rỗng 0; bảo mật 0 critical/high/medium; 2 low (CI pasta flake re-run pass, CVE NVD partial). Label `audit:pass`. Comment SIA trên PR.
+- B4 — verdict pass → gộp (Pha C).
+
+### Kế hoạch ngày mai
+- Sau merge #117: from-audit #117 closed; còn #119 (TOCTOU socket-path, Go), #109 (chờ
+  maintainer). GĐ2 mục 4-7 env-gated; overlayfs rootless (mục 3 phần a) CI-only possible.
+- **GD3 (Web UI) CHƯA chạm** — per chỉ thị owner.
+
+### Pha C — Gộp (SBG MODE=apply)
+- CI `afda9c6` xanh (sau re-run push-run pasta flake): build-test ×2 green + perf + scan → flip ready (GraphQL) → **squash `abcc7ed`** REST PUT match-head → **#117 auto-close**.
+- Remote sau Phiên 23: **chỉ `main`** @ `abcc7ed`. SIA verdict PASS.
+
+### Pha E — Kết ngày (SBG)
+- SBG MODE=apply: `fix/117-mountinfo-truncate` DELETE_MERGED; ledger qua PR này (`chore(branches): ledger 2026-11-23 Phiên 23`).
+- from-audit #117 closed; còn #119 (TOCTOU socket-path, Go), #109 (chờ maintainer).
+- Self-audit §7: CI main xanh (`abcc7ed`); cve-gate rc=0; host unchanged 3/3.
+
+DAY PASS — 2026-11-23 Phiên 23: issue #117 done (merge #138 `abcc7ed` @ `afda9c6`;
+SCR PASS (CI clean-room re-run green + dev BIND4 PASS mountinfo-fallback); SIA PASS 11/11 + 2 low;
+isolation 35 dev (BIND4) / 34 CI (BIND4 SKIP mount_setattr); CI xanh `abcc7ed`; remote chỉ `main`).
+
+=== SBG REPORT — 2026-11-23 (apply, Phiên 23) ===
+Đã gộp     : 2  — #138 (fix #117, squash `abcc7ed`), ledger PR này
+Đã xoá     : 1  (`fix/117-mountinfo-truncate`)
+Giữ lại    : 0
+Còn lại    : main
+CI main    : xanh (abcc7ed — build-test ×2 + perf + scan; push-run pasta flake re-run pass)
+Dừng?      : không (GĐ2 còn overlayfs (env-gated) + systemd-real + mục 4-7; GD3 CHƯA chạm)
+=============================================

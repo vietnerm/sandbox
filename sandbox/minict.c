@@ -987,8 +987,30 @@ static void spec_scan_bind_submounts(void)
                                         b->src, SPEC_SUBMOUNT_MAX);
                                 exit(125);
                         }
-                        snprintf(b->submounts[b->submount_n],
-                                 sizeof(b->submounts[0]), "%s", mp + len);
+                        /* #117/D58: a src-relative submount suffix longer
+                         * than the record cap would be silently truncated
+                         * by snprintf → wrong path remounted later → a
+                         * partial-ro config lie (worse than refusing — same
+                         * class as the >16 submount cap above and the
+                         * mp>1024 cap). Die fail-closed; the issue (#117,
+                         * from-audit SIA PR #114 low) suggested a warning,
+                         * but a die is consistent with the sibling caps and
+                         * closes the silent-truncation hole outright. */
+                        {
+                                size_t suffix_len = strlen(mp + len);
+
+                                if (suffix_len >= SPEC_SUBMOUNT_PATH) {
+                                        fprintf(stderr, "minict-spec: bind %s: "
+                                                "submount suffix %zu bytes "
+                                                "exceeds %d cap — refusing "
+                                                "truncated :ro (#117)\n",
+                                                b->src, suffix_len,
+                                                SPEC_SUBMOUNT_PATH);
+                                        exit(125);
+                                }
+                                memcpy(b->submounts[b->submount_n],
+                                       mp + len, suffix_len + 1);
+                        }
                         b->submount_n++;
                 }
         }

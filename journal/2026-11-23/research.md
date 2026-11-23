@@ -112,3 +112,38 @@ overlayfs thin-provision là phần (a) mục 3 (env-gated).
 
 **Áp dụng cho minict:** `snapshot.go` (tarGzTree + extractGzTar trusted) + `Snapshot` API +
 `backup:<name>` image form. Test MD40: marker ở / (persistent), snapshot stopped only.
+
+---
+
+# Research — 2026-11-23 (SDDA Phiên 23, issue #117 / mountinfo truncation)
+
+Chủ đề: snprintf silent truncation; fail-closed posture sibling caps; NAME_MAX/PATH_MAX.
+
+## Nguồn 1 — snprintf(3) truncation semantics (man7)
+- Link: https://man7.org/linux/man-pages/man3/snprintf.3.html
+- `snprintf(dst, n, "%s", src)`: writes at most n bytes (incl null). If output truncated,
+  return value = strlen(src) (would-be length) — nhưng dst chứa truncated string. Silent
+  nếu caller không check return. Fix: check strlen(src) >= n trước, hoặc use return value.
+
+## Nguồn 2 — minict.c sibling fail-closed caps (repo D52)
+- Link: `sandbox/minict.c` mountinfo enumeration (D52, S3 #113).
+- >16 submounts → die (SPEC_SUBMOUNT_MAX cap). mp >1024 → die (mp[1024] cap). Cùng
+  posture: refuse incomplete ro bind. Truncation suffix >256 → cùng class (config lie) → die.
+
+## Nguồn 3 — NAME_MAX / PATH_MAX (linux/limits.h, man7)
+- Link: https://man7.org/linux/man-pages/man7/limits.7.html (NAME_MAX 255, PATH_MAX 4096).
+- Single filename ≤255 byte. A 255-byte submount name → suffix "/<255>" = 256 byte
+  >= SPEC_SUBMOUNT_PATH(256) → die. Test BIND4 dùng 255-byte name (NAME_MAX boundary).
+
+## Nguồn 4 — mount_setattr vs mountinfo-fallback (repo D52/D39)
+- Link: `sandbox/minict.c` S3 fix (D52); `journal/2026-11-22/decisions/s3-ro-bind-recursive.md`.
+- kernel ≥5.12: mount_setattr(AT_RECURSIVE) — one syscall, no enumeration. <5.12:
+  per-submount bind-remount from /proc/self/mountinfo. Truncation only in fallback path
+  (dev 5.10). BIND4 gated to mountinfo-fallback (SKIP on ≥5.12 CI).
+
+**Trade-off:** die thay warn (issue gợi ý warn low) — die đóng lỗ silent-truncation
+outright (consistent sibling caps), nhưng có thể break workload path >255 legitimate
+(rare). Partial-ro silent worse → die.
+
+**Áp dụng:** strlen check trước snprintf → die ≥256; memcpy sau check. BIND4 test
+255-byte name → suffix 256 → die. Gated mountinfo-fallback (dev 5.10).

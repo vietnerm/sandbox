@@ -70,3 +70,27 @@ Chu trình: Phiên 22 (SDDA, issue #130 / GĐ2 mục 3 sub — snapshot/backup/r
 
 - PR `feat/130-snapshot` (issue #130) — Pha B→C (draft → CI → SCR → SIA → flip ready →
   squash `--match-head-commit`). Ledger qua PR `chore(branches): ledger 2026-11-23 Phiên 22`.
+
+---
+
+# SBG — Branch Gate plan 2026-11-23 (MODE=plan, Pha A — Phiên 23)
+
+Chu trình: Phiên 23 (SDDA, issue #117 / mountinfo truncation fail-closed).
+
+## Trạng thái đầu chu trình
+
+- Pull main `a5b83fd` (ff, concurrent activity #132-134 + ledger Phiên 22 qua #135);
+  local chỉ `main`.
+- PR mở: **0** → Pha B/C rỗng → Pha D.
+- Issue mở: 17 — không security p0/p1. GĐ2 mục 1-3 done (snapshot Phiên 22); mục 4-7
+  env-gated (overlayfs/port-forward/Landlock/systemd-real all need kernel ≥5.11/Go/pasta).
+  #117 (from-audit Phiên 17, C fix in minict.c) — actionable + locally testable → chọn.
+
+## Kế hoạch DELETE_MERGED / KEEP
+
+- `fix/117-mountinfo-truncate` DELETE_MERGED sau squash. Không KEEP mới.
+
+## Kế hoạch gộp trong ngày
+
+- PR `fix/117-mountinfo-truncate` (issue #117) — Pha B→C (draft → CI → SCR → SIA →
+  flip ready → squash). Ledger qua PR `chore(branches): ledger 2026-11-23 Phiên 23`.
