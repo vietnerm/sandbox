@@ -7,7 +7,7 @@
 #   CK3  NVD without CPE data -> "unknown", never "not affected"
 #   CK4  versionEndIncluding 6.1.50 -> fixed in 6.1.51; rc-only CPE ignored
 #   CK5  vendor kernel string 5.10.134-013.15.kangaroo.al8 parsed as 5.10.134
-#   CK6  discovery: recent kernel CVE listed as NEW; one published > 30 days
+#   CK6  discovery: recent kernel CVE listed as NEW; one published > 120 days
 #        ago is NOT re-reported
 #   CK7  gate json: only issue-worthy rows (CK2 yes, CK1 no) -> cve-gate
 #        prints exactly the new critical one
@@ -72,7 +72,7 @@ t CK4 "versionEndIncluding 6.1.50 -> fixed in 6.1.51" "$(k CVE-2099-0004 6.1)"  
 t CK4 "rc-only CPE (6.6:rc1) ignored"                 "$(k CVE-2099-0004 6.6)"  "not affected"
 t CK5 "vendor 5.10.134 string in 2.6.12..5.15.150"    "$(k CVE-2099-0001 5.10.134-013.15.kangaroo.al8)" "affected (upstream range)"
 t CK6 "recent kernel CVE discovered"                  "$(python3 -I -c "import json,sys;r=[x for x in json.load(open(sys.argv[1])) if x['cve']=='CVE-2099-0002'];print(r[0]['origin'],r[0]['in_watchlist'])" "$W/out.json")" "discovered False"
-t CK6 "CVE published > 30 days ago not re-reported"   "$(k CVE-2099-0005 7.0)" "ABSENT"
+t CK6 "CVE published > 120 days ago not re-reported"   "$(k CVE-2099-0005 7.0)" "ABSENT"
 t CK7 "gate json keeps only issue-worthy rows"        "$(python3 -I -c "import json,sys;print(' '.join(sorted(x['cve'] for x in json.load(open(sys.argv[1])))))" "$W/gate.json")" "CVE-2099-0001 CVE-2099-0002"
 t CK7 "cve-gate on it prints only the NEW critical"   "$(python3 -I "$REPO/tools/cve-gate.py" "$W/gate.json" "$W/wl.md")" "CVE-2099-0002"
 t CK8 "7.0 line with open range -> no fix in line"    "$(k CVE-2099-0002 7.0)" "affected, no fix in line"
