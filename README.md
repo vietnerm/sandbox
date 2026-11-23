@@ -60,7 +60,7 @@ Chỉ ghi điều đã đo được. Mức mục tiêu lấy từ `idea/manifest
 
 | Thành phần | Yêu cầu | Ghi chú |
 |---|---|---|
-| Kernel | Linux ≥ 6.1 (mục tiêu) | đã chạy thực tế trên 5.10 (máy dev), 6.18 (container), 7.0 (runner CI) |
+| Kernel | Linux ≥ 6.1 (mục tiêu), patch LTS mới: tối thiểu 6.1.190 / 6.6.159 / 6.12.113 (2026-11-23) | đã chạy thực tế trên 5.10 (máy dev), 6.18 (container), 7.0 (runner CI); bảng dải CVE theo kernel: [cve-watchlist](docs/cve-watchlist.md) |
 | User namespace | unprivileged userns bật | Ubuntu ≥ 23.10: cần `kernel.apparmor_restrict_unprivileged_userns=0` (CI làm bước này) |
 | cgroups | v2 cho giới hạn tài nguyên (GĐ2) | minict chạy được không cần cgroups; máy dev ZAI chỉ có v1, đó là giới hạn môi trường, không phải của engine |
 | Arch | x86_64 (đã kiểm) | arm64 chưa kiểm: `mkrootfs-alpine.sh` mặc định `x86_64`, CI chỉ chạy x86_64, số syscall seccomp là của x86_64 |
