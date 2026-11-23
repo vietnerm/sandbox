@@ -115,6 +115,8 @@ func mapErr(w http.ResponseWriter, err error) {
 		writeErr(w, http.StatusNotFound, contract.ErrNotFound.Error())
 	case errors.Is(err, minict.ErrNotRunning):
 		writeErr(w, http.StatusConflict, err.Error())
+	case errors.Is(err, minict.ErrPortInUse):
+		writeErr(w, http.StatusConflict, err.Error())
 	case errors.Is(err, context.Canceled):
 		writeErr(w, 499, "client closed request")
 	default:

@@ -60,6 +60,20 @@ func (s *Store) Run(ctx context.Context, spec contract.RunSpec) (string, error) 
 	if err != nil {
 		return "", err
 	}
+	// S6 (issue #124, D55): refuse webport collisions up front — a second
+	// instance declaring a port already held by a RUNNING instance would
+	// have its webproxy fail to bind (EADDRINUSE) with only a Note; detect
+	// before spawn so the operator gets a clear 409 instead of a broken
+	// preview.
+	held, err := s.portsHeldBy(spec.Name)
+	if err != nil {
+		return "", err
+	}
+	for _, p := range ports {
+		if holder, ok := held[p]; ok {
+			return "", fmt.Errorf("%w: port %d held by instance %s", ErrPortInUse, p, holder)
+		}
+	}
 	// CG1/S2: resolve the cgroup manager once so renderSpec can note the
 	// true enforcement posture (cgroup mapping vs fallback).
 	cgAvail := s.cgroupManager().Avail
@@ -269,6 +283,19 @@ func (s *Store) Start(ctx context.Context, name string) error {
 			if _, err := os.Stat(parts[0]); err != nil {
 				return fmt.Errorf("start %s: bind source %q: %w", name, parts[0], err)
 			}
+		}
+	}
+
+	// S6 (issue #124, D55): re-check webport collisions before re-spawning
+	// proxies — another instance may have grabbed a port while this one
+	// was stopped. Same fail-closed posture as Run.
+	held, err := s.portsHeldBy(name)
+	if err != nil {
+		return err
+	}
+	for _, p := range st.Ports {
+		if holder, ok := held[p]; ok {
+			return fmt.Errorf("%w: port %d held by instance %s", ErrPortInUse, p, holder)
 		}
 	}
 

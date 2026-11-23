@@ -22,11 +22,21 @@
 4. D — No-Compromise Validation: `make test` (isolation 31 + seccomp 21 + netns 7 +
    alpine 9 + debian 9 + escape-alpine 31 + cve-check tool 4 + pasta 11 + cg 6 = 129, pipefail thật —
    issue #14; cg suite từ #4/D48 2026-11-20, env-gated cgroups v2; dev: 127 PASS + 13 SKIP env-blocked)
-   + `make test-web` + `make test-minictd` (37, MD0–MD37) + lưu evidence vào
+   + `make test-web` + `make test-minictd` (38, MD0–MD38) + lưu evidence vào
    `journal/YYYY-MM-DD/evidence/` + integrity check host
 5. Ghi `journal/YYYY-MM-DD/daily-log.md` (quy tắc thư mục: PROMPT.MD §10)
 
 ## Đã xong
+- [x] 2026-11-23 (phiên 20, SDDA): **S6 — webport collision detection up front (issue #124,
+  D55, GĐ2 mục 1)**: daemon `store.go` thêm `portsHeldBy(except)` — scan tất cả instance qua
+  `ListByNamePrefix`, filter `alive().State == running`, collect `port -> name` (trừ instance
+  đang Run/Start); sentinel `ErrPortInUse` → `server.go mapErr` HTTP 409 Conflict (parity
+  `ErrNotRunning`). `runtime.go Run` check sau `webportsOf`; `Start` re-check trước
+  `spawnProxies` (instance khác có thể chiếm port khi này đang stopped). Stop/Remove giết
+  webproxies (existing) → port released → Run/Start sau thành công. Test MD38: hai instance
+  cùng `minict.webport` → Run thứ hai 409; stop A → B reuses port. Perf không đổi (scan
+  state dir ~µs, không runtime path). CVE gate rc=0. Residual: external process hold port →
+  webproxy Note (out of scope); no dynamic port allocation (operator-declared). (#124)
 - [x] 2026-11-22 (phiên 19, SDDA): **S5 — spec rlimits cho exec'd processes (issue #121,
   D54, GĐ2 mục 1)**: `minict-exec.c` parse `MINICT_RLIMIT_<NAME>=soft[:hard]` từ env-file
   vào mảng riêng (KHÔNG setenv — R2 parity, rlimit config không leak vào cmd env),
@@ -371,11 +381,12 @@
      MD33, rootfs cache khi images churn. (**unpack boundary hardening xong
      2026-11-21 (#104, D50)**: `tar -x` host tar trong `oci:`/`tar:` thay bằng Go
      stdlib `secureUnpack` openat O_NOFOLLOW fail-closed — MD26/MD27 + unit matrix).
-   - **S6** còn mở (S1 FIXED #41; **S3 FIXED #113 2026-11-22**; **S4 FIXED #116
+   - **S1–S6 đều FIXED** (S1 FIXED #41; **S3 FIXED #113 2026-11-22**; **S4 FIXED #116
      2026-11-22 — `--unix-socket` fail-closed, token giữ nguyên trên mọi transport;
      residual TLS cross-host**; **S5 FIXED #121 2026-11-22 — exec'd processes nhận
      spec rlimits (nofile/nproc) qua `MINICT_RLIMIT_*` directive trong env-file,
-     apply BEFORE capdrop (D54)**; A3 reconcile proactive đã có — heartbeat P4 mở).
+     apply BEFORE capdrop (D54)**; **S6 FIXED #124 2026-11-23 — webport collision
+     detection up front (`ErrPortInUse` → 409, D55)**; A3 reconcile proactive đã có — heartbeat P4 mở).
 2. Template: instance từ template; lưu instance thành template.
 3. Storage: overlayfs rootless + idmapped mounts (thay private copy 2 MB/instance);
    snapshot/backup/restore (overlay layer + tar.zst).

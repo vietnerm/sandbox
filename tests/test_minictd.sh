@@ -70,6 +70,9 @@
 #   MD37  S5 spec rlimits for exec (issue #121): exec'd process gets the
 #         instance's nofile rlimit — `ulimit -n` inside exec == spec value
 #         (minict-exec applies MINICT_RLIMIT_* BEFORE capdrop, D23 parity)
+#   MD38  S6 webport collision (issue #124): two instances same `minict.webport`
+#         -> second Run 409 (ErrPortInUse, detect up front); stop first ->
+#         port released -> second Run succeeds (daemon port allocation)
 #
 # Exit code: 0 if all expected results hold, 1 otherwise.
 set -u
@@ -91,6 +94,7 @@ STATE="$WORK/state"
 TOKEN="tok-$$-$RANDOM"
 API_PORT=$(( 17600 + RANDOM % 300 ))
 WEB_PORT=$(( 19000 + RANDOM % 900 ))
+WP_S6=$(( WEB_PORT + 50 ))
 API="http://127.0.0.1:$API_PORT"
 TRAEFIK_DIR="$WORK/traefik"
 WEB_PORT_T=$(( WEB_PORT + 7 ))
@@ -141,7 +145,7 @@ cleanup() {
     # repo-scoped argv pattern instead (measured leak: 1 ocireg per suite
     # run without this, Phiên 16).
     pkill -TERM -f -- "tools/bin/ocireg $REG_PORT" 2>/dev/null || true
-    for n in md-a md-b md-c md-auto md-t md-f md-oci md-oci-bad md-oci-h md-oci-r md-oci-a md-rl; do
+    for n in md-a md-b md-c md-auto md-t md-f md-oci md-oci-bad md-oci-h md-oci-r md-oci-a md-rl md-s6a md-s6b; do
         curl -s -m 5 -X POST -H "Authorization: Bearer $TOKEN" \
             "$API/v1/sandboxes/$n/remove" >/dev/null 2>&1 || true
     done
@@ -808,6 +812,35 @@ EOF
     [[ "$(jget 'd["stdout"].strip()')" == 64 ]] || { echo "ulimit -n: $(jget 'd["stdout"].strip()')"; return 1; }
 }
 run_case MD37 "S5: exec gets spec rlimits (nofile=64 -> ulimit -n 64)" pass md37
+
+# ---------- S6 webport collision detection (issue #124, GAPS S6) ----------
+md38() {
+    # Run A with webport WP_S6 -> running. Run B with SAME webport -> must
+    # fail 409 (ErrPortInUse, S6 detect up front) — NOT silently run with a
+    # broken preview. Stop A -> port released -> B reuses port.
+    api POST /v1/run "$(cat <<EOF
+{"name":"md-s6a","image":"base",
+ "labels":["minict.webport=$WP_S6"],
+ "cmd":["/bin/sh","-c","sleep 600"]}
+EOF
+)" >/dev/null || return 1
+    sleep 0.4
+    api GET /v1/sandboxes/md-s6a >/dev/null && [[ "$(jget 'd["State"]["Status"]')" == running ]] || return 1
+    # B with same port -> 409 Conflict (ErrPortInUse)
+    local code_b
+    code_b=$(curl -s -m 10 -o "$WORK/resp" -w '%{http_code}' -X POST \
+        -H "Authorization: Bearer $TOKEN" \
+        -d "{\"name\":\"md-s6b\",\"image\":\"base\",\"labels\":[\"minict.webport=$WP_S6\"],\"cmd\":[\"/bin/sh\",\"-c\",\"sleep 600\"]}" \
+        "$API/v1/run")
+    [[ "$code_b" == 409 ]] || { echo "expected 409 got $code_b: $(head -c 120 \"$WORK/resp\")"; return 1; }
+    # Stop A -> port released -> B reuses port
+    api POST /v1/sandboxes/md-s6a/stop >/dev/null || return 1
+    sleep 0.5
+    api POST /v1/run "{\"name\":\"md-s6b\",\"image\":\"base\",\"labels\":[\"minict.webport=$WP_S6\"],\"cmd\":[\"/bin/sh\",\"-c\",\"sleep 600\"]}" >/dev/null || return 1
+    sleep 0.4
+    api GET /v1/sandboxes/md-s6b >/dev/null && [[ "$(jget 'd["State"]["Status"]')" == running ]]
+}
+run_case MD38 "S6: webport collision -> 409; stop A -> B reuses port" pass md38
 
 echo "=== summary: PASS=$PASS SKIP=$SKIPPED FAIL=$FAIL ==="
 if [[ $FAIL -ne 0 ]]; then
