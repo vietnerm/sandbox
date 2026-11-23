@@ -423,6 +423,17 @@
    image form; tar.gz trusted (gzip stdlib, zstd deferred); MD40 e2e. Residual: overlayfs
    rootless + idmapped mounts (env-gated kernel 5.10 dev, cần ≥5.11; CI ubuntu-24.04 OK);
    zstd compression (gzip tạm); overlay layer (hiện full tar.gz, không thin-provision).
+3a. **Seccomp allowlist theo template (#29, hiện thực: #139) — ƯU TIÊN BẢO MẬT, làm trước mục 4–8**
+   (owner chốt 2026-11-23; manifest §3 "bảo mật ưu tiên số 1"):
+   - `seccomp/profiles/<template>.json`, một allowlist cho mỗi template (busybox,
+     alpine-nginx, debian trước); blocklist D11 giữ làm mặc định khi template chưa
+     có profile; `minict-exec` (setns) phải nạp cùng profile (parity MD0).
+   - Profile sinh từ đo thật (strace/`SCMP_ACT_LOG` trên workload của template),
+     không chép từ Docker default; mỗi profile có test "workload chạy được" +
+     test "syscall ngoài danh sách bị chặn" + control không filter.
+   - Chỉ áp cho workload tin cậy (manifest §3): allowlist thu hẹp bề mặt kernel,
+     không biến minict thành ranh giới cho code lạ.
+   - Ngay sau 3a: mục 6 (Landlock) cũng là việc bảo mật, làm trước mục 4, 5, 7, 8.
 4. Port-forward theo instance qua pasta, khai báo trong config instance.
 5. Quota CPU/RAM/pid qua cgroups v2 delegation; disk quota dạng cảnh báo.
    → **Xong phần core 2026-11-20 phiên 13 (#4, D48)**: cgroups v2 islands
@@ -518,8 +529,7 @@
   khi tắt). Log JSON của mục 7a đi theo cùng đường.
 
 ## Parked thật (lý do thiết kế, KHÔNG phải môi trường)
-- seccomp **allowlist mode** — chỉ làm khi có matrix workload httpd được audit đầy
-  đủ; blocklist + capdrop + NNP đủ cho DoD hiện tại (D11).
+- ~~seccomp allowlist mode~~ — **bỏ khỏi parked 2026-11-23**: chuyển thành GĐ2 mục 3a (#29).
 - gVisor runsc — overhead cao cho use-case dev/CI; model isolation của nó trùng
   nhu cầu với microVM GĐ4.
 
