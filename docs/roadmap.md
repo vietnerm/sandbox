@@ -18,6 +18,8 @@
 1. A — Research kỹ thuật sandbox (Landlock+seccomp / bwrap / gVisor / Firecracker / Wasm)
 2. B — Develop prototype (web service trong sandbox, đo startup/RAM)
 3. C — CVE check: `python3 tools/cve-check.py --json journal/$(date +%F)/cve/<slug>.json`
+   + kernel: `python3 tools/cve-kernel.py --kernels "$(uname -r),6.1,6.6,6.12" --watchlist docs/cve-watchlist.md --discover-days 2`
+   (dải NVD cho kernel thật + dòng LTS đích; CVE kernel mới — owner 2026-11-23)
    + cập nhật `docs/cve-watchlist.md`
 4. D — No-Compromise Validation: `make test` (isolation 31 + seccomp 21 + netns 7 +
    alpine 9 + debian 9 + escape-alpine 31 + cve-check tool 4 + pasta 11 + cg 6 = 129, pipefail thật —
