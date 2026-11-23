@@ -293,6 +293,54 @@ func (s *Store) SaveTemplate(ctx context.Context, name, templateName string) err
 	return nil
 }
 
+// Snapshot creates a gzip-compressed tar backup of a STOPPED instance's rootfs
+// into <Root>/_backups/<backupName>.tar.gz (GĐ2 mục 3, issue #130, D57). The
+// instance MUST be stopped (fail-closed ErrInstanceRunning -> 409 — a running
+// rootfs races payload writes). A subsequent Run with image "backup:<backupName>"
+// restores from it (extractGzTar, trusted path). backupName passes validName.
+func (s *Store) Snapshot(ctx context.Context, name, backupName string) error {
+	if err := validName(name); err != nil {
+		return err
+	}
+	if err := validName(backupName); err != nil {
+		return fmt.Errorf("backup name: %w", err)
+	}
+	st, err := s.loadState(name)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return contract.ErrNotFound
+		}
+		return err
+	}
+	st = s.alive(st)
+	if st.State != StateStopped {
+		return fmt.Errorf("%w: snapshot requires instance %s stopped (state %s)", ErrInstanceRunning, name, st.State)
+	}
+	srcRootfs := filepath.Join(s.dir(name), "rootfs")
+	if _, err := os.Stat(srcRootfs); err != nil {
+		return fmt.Errorf("snapshot %s: rootfs missing: %w", name, err)
+	}
+	bdir := s.backupsDir()
+	if err := os.MkdirAll(bdir, 0755); err != nil {
+		return err
+	}
+	archive := filepath.Join(bdir, backupName+".tar.gz")
+	f, err := os.Create(archive)
+	if err != nil {
+		return err
+	}
+	if err := tarGzTree(srcRootfs, f); err != nil {
+		f.Close()
+		_ = os.Remove(archive)
+		return fmt.Errorf("snapshot %s: tar.gz: %w", name, err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("snapshot %s: close: %w", name, err)
+	}
+	s.Log.Info("minictd snapshot", "name", name, "backup", backupName)
+	return nil
+}
+
 // Start boots a stopped instance from its saved spec on the SAME rootfs
 // (filesystem changes persist across stop/start — docker parity). A no-op
 // when already running (docker.Client.Start contract).

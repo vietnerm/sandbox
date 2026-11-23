@@ -48,6 +48,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/sandboxes/{name}/logs", s.handleLogs)
 	mux.HandleFunc("GET /v1/sandboxes/{name}/stats", s.handleStats)
 	mux.HandleFunc("POST /v1/sandboxes/{name}/save-template", s.handleSaveTemplate)
+	mux.HandleFunc("POST /v1/sandboxes/{name}/snapshot", s.handleSnapshot)
 	mux.HandleFunc("POST /v1/sandboxes/{name}/remove", s.handleRemove)
 	mux.HandleFunc("POST /v1/sandboxes/{name}/start", s.handleStart)
 	mux.HandleFunc("POST /v1/sandboxes/{name}/stop", s.handleStop)
@@ -182,6 +183,20 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, st)
+}
+
+func (s *Server) handleSnapshot(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Backup string `json:"backup"`
+	}
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	if err := s.store.Snapshot(r.Context(), nameOf(r), req.Backup); err != nil {
+		mapErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"backup": req.Backup})
 }
 
 func (s *Server) handleSaveTemplate(w http.ResponseWriter, r *http.Request) {

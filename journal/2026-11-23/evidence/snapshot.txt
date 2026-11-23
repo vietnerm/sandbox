@@ -1,0 +1,197 @@
+make -C sandbox
+make[1]: Entering directory '/home/z/sandbox/sandbox'
+make[1]: Nothing to be done for 'all'.
+make[1]: Leaving directory '/home/z/sandbox/sandbox'
+bash sandbox/mkrootfs.sh rootfs
+rootfs 'rootfs' already exists, skipping (rm -rf it to rebuild)
+bash tests/run-suites.sh
+### suite: test_isolation.sh
+=== minict isolation tests (2026-11-23 04:00:08) ===
+FS1   sandbox sees OUR /etc/passwd (marker)                    PASS
+FS2   host home dir /home/z unreachable                        PASS
+FS3   no /old-* escape path after pivot_root+umount            PASS
+FS4   mount --bind host / fails (no caps post-drop)            PASS
+FS5   post-capdrop tmpfs mount also fails                      PASS
+FS6   write to /home lands on-disk in rootfs (host view)       PASS
+NOTE: host refuses procfs in an unprivileged userns — /proc cases run in 'absent' mode (D39)
+PID1  payload is PID 2 behind pidns-1 signal shim              PASS
+PID2  no host processes visible (ps lists none)                PASS
+PID3  pidns live: shim is pidns-1, payload pidns-2 (host NSpid) PASS
+UID1  uid=0 inside, no foreign gid visible (0/overflow only)   PASS
+UID2  files created inside owned by real host uid              PASS
+BIND1 bind :ro plain tree: visible, top mount read-only        PASS
+BIND2 bind :ro tree WITH submount: submount ro too (mountinfo-fallback) PASS
+BIND3 control: same tree WITHOUT :ro — top+submount writable PASS
+NNP1  PR_SET_NO_NEW_PRIVS=1 verified via host /proc            PASS
+CAPD1 capdrop real: shim+payload CapEff=0 (host /proc)         PASS
+HOST1 hostname isolated ('minict')                             PASS
+FD1   fd-based escape closed: inherited host fd EBADF in payload PASS
+CHROOT1 chroot(2) EPERM post-capdrop (jail-escape primitive)     PASS
+SETUID2 suid exec: NNP=1 + CapEff=0 survive (host /proc)         PASS
+CORE1 core dump disabled: RLIMIT_CORE=0 forced in payload      PASS
+CORE2 SIGSEGV leaves no core file in rootfs/repo cwd           PASS
+SIG1  SIGKILL wrapper: PDEATHSIG+pidns teardown, no orphan     PASS
+SIG2  SIGTERM wrapper: tree exits 143 (128+15), no orphan      PASS
+SIG3  SIGINT wrapper: tree exits 130 (128+2)                   PASS
+SIG4  control: TERM to payload (non-init) delivered (143)      PASS
+SIG5  orphan grandchildren reaped by shim, no zombies          PASS
+NET1  netns isolated: only lo inside, no host iface            PASS
+NET2  loopback is UP inside sandbox netns                      PASS
+PROC1 /proc absent (host refuses procfs in userns)             PASS(expected-fail)
+PROC2 /proc/self/root unreachable (no procfs mounted)          PASS
+PROC3 (absent mode) no procfs in /proc/mounts either           PASS
+PROC4 payload cannot mount a second procfs                     PASS
+CG1   no cgroup limits (cgroups v1 only — known gap)         PASS(expected-fail)
+=== summary: PASS=34 FAIL=0 ===
+### suite: test_isolation.sh — OK
+### suite: test_seccomp.sh
+=== minict seccomp tests (2026-11-23 04:00:15) ===
+SC0   shell workload works under filter                        PASS
+SC1   keyctl blocked (EPERM)                                   PASS
+SC2   open_by_handle_at blocked (EPERM)                        PASS
+SC3   bpf blocked (EPERM)                                      PASS
+SC4   setns blocked (EPERM)                                    PASS
+SC5   unshare blocked (EPERM)                                  PASS
+SC6   io_uring_setup blocked (EPERM)                           PASS
+SC7   clone(CLONE_NEWUSER) blocked (EPERM)                     PASS
+SC8   ptrace blocked (EPERM)                                   PASS
+SC9   socket(AF_ALG) blocked (EPERM)                           PASS
+SC10  clone3 returns ENOSYS (fallback-friendly)                PASS
+SC11  control: setns NOT EPERM without filter                  PASS
+SC12  control: io_uring NOT EPERM without filter               PASS
+SC13  process_vm_readv blocked (EPERM)                         PASS
+SC14  control: keyctl works without filter                     PASS
+SC15  mount inside sandbox fails under filter (EPERM)          PASS
+SC16  control: process_vm NOT EPERM without filter             PASS
+SC17  socket(AF_NETLINK) blocked (EPERM)                       PASS
+SC18  control: netlink socket works without filter             PASS
+SC19  control: socket(AF_INET) still allowed (httpd)           PASS
+SC20  blocklist hit survives: rc=1 (EPERM), no SIGSYS death    PASS
+=== summary: PASS=21 FAIL=0 ===
+### suite: test_seccomp.sh — OK
+### suite: test_netns.sh
+=== minict netns tests (2026-11-23 04:00:15) — ports 18414/18594, host srv 18660 ===
+NS1   sandbox netns CANNOT reach host loopback listener        PASS
+NS2   control: MINICT_NO_NETNS=1 reaches the same listener     PASS
+NS3   host curl -> unix bridge -> httpd in netns (200+marker)  PASS
+NS4   relay unix socket exists on instance rootfs              PASS
+NS5   host proxy binds loopback-only (no 0.0.0.0)              PASS
+NS6   two instances: each proxy serves its OWN sandbox         PASS
+NS7   down kills proxy, frees port, removes instance           PASS
+=== summary: PASS=7 FAIL=0 ===
+### suite: test_netns.sh — OK
+### suite: test_alpine.sh
+=== minict alpine-rootfs tests (2026-11-23 04:00:17) — alpine 3.22.8, pkg acpid-openrc=2.0.34-r6 ===
+AL1   alpine rootfs boots (busybox alpine build)               PASS
+AL2   sandbox sees OUR passwd marker (not host)                PASS
+AL3   apk-tools present and runnable in sandbox                PASS
+AL4   /proc absent: host refuses procfs (env, D39)             PASS(expected-fail)
+AL5   offline apk add works, signature-verified (copy, 2-step #80) PASS
+AL6   single-uid ownership: 0:0 in ns = real uid on host       PASS
+AL7   chown foreign uid: EINVAL (unmapped), sandbox alive      PASS
+AL8   hostname isolated ('minict') on alpine rootfs            PASS
+AL9   shared rootfs pristine + no churn in suite — #80       PASS
+=== summary: PASS=9 FAIL=0 ===
+### suite: test_alpine.sh — OK
+### suite: test_debian.sh
+=== minict debian-rootfs tests (2026-11-23 04:00:26) — bookworm-slim 12.15 amd64 (epoch 1794787200), sha256 2a7a09296874…, 83308 KB ===
+DB1   debian rootfs boots (dash, NO busybox) — #88           PASS
+DB2   dpkg --version works (glibc dynamic) — #88             PASS
+DB3   /proc absent: host refuses procfs (env, D39)             PASS(expected-fail)
+DB4   single-uid ownership: ns 0:0 = real uid on host          PASS
+DB5   chown foreign uid: EINVAL (unmapped), alive              PASS
+DB6   control: WITHOUT pasta, apt cannot fetch/install         PASS
+DB7   with pasta: apt update+install tree ONLINE — #88       SKIP
+        (env-blocked: see case — D34/D37)
+DB8   shared rootfs pristine (manifest+dpkg DB) — #80 class  PASS
+DB9   self-symlink /bin/sh: rc=125 fast, no hang (SIA)         PASS
+=== summary: PASS=8 SKIP=1 FAIL=0 ===
+(SKIP = env-blocked on this host: no /dev/net/tun — real run on CI runners, D34/D37)
+### suite: test_debian.sh — OK
+### suite: test_escape_alpine.sh
+=== minict isolation tests (2026-11-23 04:00:42) ===
+FS1   sandbox sees OUR /etc/passwd (marker)                    PASS
+FS2   host home dir /home/z unreachable                        PASS
+FS3   no /old-* escape path after pivot_root+umount            PASS
+FS4   mount --bind host / fails (no caps post-drop)            PASS
+FS5   post-capdrop tmpfs mount also fails                      PASS
+FS6   write to /home lands on-disk in rootfs (host view)       PASS
+NOTE: host refuses procfs in an unprivileged userns — /proc cases run in 'absent' mode (D39)
+PID1  payload is PID 2 behind pidns-1 signal shim              PASS
+PID2  no host processes visible (ps lists none)                PASS
+PID3  pidns live: shim is pidns-1, payload pidns-2 (host NSpid) PASS
+UID1  uid=0 inside, no foreign gid visible (0/overflow only)   PASS
+UID2  files created inside owned by real host uid              PASS
+BIND1 bind :ro plain tree: visible, top mount read-only        PASS
+BIND2 bind :ro tree WITH submount: submount ro too (mountinfo-fallback) PASS
+BIND3 control: same tree WITHOUT :ro — top+submount writable PASS
+NNP1  PR_SET_NO_NEW_PRIVS=1 verified via host /proc            PASS
+CAPD1 capdrop real: shim+payload CapEff=0 (host /proc)         PASS
+HOST1 hostname isolated ('minict')                             PASS
+FD1   fd-based escape closed: inherited host fd EBADF in payload PASS
+CHROOT1 chroot(2) EPERM post-capdrop (jail-escape primitive)     PASS
+SETUID2 suid exec: NNP=1 + CapEff=0 survive (host /proc)         PASS
+CORE1 core dump disabled: RLIMIT_CORE=0 forced in payload      PASS
+CORE2 SIGSEGV leaves no core file in rootfs/repo cwd           PASS
+SIG1  SIGKILL wrapper: PDEATHSIG+pidns teardown, no orphan     PASS
+SIG2  SIGTERM wrapper: tree exits 143 (128+15), no orphan      PASS
+SIG3  SIGINT wrapper: tree exits 130 (128+2)                   PASS
+SIG4  control: TERM to payload (non-init) delivered (143)      PASS
+SIG5  orphan grandchildren reaped by shim, no zombies          PASS
+NET1  netns isolated: only lo inside, no host iface            PASS
+NET2  loopback is UP inside sandbox netns                      PASS
+PROC1 /proc absent (host refuses procfs in userns)             PASS(expected-fail)
+PROC2 /proc/self/root unreachable (no procfs mounted)          PASS
+PROC3 (absent mode) no procfs in /proc/mounts either           PASS
+PROC4 payload cannot mount a second procfs                     PASS
+CG1   no cgroup limits (cgroups v1 only — known gap)         PASS(expected-fail)
+=== summary: PASS=34 FAIL=0 ===
+### suite: test_escape_alpine.sh — OK
+### suite: test_cve_check.sh
+=== cve-check tool tests (2026-11-23 04:00:49) ===
+CV1   error row renders ERR, no KeyError (#44 repro)           PASS
+CV2   parse_nvd defensive: malformed/empty NVD dicts           PASS
+CV3   normal row + cvssMetricV30 fallback                      PASS
+CV4   control: OLD renderer KeyErrors on error row             PASS
+=== summary: PASS=4 FAIL=0 ===
+### suite: test_cve_check.sh — OK
+### suite: test_pasta.sh
+=== minict pasta tests (2026-11-23 04:00:49) — host listener 19550, fwd 19780, gw 21.0.0.1 ===
+PT1     pasta binary pinned+verified+static built                PASS
+PT2     pasta --version == pin exactly (2026_10_02.cba3570)      PASS
+NET11C  control: WITHOUT pasta, gateway unreachable              PASS
+PT3C    control: WITHOUT pasta, resolver unavailable             PASS
+PT4C    control: WITHOUT pasta, apk update unreachable           PASS
+NET10   with pasta: tap iface + default route inside             SKIP
+        (env-blocked: no /dev/net/tun on this host — D34/D37)
+NET11   with pasta: egress wget sandbox→host via gateway       SKIP
+        (env-blocked: no /dev/net/tun on this host — D34/D37)
+NET12   with pasta: host→instance port-forward (-t FPORT:8080) SKIP
+        (env-blocked: no /dev/net/tun on this host — D34/D37)
+PT3     with pasta: resolver injected + nslookup resolves        SKIP
+        (env-blocked: no /dev/net/tun on this host — D34/D37)
+PT4     with pasta: apk add ONLINE (HTTPS+signature) in alpine   SKIP
+        (env-blocked: no /dev/net/tun on this host — D34/D37)
+AB1     with pasta: attach latency measured (host-side)          SKIP
+        (env-blocked: no /dev/net/tun on this host — D34/D37)
+=== summary: PASS=5 SKIP=6 FAIL=0 ===
+(SKIP = pasta env-blocked on this host: no /dev/net/tun — real run happens on CI runners, D34/D37)
+### suite: test_pasta.sh — OK
+### suite: test_stack.sh
+=== minict web-stack tests (2026-11-23 04:00:52) — port free-check active (issue #75 class) ===
+ST1   stack binaries present in rootfs-alpine                  PASS
+ST2   stack up -> index 200 via host bridge                    PASS
+ST3   GET /api/health -> status ok                             PASS
+ST4   POST->GET persistence: real SQLite row                   PASS
+ST5   SQL metachars sanitized (D45 allowlist)                  PASS
+ST6   down -> port closed, zero leaks, fs gone                 PASS
+ST7   stack cold start median < 5000 ms                        PASS
+ST8   name guard rejects traversal (SIA #86)                   PASS
+=== summary: PASS=8 FAIL=0 SKIP=0 ===
+### suite: test_stack.sh — OK
+### suite: test_cg.sh
+building minictd binaries for test_cg.sh (make minictd)
+make minictd failed (Go missing?)
+### suite: test_cg.sh — FAIL (rc=1)
+=== run-suites summary: 10 suites, failed: test_cg.sh ===
+make: *** [Makefile:32: test] Error 1

@@ -75,3 +75,40 @@ list filter conventions.
 **Áp dụng cho minict:** `template:<name>` image form + `SaveTemplate` (stopped only, fail-closed
 409) + `_templates` dir (nameRe-filtered) + `POST /save-template` API. Test MD39: marker ở /
 (persistent), không /tmp (tmpfs).
+
+---
+
+# Research — 2026-11-23 (SDDA Phiên 22, issue #130 / GĐ2 mục 3 snapshot)
+
+Chủ đề: rootfs backup/restore — tar.gz trusted vs secureUnpack untrusted; gzip vs zstd;
+overlayfs rootless kernel support.
+
+## Nguồn 1 — archive/tar (Go stdlib)
+- Link: https://pkg.go.dev/archive/tar
+- Go archive/tar: `tar.FileInfoHeader` + TypeSymlink + Linkname (Readlink). Symlink-aware
+  round-trip. `filepath.Walk` uses Lstat (không follow symlinks) → preserve TypeSymlink.
+
+## Nguồn 2 — secureUnpack vs trusted extract (repo D50/#109)
+- Link: `minictd/internal/minict/unpack.go` secureUnpack; issue #109 (absolute-symlink refusal).
+- secureUnpack (D50): untrusted OCI/operator tar, refuse abs symlinks (#109, posture refuse-
+  never-sanitize). Snapshot là daemon-created (trusted) — khác trust boundary. `extractGzTar`
+  (D57): refuse `..`/abs member PATHS, ALLOW abs symlink TARGETS (busybox applet pattern,
+  271 abs symlinks in alpine rootfs).
+
+## Nguồn 3 — gzip vs zstd (Go stdlib)
+- Link: https://pkg.go.dev/compress/gzip (stdlib) vs github.com/klauspost/compress/zstd (external).
+- Repo stdlib-only (go.mod no deps, D20 no-vendor). gzip stdlib available; zstd needs dep.
+  gzip ratio ~2x worse than zstd, nhưng đủ cho backup. zstd deferred (dep decision).
+
+## Nguồn 4 — overlayfs rootless kernel support (man7)
+- Link: https://man7.org/linux/man-pages/man2/mount_setattr.2.html + overlayfs userns (kernel 5.11).
+- Rootless overlayfs (mount overlayfs trong userns) cần kernel ≥ 5.11 (commit "overlay: allow
+  mounting in user namespace"). Dev kernel 5.10 → NOT supported (env-gated). CI ubuntu-24.04
+  kernel 6.x → OK. Phần (a) mục 3 (overlayfs) deferred to CI-only phiên.
+
+**Trade-off:** snapshot = full tar.gz (trusted, gzip stdlib) thay overlay layer (thin-provision)
+— đơn giản, no kernel feature dep, testable dev. Trade-off: archive full (~2 MB), không thin.
+overlayfs thin-provision là phần (a) mục 3 (env-gated).
+
+**Áp dụng cho minict:** `snapshot.go` (tarGzTree + extractGzTar trusted) + `Snapshot` API +
+`backup:<name>` image form. Test MD40: marker ở / (persistent), snapshot stopped only.
