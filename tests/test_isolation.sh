@@ -646,15 +646,6 @@ e = ctypes.get_errno()
 os._exit(0 if (r >= 0 or e != 38) else 1)
 " 2>/dev/null; then LL_PROBE=1; fi
 
-# LL3 (always): default instance (no readonly) -> boots + /tmp write OK
-ll3_test() {
-    local out spec; spec="$(mktemp /tmp/minict-ll3.XXXXXX)"; : > "$spec"
-    out=$(MINICT_SPEC="$spec" "$MINICT" "$ROOTFS" /bin/sh -c 'echo x > /tmp/ll3-ok 2>/dev/null; test -f /tmp/ll3-ok && echo OK' 2>/dev/null) || return 1
-    rm -f "$spec"
-    grep -q OK <<<"$out"
-}
-run_case LL3 "Landlock default: instance boots + /tmp write OK (no false deny)" pass ll3_test
-
 LL_SPEC="$(mktemp /tmp/minict-ll-spec.XXXXXX)"; printf 'readonly\n' > "$LL_SPEC"
 if [[ $LL_PROBE -eq 1 ]]; then
     # LL1 (CI >=5.13): spec.ReadOnly -> ro-root

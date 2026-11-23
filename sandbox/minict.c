@@ -1374,8 +1374,13 @@ static void landlock_enforce(void)
         int rfd, rootfd;
         unsigned long long root_access;
 
-        /* #154/D63: Landlock now runs for EVERY instance (default defense-in-
-         * depth restrict-to-rootfs + spec.ReadOnly ro-root), not just spec.ReadOnly. */
+        /* #154/D63: Landlock runs for spec.ReadOnly (fail-closed ro-root). The
+         * always-on default policy was REVERTED: it broke /proc/<pid>/root
+         * magic-link following (PROC2) even with LL_FS_REFER granted — Landlock
+         * restricts magic links in a way REFER alone doesn't unlock. Default
+         * policy deferred (residual D63: needs magic-link handling). */
+        if (!g_spec_readonly)
+                return;
         rsa.handled_access_fs = LL_HANDLED;
         rfd = syscall(__NR_landlock_create_ruleset, &rsa, sizeof(rsa), 0);
         if (rfd < 0) {
