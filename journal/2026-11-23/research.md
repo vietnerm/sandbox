@@ -208,3 +208,43 @@ research ≥2 nguồn; research nằm rải trong PR body). PR #142 thêm `tools
 **B3 note** (#144): nhánh `sec/cve-kernel-ranges` thiếu `<N>-<slug>` (PROMPT §1 B5). Không rename
 (nhánh owner). Các nhánh sec/ sau dùng đúng `sec/<N>-<slug>` (precedent Phiên 17-23:
 sec/113-..., sec/121-..., sec/124-..., fix/117-...).
+
+---
+
+# Research — 2026-11-23 (SDDA Phiên 26, issue #149 / GĐ2 mục 6 Landlock)
+
+Chủ đề: Landlock LSM — ro-root enforcement rootless; dir rule subtree semantics;
+Docker --read-only parity; kernel ≥5.13 gate.
+
+## Nguồn 1 — Landlock(7) + landlock_create_ruleset(2) (man7)
+- Link: https://man7.org/linux/man-pages/man7/landlock.7.html + https://man7.org/linux/man-pages/man2/landlock_create_ruleset.2.html
+- Landlock (kernel 5.13+) — unprivileged fs access control. `landlock_create_ruleset(attr, size, 0)`
+  → fd; `landlock_add_rule(fd, LANDLOCK_RULE_PATH_BENEATH, &path_beneath, 0)`; `landlock_restrict_self(fd, 0)`.
+- Rule type PATH_BENEATH: a dir rule grants accesses to the dir's SUBTREE (union of ancestor
+  rules). Accesses NOT in handled_access_fs are unrestricted.
+
+## Nguồn 2 — LANDLOCK_ACCESS_FS_* flags (linux/landlock.h)
+- Link: https://elixir.bootlin.com/linux/latest/source/include/uapi/linux/landlock.h
+- Flags (u64): EXECUTE(0), WRITE_FILE(1), READ_FILE(2), READ_DIR(3), REMOVE_DIR(4),
+  REMOVE_FILE(5), MAKE_CHAR(6), MAKE_DIR(7), MAKE_REG(8), MAKE_SOCK(9), MAKE_FIFO(10),
+  MAKE_BLOCK(11), MAKE_SYM(12). 5.19+: REFER, TRUNCATE, IOCTL_DEV.
+- Áp dụng: "/" rule READ_FILE|READ_DIR|EXECUTE (ro); "/tmp"+"/dev/shm" +WRITE|REMOVE|MAKE.
+
+## Nguồn 3 — Docker --read-only + tmpfs parity (docs.docker.com)
+- Link: https://docs.docker.com/reference/cli/docker/container/run/#read-only
+- `docker run --read-only` + `--tmpfs /tmp` — rootfs ro, tmpfs writable. minict spec.ReadOnly
+  via Landlock = same semantics rootless (no overlayfs ro-root, D2 → Landlock instead).
+
+## Nguồn 4 — Landlock rootless + kernel gate (kernel.org)
+- Link: https://www.kernel.org/doc/html/latest/userspace-api/landlock.html
+- Landlock is unprivileged (no CAP needed), designed for sandboxing. `landlock_restrict_self`
+  applies to current thread. Kernel <5.13 → ENOSYS (syscalls 444/445/446 absent). Dev 5.10
+  ENOSYS → warn fail-soft; CI ubuntu-24.04 (6.x) → enforce.
+
+**Trade-off:** Landlock ro-root (CI-only) thay overlayfs ro-root (D2, env-gated kernel 5.10
+no overlayfs userns). Landlock works rootless on ≥5.13. spec.ReadOnly opt-in (ro-root breaks
+write-to-/ workloads — Docker parity).
+
+**Áp dụng:** `landlock_enforce()` in payload child (after seccomp, before exec) — "/" ro +
+"/tmp"/"/dev/shm" rw, restrict_self. `readonly` directive. LL1 test CI-gated (probe
+create_ruleset).

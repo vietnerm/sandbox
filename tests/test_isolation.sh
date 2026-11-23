@@ -608,5 +608,34 @@ run_case PROC4 "payload cannot mount a second procfs" fail \
 run_case CG1 "no cgroup limits (cgroups v1 only — known gap)" xfail \
     ic '[ -f /sys/fs/cgroup/cgroup.controllers ]'
 
+# ---------- Landlock ro-root (GĐ2 mục 6, issue #149, D61) ----------
+# CI-only: kernel >=5.13. spec.ReadOnly -> Landlock denies write to rootfs
+# (/etc), allows write to /tmp (tmpfs). Dev <5.13 -> SKIP (ENOSYS, warn).
+if python3 -c "
+import ctypes, os
+libc = ctypes.CDLL(None, use_errno=True)
+attr = ctypes.create_string_buffer(8)
+r = libc.syscall(444, attr, 8, 0)
+e = ctypes.get_errno()
+os._exit(0 if (r >= 0 or e != 38) else 1)
+" 2>/dev/null; then
+    LL_SPEC="$(mktemp /tmp/minict-ll-spec.XXXXXX)"
+    printf 'readonly\n' > "$LL_SPEC"
+    ll1_test() {
+        local out
+        out=$(MINICT_SPEC="$LL_SPEC" "$MINICT" "$ROOTFS" /bin/sh -c '
+            echo x > /tmp/ll-ok 2>/dev/null
+            echo y > /etc/ll-deny 2>/dev/null
+            test -f /tmp/ll-ok && echo TMP_OK
+            test ! -f /etc/ll-deny && echo ETC_DENIED
+        ' 2>/dev/null) || return 1
+        grep -q TMP_OK <<<"$out" && grep -q ETC_DENIED <<<"$out"
+    }
+    run_case LL1 "Landlock ro-root: write /etc denied, /tmp allowed (>=5.13)" pass ll1_test
+    rm -f "$LL_SPEC"
+else
+    echo "SKIP LL1: Landlock unavailable (kernel <5.13 — CI-only feature, #149)"
+fi
+
 echo "=== summary: PASS=$PASS FAIL=$FAIL ==="
 [[ $FAIL -eq 0 ]]

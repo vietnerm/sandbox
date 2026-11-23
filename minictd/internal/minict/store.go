@@ -578,7 +578,8 @@ func renderSpec(spec *contract.RunSpec, ports []int, cgAvail bool) (lines, notes
 		addNote("Runtime=%q ignored: minict is its own runtime (gVisor/runc not applicable)", spec.Runtime)
 	}
 	if spec.ReadOnly {
-		addNote("ReadOnly=true ignored: the sandbox gets a private writable rootfs copy (no overlayfs/ro-root yet, D2)")
+		lines = append(lines, "readonly")
+		addNote("ReadOnly=true enforced via Landlock ro-root (GĐ2 mục 6, D61; kernel >=5.13 — <5.13 warn fail-soft, pivot_root remains primary)")
 	}
 	for _, c := range spec.CapDrop {
 		if c != "ALL" {
