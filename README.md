@@ -54,6 +54,19 @@ curl -s http://127.0.0.1:8080/         # HTTP 200 — host proxy → bridge → 
 ./sandbox/minict.sh bench              # benchmark
 ```
 
+## Platform Support
+
+Chỉ ghi điều đã đo được. Mức mục tiêu lấy từ `idea/manifest.md` §5 (CI so khớp bằng `tools/check-docs.sh`).
+
+| Thành phần | Yêu cầu | Ghi chú |
+|---|---|---|
+| Kernel | Linux ≥ 6.1 (mục tiêu) | đã chạy thực tế trên 5.10 (máy dev), 6.18 (container), 7.0 (runner CI) |
+| User namespace | unprivileged userns bật | Ubuntu ≥ 23.10: cần `kernel.apparmor_restrict_unprivileged_userns=0` (CI làm bước này) |
+| cgroups | v2 cho giới hạn tài nguyên (GĐ2) | minict chạy được không cần cgroups; máy dev ZAI chỉ có v1, đó là giới hạn môi trường, không phải của engine |
+| Arch | x86_64 (đã kiểm) | arm64 chưa kiểm: `mkrootfs-alpine.sh` mặc định `x86_64`, CI chỉ chạy x86_64, số syscall seccomp là của x86_64 |
+| Mạng | `pasta` (passt) | `tools/fetch-pasta.sh` tải bản pin; thiếu pasta thì chỉ còn bridge loopback (D16) |
+| Quyền | uid thường, không sudo, không setuid | |
+
 ## Cấu trúc
 
 ```
@@ -76,31 +89,27 @@ idea/manifest.md        hướng dự án (đứng trên roadmap)
 docs/skills.md          pitfalls + lệnh hữu ích (cập nhật hàng ngày)
 docs/roadmap.md         đã xong / đang làm / tiếp theo
 tools/cve-check.py      CVE check hằng ngày (NVD API, watchlist trong file)
+tools/check-docs.sh     chặn README lỗi thời trong CI (link, câu stale, Platform Support vs manifest §5)
 tools/unicode-guard.py  quét/dọn Unicode ẩn + bidi (Trojan Source); hook local: tools/hooks/pre-commit
 docs/cve-watchlist.md   bảng CVE kernel/engine + trạng thái + mitigation
 docs/perf-baseline.md   ngưỡng + lịch sử perf
 docs/branch-ledger.md   sổ gộp/xoá nhánh (append-only)
 ```
 
-## Giới hạn đã biết (ngày 1, cập nhật phiên 5)
+## Known Limitations
 
-- Web bind loopback-only trong netns riêng; host truy cập qua unix-socket bridge
-  (D16); không httpd.conf/auth/proxy/CGI (CVE-2026-124739/88829 re-check trước khi bật).
-- Sandbox không thấy iface host, không với tới host loopback (netns riêng, D17).
-  Bridge D16 chỉ serve port-known per instance — multi-service stack cần mở rộng.
-- Không /proc trong sandbox (host seccomp chặn mount proc), không cgroup limits
-  (env chỉ có cgroups v1), không overlayfs (private copy 2MB/instance thay thế,
-  25ms), `exec` tạo ns set mới trên cùng rootfs chứ không setns vào daemon
-  (rootless không đủ caps để setns) — mỗi exec còn có netns RIÊNG (không thấy
-  httpd của instance web qua loopback).
-- SIGTERM từ host vào process trong userns: ĐÃ SỬA (phiên 7, D19) — nguyên nhân
-  là semantics pidns-init của kernel (pid_namespaces(7)), không phải môi trường;
-  shim pidns-1 cài handler + forward, `minict.sh down` giờ graceful (exit 128+sig).
-  Teardown SIGKILL + PDEATHSIG + pidns teardown vẫn giữ làm fail-safe.
-  Chi tiết: journal/2026-11-17/decisions/sigterm.md.
-- Seccomp là blocklist (default ALLOW) chứ không allowlist — syscall không trong
-  blocklist vẫn chạy; allowlist mode parked (D11). Rootfs test probe phải build
-  `-static` (rootfs chỉ có busybox, không ld.so/libc).
+Mỗi dòng là một câu và một link tới bằng chứng; chi tiết nằm ở link, không chép lại
+ở đây. `tools/check-docs.sh` (CI) chặn dòng không có link và các câu đã lỗi thời.
+
+- Single-uid mapping: mọi file trong instance thuộc "root", gói cần `chown` sang uid khác phải cài lúc build hoặc bỏ script ([alpine-rootfs](journal/2026-11-17/decisions/alpine-rootfs.md), [web-stack](journal/2026-11-20/decisions/web-stack.md)).
+- Seccomp là blocklist (mặc định ALLOW), chưa có allowlist theo template ([seccomp](journal/2026-11-17/decisions/seccomp.md)).
+- `/proc` trong pidns chỉ mount được khi host không chặn mount; nếu bị chặn, sandbox chạy tiếp không có `/proc` (warn-only) ([proc-pidns](journal/2026-11-19/decisions/proc-pidns.md)).
+- Chưa có overlayfs rootless: mỗi instance là một bản sao rootfs riêng ([roadmap GĐ2 mục 3](docs/roadmap.md)).
+- `minict.sh exec` tạo bộ namespace mới trên cùng rootfs; exec vào instance đang chạy (setns) chỉ có qua `minictd` ([minictd](journal/2026-11-18/decisions/minictd.md)).
+- Quota cgroups v2 cần cgroup delegation cho user; không có thì `minictd` fail-soft về rlimit ([cgroups-v2](journal/2026-11-20/decisions/cgroups-v2.md)).
+- systemd `--user` unit mới được kiểm cú pháp, chưa chạy thật dưới user manager có lingering ([daemon-service](journal/2026-11-20/decisions/daemon-service.md)).
+- Image `oci:` có symlink tuyệt đối bị từ chối (issue #109) ([crane-e2e](journal/2026-11-21/decisions/crane-e2e.md)).
+- Chỉ kiểm trên x86_64: bảng syscall seccomp và `mkrootfs-alpine.sh` là của x86_64 ([alpine-rootfs](journal/2026-11-17/decisions/alpine-rootfs.md)).
 
 ## Quy trình hằng ngày
 A Research → B Develop → C CVE check → D No-Compromise Validation → daily-log.

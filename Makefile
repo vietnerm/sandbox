@@ -1,7 +1,7 @@
 # Root Makefile — entry points required by PROMPT.MD / CI.
 # The binary build itself lives in sandbox/Makefile.
 
-.PHONY: all build minictd rootfs rootfs-alpine rootfs-debian test test-escape test-escape-alpine test-seccomp test-netns test-alpine test-debian test-web test-stack test-minictd test-pasta unicode-check test-unicode test-cve-gate perf-check cve-check bench clean help
+.PHONY: all build minictd rootfs rootfs-alpine rootfs-debian test test-escape test-escape-alpine test-seccomp test-netns test-alpine test-debian test-web test-stack test-minictd test-pasta unicode-check test-unicode test-cve-gate check-docs test-check-docs perf-check cve-check bench clean help
 
 all: build
 
@@ -78,6 +78,14 @@ perf-check: build rootfs
 cve-check:
 	python3 tools/cve-check.py
 
+# README drift gate (issues #26, #27): Known Limitations links, relative
+# links, stale phrases, Platform Support vs manifest §5
+check-docs:
+	bash tools/check-docs.sh
+
+test-check-docs:
+	bash tests/test_check_docs.sh
+
 # hidden / bidi Unicode (Trojan Source) scan of every tracked file; --fix strips
 unicode-check:
 	python3 tools/unicode-guard.py
@@ -113,6 +121,8 @@ help:
 	@echo "make test-alpine  - alpine rootfs suite (8 cases)"
 	@echo "make perf-check   - cold start / RSS / disk vs thresholds"
 	@echo "make cve-check    - NVD check of the CVE watchlist"
+	@echo "make check-docs   - README drift gate (links, stale phrases, Platform Support vs manifest)"
+	@echo "make test-check-docs - check-docs self-test (6 cases, negative controls)"
 	@echo "make unicode-check - scan for hidden/bidi Unicode (Trojan Source)"
 	@echo "make test-unicode  - unicode-guard self-test (13 cases)"
 	@echo "make bench        - full benchmark tables"
