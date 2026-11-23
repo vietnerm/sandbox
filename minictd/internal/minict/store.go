@@ -348,6 +348,19 @@ func (s *Store) portsHeldBy(except string) (map[int]string, error) {
 	return held, nil
 }
 
+// ErrInstanceRunning is returned when an op requires a STOPPED instance but
+// the target is running (e.g. save-template, GĐ2 mục 2 issue #127, D56). Mapped
+// to 409 Conflict — the operator must Stop first (fail-closed: a live rootfs
+// copy races payload writes).
+var ErrInstanceRunning = errors.New("instance is running, stop it first")
+
+// templatesDir returns the template store directory (<Root>/_templates/).
+// Template dirs are skipped by ListByNamePrefix (nameRe rejects the "_"
+// prefix), so they don't pollute the instance list.
+func (s *Store) templatesDir() string {
+	return filepath.Join(s.Root, "_templates")
+}
+
 func parseLabels(pairs []string) map[string]string {
 	m := make(map[string]string)
 	for _, kv := range pairs {
