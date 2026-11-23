@@ -609,15 +609,35 @@ Dừng?      : không (còn #30 Phiên 27 + overlayfs/mục 4-7; GD3 CHƯA chạ
 - Bằng chứng: `evidence/signal-race.txt`.
 - **SIG1-SIG5 PASS + SIG_STRESS PASS (20/20→143) trên dev** — fix verified locally.
 
-### Pha B — PR (fix/* theo thứ tự §11)
+### Pha B — PR #152 (fix/* theo thứ tự §11)
 - B1: nhánh con của main `9ff9539` → up-to-date.
-- B2 — SCR: ... (sau CI).
-- B3 — SIA: ... (sau CI).
-- B4 — verdict: ... (sau SIA).
+- B2 — SCR @ `c0c01e9`: **PASS** — CI build-test green ×2 (isolation 37 incl SIG_STRESS PASS + SIG1-5 + BIND4 + LL1) + test-web + test-minictd + perf. Dev local: isolation 36 (SIG_STRESS PASS 20/20→143). Mutant M-revert-parent-block defer (flaky µs). Comment SCR trên PR #152.
+- B3 — SIA @ `c0c01e9`: **PASS** — 11/11 OK; claim 0 sai; test rỗng 0 (SIG_STRESS non-vacuous); bảo mật 0 critical/high/medium; 2 low (mutant deferral flaky, CVE NVD partial). Label `audit:pass`.
+- B4 — verdict pass → gộp (Pha C).
 
 ### Kế hoạch ngày mai
 - GĐ2 còn overlayfs (env-gated), mục 4 port-forward (pasta), mục 7 RSS, systemd-real.
   from-audit còn #99/#93/#77/#72/#62/#61 (p3).
 - **GD3 (Web UI) CHƯA chạm** — per chỉ thị owner.
 
-### Pha C/E — cập nhật sau merge (SBG apply + ledger sẽ ghi ở phần cuối phiên)
+### Pha C — Gộp (SBG MODE=apply)
+- CI `c0c01e9` xanh 4/4 (build-test ×2 + perf + scan; SIG_STRESS PASS) → flip ready (GraphQL) → **squash `d057df7`** REST PUT match-head → **#30 auto-close**.
+- Remote sau Phiên 27: **chỉ `main`** @ `d057df7`. SIA verdict PASS.
+
+### Pha E — Kết ngày (SBG)
+- SBG MODE=apply: `fix/30-signal-race` DELETE_MERGED; ledger qua PR này.
+- from-audit #30 closed (signal race fork→g_child_pid closed; SIG_STRESS CI PASS).
+- Self-audit §7: CI main xanh (`d057df7`); cve-gate rc=0; host unchanged 3/3.
+
+DAY PASS — 2026-11-23 Phiên 27: issue #30 done (merge #152 `d057df7` @ `c0c01e9`;
+SCR PASS CI clean-room (SIG_STRESS PASS CI + dev); SIA PASS 11/11 + 2 low; isolation 37 CI
+(SIG_STRESS) / 36 dev; SIG1-SIG5 PASS; CI xanh `d057df7`; remote chỉ `main`; #30 closed).
+
+=== SBG REPORT — 2026-11-23 (apply, Phiên 27) ===
+Đã gộp     : 2  — #152 (fix #30, squash `d057df7`), ledger PR này
+Đã xoá     : 1  (`fix/30-signal-race`)
+Giữ lại    : 0
+Còn lại    : main
+CI main    : xanh (d057df7 — build-test ×2 + perf + scan; SIG_STRESS PASS)
+Dừng?      : không (GĐ2 còn overlayfs/mục 4-7 + from-audit p3; GD3 CHƯA chạm)
+=============================================
