@@ -679,15 +679,45 @@ Dừng?      : không (GĐ2 còn overlayfs/mục 4-7 + from-audit p3; GD3 CHƯA 
 - Bằng chứng: `evidence/landlock-default.txt`.
 - **LL2 PASS dev** (spec.ReadOnly → die 126, fail-closed verified) + **LL3 PASS** (default boots).
 
-### Pha B — PR (feat/* theo thứ tự §11)
+### Pha B — PR #155 (feat/* theo thứ tự §11)
 - B1: nhánh con của main `d81df65` → up-to-date.
-- B2 — SCR: ... (sau CI).
-- B3 — SIA: ... (sau CI).
-- B4 — verdict: ... (sau SIA).
+- B2 — SCR @ `bace24a`: **PASS** — CI build-test green ×2 sau 3 commit iterations:
+  - `9a27a84` (default policy always-on) → CI FAIL: PROC2 (/proc/<pid>/root magic-link) +
+    DB7 (apt rename EXDEV) broken by default Landlock.
+  - `21f1896` (add LL_FS_REFER to handled+RW) → DB7 fixed (rename) nhưng PROC2 vẫn FAIL
+    (magic-link không mở bằng REFER).
+  - `bace24a` (revert default policy — Landlock chỉ cho spec.ReadOnly; giữ REFER + fail-closed)
+    → CI GREEN. LL1 (CI ro-root) + LL2 (dev fail-closed die 126) PASS.
+- B3 — SIA @ `bace24a`: **PASS** — 11/11 OK; claim 0 sai; test rỗng 0 (LL2 non-vacuous);
+bảo mật 0 critical/high/medium; 3 low (mutant deferral, default policy deferred, CVE NVD).
+Label `audit:pass`.
+- B4 — verdict pass → gộp (Pha C).
 
 ### Kế hoạch ngày mai
 - Overlayfs rootless (mục 3a, CI-only) + port-forward pasta (mục 4) + observability/RSS
   (mục 7) theo chỉ thị user — Phiên 29+.
 - **GD3 (Web UI) CHƯA chạm** — per chỉ thị owner.
 
-### Pha C/E — cập nhật sau merge (SBG apply + ledger sẽ ghi ở phần cuối phiên)
+### Pha C — Gộp (SBG MODE=apply)
+- CI `bace24a` xanh 4/4 (sau 3 iterations: default→REFER→revert) → flip ready (GraphQL)
+  → **squash `c0f68e8`** REST PUT match-head → **#154 auto-close**.
+- Remote sau Phiên 28: **chỉ `main`** @ `c0f68e8`. SIA verdict PASS.
+
+### Pha E — Kết ngày (SBG)
+- SBG MODE=apply: `feat/154-landlock-default` DELETE_MERGED; ledger qua PR này.
+- **Landlock fail-closed XONG** (spec.ReadOnly + ENOSYS → die 126). LL_FS_REFER added (fix
+  rename). Default policy **REVERTED** (broke PROC2 magic-link — residual D63, deferred).
+- Self-audit §7: CI main xanh (`c0f68e8`); cve-gate rc=0; host unchanged 3/3.
+
+DAY PASS — 2026-11-23 Phiên 28: issue #154 done (merge #155 `c0f68e8` @ `bace24a`;
+SCR PASS CI clean-room (3 iterations: default→REFER→revert); SIA PASS 11/11 + 3 low;
+LL2 fail-closed PASS dev; LL1 ro-root PASS CI; CI xanh `c0f68e8`; remote chỉ `main`).
+
+=== SBG REPORT — 2026-11-23 (apply, Phiên 28) ===
+Đã gộp     : 2  — #155 (feat #154, squash `c0f68e8`), ledger PR này
+Đã xoá     : 1  (`feat/154-landlock-default`)
+Giữ lại    : 0
+Còn lại    : main
+CI main    : xanh (c0f68e8 — build-test ×2 + perf + scan; LL1 CI + LL2 dev)
+Dừng?      : không (còn overlayfs/mục 4-7 + default Landlock residual; GD3 CHƯA chạm)
+=============================================
