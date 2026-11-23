@@ -35,8 +35,33 @@ command -v ss >/dev/null 2>&1 || {
     exit 1
 }
 
+# port_listening <port>: any host listener (any address) on that TCP port.
+# Matches the whole port field, so 1900 does not match 19006 (issue #75).
+port_listening() {
+    ss -Htln 2>/dev/null | awk '{print $4}' | grep -Eq ":$1\$"
+}
+# free_port <base> <span>: sets FREE_PORT to a random port in [base, base+span) that no host
+# listener holds. Before #75 the suite picked blindly and could land on an
+# infra port of the dev host (19006 measured) -> curl hit that service and
+# WEB1/2/4/5 went red for the wrong reason. Ports in USED_PORTS are skipped
+# too, so the suite never hands the same port to two of its own instances.
+# Call it in the current shell (not via $(...)), or USED_PORTS is lost.
+USED_PORTS=" "
+free_port() {
+    local base="$1" span="$2" p i
+    for i in $(seq 1 64); do
+        p=$(( base + RANDOM % span ))
+        [[ "$USED_PORTS" == *" $p "* ]] && continue
+        port_listening "$p" && continue
+        USED_PORTS+="$p "
+        FREE_PORT="$p"; return 0
+    done
+    echo "no free port in [$base, $((base + span))) after 64 tries" >&2
+    return 1
+}
+
 NAME="webci-$$"
-PORT=$(( 18000 + RANDOM % 2000 ))
+free_port 18000 2000 || exit 1; PORT="$FREE_PORT"
 HOST_USER="$(id -un)"
 DOCROOT_HOST="$REPO/instances/$NAME/rootfs/www"
 
@@ -67,7 +92,7 @@ trap cleanup EXIT
 web6_test() {
     bash "$REPO/sandbox/minict.sh" down "$NAME" >/dev/null 2>&1
     sleep 0.3
-    ss -tln | grep -q "127.0.0.1:$PORT" && return 1
+    port_listening "$PORT" && return 1
     pgrep -f "httpd -f -p 127.0.0.1:$PORT" >/dev/null 2>&1 && return 1
     [[ -d "$REPO/instances/$NAME" ]] && return 1
     return 0
@@ -82,11 +107,15 @@ run_case WEB1 "httpd inside sandbox answers 200 with marker" pass \
     sh -c "curl -s -m 5 http://127.0.0.1:$PORT/ | grep -q minict-web"
 
 run_case WEB2 "listener is loopback-only (no 0.0.0.0 bind)" pass \
-    sh -c "ss -tln | grep -q '127.0.0.1:$PORT' && ! ss -tln | grep -q '0.0.0.0:$PORT'"
+    sh -c "ss -Htln | awk '{print \$4}' | grep -qx '127.0.0.1:$PORT' \
+           && ! ss -Htln | awk '{print \$4}' | grep -Eqx '(0\.0\.0\.0|\*|\[::\]):$PORT'"
 
 # ---------- security ----------
+# WEB3 is an expect-absent check: it would pass vacuously if something other
+# than our httpd answered. Require our marker first (issue #75, item 3).
 run_case WEB3 "path traversal cannot read host /etc/passwd" pass \
-    sh -c "curl -s -m 5 --path-as-is 'http://127.0.0.1:$PORT/../../../etc/passwd' \
+    sh -c "curl -s -m 5 http://127.0.0.1:$PORT/ | grep -q minict-web || { echo 'setup: port not served by our httpd'; exit 1; }; \
+           curl -s -m 5 --path-as-is 'http://127.0.0.1:$PORT/../../../etc/passwd' \
              | grep -q \"${HOST_USER}:x:\" && exit 1 || exit 0"
 
 # ---------- private rootfs proof ----------
@@ -107,8 +136,8 @@ run_case WEB5 "missing file -> 404, server stays alive" pass \
 # so the suite never depends on shell quirks around ln.
 NAME2="webs1-$$"
 NAME3="webs2-$$"
-PORT2=$(( 20000 + RANDOM % 2000 ))
-PORT3=$(( PORT2 + 500 ))
+free_port 20000 2500 || exit 1; PORT2="$FREE_PORT"
+free_port 20000 2500 || exit 1; PORT3="$FREE_PORT"
 ATKDIR="$(mktemp -d "$REPO/instances/s1atk-XXXXXX")"
 
 cleanup() {
@@ -183,8 +212,8 @@ web9_test() {
     #     openat chain + /proc/self/fd connect on this kernel;
     # (b) ancestor-dir symlink -> refused, zero leak to attacker socket.
     local t p9 p9b ok=1 resp=""
-    p9="$(( 23000 + RANDOM % 1000 ))"   # clear of PORT2/PORT3 (max 22499)
-    p9b=$((p9 + 1))
+    free_port 23000 1000 || return 1; p9="$FREE_PORT"   # clear of PORT2/PORT3 (max 22499)
+    free_port 23000 1000 || return 1; p9b="$FREE_PORT"
     t="$(mktemp -d "$REPO/instances/s1t-XXXXXX")" || return 1
     mkdir -p "$t/root/sub" "$t/outside"
 
@@ -233,7 +262,7 @@ PY
     # before we curl — sleep 0.5 alone loses the race under load (#66)
     local listening=0
     for _ in $(seq 1 50); do
-        ss -tln 2>/dev/null | grep -q "127.0.0.1:$p9" && { listening=1; break; }
+        port_listening "$p9" && { listening=1; break; }
         sleep 0.1
     done
     [[ $listening -eq 1 ]] || { echo "positive-control proxy never listened"; ok=0; }
@@ -258,7 +287,7 @@ PY
     # otherwise a dead proxy would make (b) pass for the wrong reason
     local listening=0
     for _ in $(seq 1 15); do
-        ss -tln 2>/dev/null | grep -q "127.0.0.1:$p9b" && { listening=1; break; }
+        port_listening "$p9b" && { listening=1; break; }
         sleep 0.1
     done
     [[ $listening -eq 1 ]] || { echo "hardened proxy never listened"; ok=0; }
