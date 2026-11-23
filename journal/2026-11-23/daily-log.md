@@ -759,14 +759,44 @@ Dừng?      : không (còn overlayfs/mục 4-7 + default Landlock residual; GD3
 - Bằng chứng: `evidence/landlock-ptrace-scope.txt`.
 - **CI critical**: PROC2 must PASS (shim+payload same domain → ptrace allowed).
 
-### Pha B — PR (fix/* theo thứ tự §11)
+### Pha B — PR #158 (fix/* theo thứ tự §11)
 - B1: nhánh con của main `8127c17` → up-to-date.
-- B2 — SCR: ... (sau CI).
-- B3 — SIA: ... (sau CI).
-- B4 — verdict: ... (sau SIA).
+- B2 — SCR @ `702a058`: **PASS** — CI build-test green ×2 sau 2 iterations:
+  - `9cfbe1c` → CI FAIL: **PROC2 PASS** (ptrace fix works!) nhưng **LL1 FAIL** (die:
+    `landlock_add_writable('/dev/shm')` ENOENT — busybox rootfs không mount /dev/shm).
+  - `702a058` → skip ENOENT (/dev/shm optional) → CI GREEN: **PROC2 + LL1 + LL3 + DB7**
+    all PASS. Dev: isolation 38 (LL2 fail-closed + LL3 + PROC2; LL1 SKIP <5.13).
+  Mutant M-revert-shim → PROC2 red (ptrace). M-warn-not-die → LL2 red. Defer.
+- B3 — SIA @ `702a058`: **PASS** — 11/11 OK; claim 0 sai; test rỗng 0 (PROC2+LL2 non-vacuous);
+bảo mật 0 critical/high/medium; 3 low (mutant deferral, CVE NVD, indent mix cosmetic).
+Label `audit:pass`.
+- B4 — verdict pass → gộp (Pha C).
 
 ### Kế hoạch ngày mai
 - Overlayfs rootless (mục 3a CI-only) + port-forward pasta (mục 4) + observability/RSS (mục 7).
 - **GD3 (Web UI) CHƯA chạm** — per chỉ thị owner.
 
-### Pha C/E — cập nhật sau merge (SBG apply + ledger sẽ ghi ở phần cuối phiên)
+### Pha C — Gộp (SBG MODE=apply)
+- CI `702a058` xanh 4/4 (sau 2 iterations: ptrace fix → ENOENT skip) → flip ready (GraphQL)
+  → **squash `9f28ff8`** REST PUT match-head → **#157 auto-close**.
+- Remote sau Phiên 29: **chỉ `main`** @ `9f28ff8`. SIA verdict PASS.
+
+### Pha E — Kết ngày (SBG)
+- SBG MODE=apply: `fix/157-landlock-ptrace-scope` DELETE_MERGED; ledger qua PR này.
+- **#157 XONG**: Landlock ptrace-scope fix (shim domain → PROC2 PASS CI) + fail-closed
+  complete (all-die readonly) + default policy re-enabled + ABI probe + ENOENT skip.
+  **GĐ2 mục 6 (Landlock) HOÀN THÀNH** (#149+#154+#157: ro-root + fail-closed + default + ptrace).
+- Self-audit §7: CI main xanh (`9f28ff8`); cve-gate rc=0; host unchanged 3/3.
+
+DAY PASS — 2026-11-23 Phiên 29: issue #157 done (merge #158 `9f28ff8` @ `702a058`;
+SCR PASS CI clean-room (2 iterations: ptrace→ENOENT); **PROC2 PASS CI** (ptrace fix verified);
+LL1+LL2+LL3 PASS; SIA PASS 11/11 + 3 low; CI xanh `9f28ff8`; remote chỉ `main`; GĐ2 mục 6 xong).
+
+=== SBG REPORT — 2026-11-23 (apply, Phiên 29) ===
+Đã gộp     : 2  — #158 (fix #157, squash `9f28ff8`), ledger PR này
+Đã xoá     : 1  (`fix/157-landlock-ptrace-scope`)
+Giữ lại    : 0
+Còn lại    : main
+CI main    : xanh (9f28ff8 — build-test ×2 + perf + scan; PROC2+LL1+LL3+DB7 PASS)
+Dừng?      : không (còn overlayfs/mục 4-7; GD3 CHƯA chạm)
+=============================================
