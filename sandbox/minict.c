@@ -1335,12 +1335,14 @@ static void apply_spec_rlimits(void)
 #define LL_FS_MAKE_DIR     (1ULL << 7)
 #define LL_FS_MAKE_REG     (1ULL << 8)
 #define LL_FS_MAKE_SYM     (1ULL << 12)
+#define LL_FS_REFER        (1ULL << 13)  /* rename/link across dirs + magic-link follow (5.19+) */
 #define LL_ACCESS_RO (LL_FS_READ_FILE | LL_FS_READ_DIR | LL_FS_EXECUTE)
 #define LL_ACCESS_RW (LL_ACCESS_RO | LL_FS_WRITE_FILE | LL_FS_REMOVE_FILE | \
-                      LL_FS_REMOVE_DIR | LL_FS_MAKE_REG | LL_FS_MAKE_DIR | LL_FS_MAKE_SYM)
+                      LL_FS_REMOVE_DIR | LL_FS_MAKE_REG | LL_FS_MAKE_DIR | LL_FS_MAKE_SYM | \
+                      LL_FS_REFER)
 #define LL_HANDLED   (LL_FS_EXECUTE | LL_FS_WRITE_FILE | LL_FS_READ_FILE | LL_FS_READ_DIR | \
                       LL_FS_REMOVE_DIR | LL_FS_REMOVE_FILE | LL_FS_MAKE_DIR | LL_FS_MAKE_REG | \
-                      LL_FS_MAKE_SYM)
+                      LL_FS_MAKE_SYM | LL_FS_REFER)
 
 struct ll_ruleset_attr { unsigned long long handled_access_fs; };
 struct ll_path_beneath_attr { unsigned long long allowed_access_fs; int parent_fd; };
