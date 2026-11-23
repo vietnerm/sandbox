@@ -721,3 +721,52 @@ Còn lại    : main
 CI main    : xanh (c0f68e8 — build-test ×2 + perf + scan; LL1 CI + LL2 dev)
 Dừng?      : không (còn overlayfs/mục 4-7 + default Landlock residual; GD3 CHƯA chạm)
 =============================================
+
+---
+
+## Phiên 29 — Orchestrator (ZAI, §11) — issue #157
+
+### Pha A — Sync + SBG plan
+- Pull main `8127c17` (ledger Phiên 28 #156); remote chỉ `main`. SBG plan Phiên 29.
+
+### Triage + chọn issue
+- #157 (p1 security): fail-closed chưa trọn + PROC2 ptrace scope (default revert oan).
+  Assign + in-progress.
+
+### Research (`research.md` Phiên 29 — 4 nguồn)
+- Landlock ptrace scope: domain process ptrace same/descendant only.
+- landlock_create_ruleset VERSION: ABI probe (1=5.13, 2=5.19+ REFER).
+- fork + domain inheritance: Landlock at shim → payload inherits same domain.
+- /proc/<pid>/root + PTRACE_MODE_READ: readlink needs ptrace access.
+
+### Development (`fix/157-landlock-ptrace-scope`, D64 — `decisions/landlock-ptrace-scope.md`)
+- `sandbox/minict.c`: split `landlock_enforce()` → `landlock_enforce_default()` (SHIM, sau
+  pivot_root, trước fork payload — "/" RW, shim+payload same domain, fix PROC2 ptrace) +
+  `landlock_enforce_readonly()` (payload, child domain, "/" RO + /tmp+/dev/shm RW, ALL
+  errors die — fail-closed complete #157 mục 1). `landlock_abi()` probe (VERSION → ABI 1/2,
+  REFER conditional). `ll_handled_for(abi)`.
+- Default policy **re-enabled** (shim domain fixes PROC2). LL3 re-added.
+- Cleanup: fix magic-link comment (wrong → ptrace scope), remove dead warn code, ABI error
+  messages ("kernel >=5.13, ABI >=1"). Roadmap mục 6 updated.
+- Tests: LL1 (CI ro-root) + LL2 (dev fail-closed die) + LL3 (default boots, re-added).
+
+### CVE Check
+- Kernel: `5.10.134-013.15.kangaroo.al8.x86_64`; không component mới. cve-gate rc=0.
+
+### Validation "không bị nhiễm"
+- `make test`: dev isolation 38 (LL2 + LL3 + SIG_STRESS + BIND4; LL1 SKIP <5.13; PROC2 PASS).
+- Host baseline: unchanged 3/3.
+- Bằng chứng: `evidence/landlock-ptrace-scope.txt`.
+- **CI critical**: PROC2 must PASS (shim+payload same domain → ptrace allowed).
+
+### Pha B — PR (fix/* theo thứ tự §11)
+- B1: nhánh con của main `8127c17` → up-to-date.
+- B2 — SCR: ... (sau CI).
+- B3 — SIA: ... (sau CI).
+- B4 — verdict: ... (sau SIA).
+
+### Kế hoạch ngày mai
+- Overlayfs rootless (mục 3a CI-only) + port-forward pasta (mục 4) + observability/RSS (mục 7).
+- **GD3 (Web UI) CHƯA chạm** — per chỉ thị owner.
+
+### Pha C/E — cập nhật sau merge (SBG apply + ledger sẽ ghi ở phần cuối phiên)

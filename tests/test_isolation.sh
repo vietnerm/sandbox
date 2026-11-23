@@ -632,10 +632,11 @@ run_case PROC4 "payload cannot mount a second procfs" fail \
 run_case CG1 "no cgroup limits (cgroups v1 only — known gap)" xfail \
     ic '[ -f /sys/fs/cgroup/cgroup.controllers ]'
 
-# ---------- Landlock fs-policy (GĐ2 mục 6, #149/D61 + #154/D63) ----------
+# ---------- Landlock fs-policy (GĐ2 mục 6, #149/D61 + #154/D63 + #157/D64) ----------
 # LL1 (CI >=5.13): spec.ReadOnly -> ro-root (write /etc EACCES, /tmp OK).
 # LL2 (dev <5.13): spec.ReadOnly -> die 126 (fail-closed, refuse half-protected).
-# LL3 (any): default instance -> boots + /tmp write OK (default Landlock, fail-soft dev).
+# LL3 (any): default instance -> boots + /tmp write OK (default Landlock at shim;
+#   #157: shim+payload same domain -> PROC2 /proc/<pid>/root ptrace OK).
 LL_PROBE=0
 if python3 -c "
 import ctypes, os
@@ -645,6 +646,15 @@ r = libc.syscall(444, attr, 8, 0)
 e = ctypes.get_errno()
 os._exit(0 if (r >= 0 or e != 38) else 1)
 " 2>/dev/null; then LL_PROBE=1; fi
+
+# LL3 (always): default instance (no readonly) -> boots + /tmp write OK
+ll3_test() {
+    local out spec; spec="$(mktemp /tmp/minict-ll3.XXXXXX)"; : > "$spec"
+    out=$(MINICT_SPEC="$spec" "$MINICT" "$ROOTFS" /bin/sh -c 'echo x > /tmp/ll3-ok 2>/dev/null; test -f /tmp/ll3-ok && echo OK' 2>/dev/null) || return 1
+    rm -f "$spec"
+    grep -q OK <<<"$out"
+}
+run_case LL3 "Landlock default: instance boots + /tmp write OK (shim domain, #157)" pass ll3_test
 
 LL_SPEC="$(mktemp /tmp/minict-ll-spec.XXXXXX)"; printf 'readonly\n' > "$LL_SPEC"
 if [[ $LL_PROBE -eq 1 ]]; then

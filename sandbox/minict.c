@@ -1367,70 +1367,121 @@ static int landlock_add_writable(int ruleset_fd, const char *path)
         return 0;
 }
 
-static void landlock_enforce(void)
+static int landlock_abi(void)
 {
-        struct ll_ruleset_attr rsa;
-        struct ll_path_beneath_attr pb;
-        int rfd, rootfd;
-        unsigned long long root_access;
+	return syscall(__NR_landlock_create_ruleset, NULL, 0, 1 /* LANDLOCK_CREATE_RULESET_VERSION */);
+}
 
-        /* #154/D63: Landlock runs for spec.ReadOnly (fail-closed ro-root). The
-         * always-on default policy was REVERTED: it broke /proc/<pid>/root
-         * magic-link following (PROC2) even with LL_FS_REFER granted — Landlock
-         * restricts magic links in a way REFER alone doesn't unlock. Default
-         * policy deferred (residual D63: needs magic-link handling). */
-        if (!g_spec_readonly)
-                return;
-        rsa.handled_access_fs = LL_HANDLED;
-        rfd = syscall(__NR_landlock_create_ruleset, &rsa, sizeof(rsa), 0);
-        if (rfd < 0) {
-                if (g_spec_readonly) {
-                        /* spec.ReadOnly is operator-requested ro-root. If Landlock is
-                         * unavailable (kernel <5.13), refuse to boot half-protected —
-                         * the operator asked for ro-root and can't get it. Fail-closed
-                         * (die), consistent with bind :ro + seccomp posture. */
-                        if (errno == ENOSYS || errno == EOPNOTSUPP)
-                                die("spec.ReadOnly requires Landlock (kernel >=5.13) — unavailable, refusing to boot half-protected");
-                        else
-                                die("landlock_create_ruleset — spec.ReadOnly NOT enforced, refusing to boot");
-                }
-                /* default (no spec.ReadOnly): Landlock is defense-in-depth. ENOSYS ->
-                 * warn (fail-soft; pivot_root+capdrop+seccomp remain primary). */
-                if (errno == ENOSYS || errno == EOPNOTSUPP)
-                        warn("Landlock unavailable (kernel <5.13) — default fs-policy NOT enforced (defense-in-depth, fail-soft)");
-                else
-                        warn("landlock_create_ruleset — default fs-policy NOT enforced");
-                return;
-        }
-        rootfd = open("/", O_RDONLY | O_CLOEXEC);
-        if (rootfd < 0) {
-                warn("open / for Landlock");
-                close(rfd);
-                return;
-        }
-        /* "/" rule: spec.ReadOnly -> read-only; default -> all accesses (rw,
-         * defense-in-depth: payload restricted to rootfs subtree, host denied). */
-        root_access = g_spec_readonly ? LL_ACCESS_RO : LL_ACCESS_RW;
-        pb.allowed_access_fs = root_access;
-        pb.parent_fd = rootfd;
-        if (syscall(__NR_landlock_add_rule, rfd, LL_RULE_PATH_BENEATH, &pb, 0) < 0) {
-                warn("landlock_add_rule /");
-                close(rootfd);
-                close(rfd);
-                return;
-        }
-        close(rootfd);
-        if (g_spec_readonly) {
-                /* "/tmp" + "/dev/shm" writable (tmpfs mounts) */
-                landlock_add_writable(rfd, "/tmp");
-                landlock_add_writable(rfd, "/dev/shm");
-                /* bind mounts writable: residual — not tracked per-bind; writable
-                 * binds inherit "/" read-only. Known limitation (document D61). */
-        }
-        /* default: "/" LL_ACCESS_RW covers /tmp etc (no extra rules needed). */
-        if (syscall(__NR_landlock_restrict_self, rfd, 0) < 0)
-                warn("landlock_restrict_self — fs-policy NOT enforced");
-        close(rfd);
+static unsigned long long ll_handled_for(int abi)
+{
+	return (abi >= 2) ? LL_HANDLED : (LL_HANDLED & ~LL_FS_REFER);
+}
+
+/* #157/D64: DEFAULT Landlock policy — applied at the SHIM (after pivot_root,
+ * before payload fork) so shim + payload share the same Landlock domain.
+ * Fixes PROC2 (#157): readlink /proc/<pid>/root needs PTRACE_MODE_READ, which
+ * Landlock scopes to same/descendant domain. With the shim in the domain, the
+ * payload (same domain when no spec.ReadOnly) can read /proc/1/root. The old
+ * diagnosis "magic-link" was wrong (#157 ptrace scope). "/" gets LL_ACCESS_RW
+ * (all accesses): payload restricted to rootfs subtree (defense-in-depth).
+ * Errors -> warn (fail-soft; default is defense-in-depth). ENOSYS +
+ * spec.ReadOnly -> die (the payload's RO layer needs Landlock). */
+static void landlock_enforce_default(void)
+{
+	struct ll_ruleset_attr rsa;
+	struct ll_path_beneath_attr pb;
+	int rfd, rootfd, abi;
+
+	abi = landlock_abi();
+	if (abi < 0) {
+		if (g_spec_readonly) {
+			if (errno == ENOSYS || errno == EOPNOTSUPP)
+				die("spec.ReadOnly requires Landlock (kernel >=5.13, ABI >=1) — unavailable, refusing to boot");
+			else
+				die("landlock ABI probe — spec.ReadOnly needs Landlock, refusing to boot");
+		}
+		if (errno == ENOSYS || errno == EOPNOTSUPP)
+			warn("Landlock unavailable (kernel <5.13) — default fs-policy NOT enforced (defense-in-depth, fail-soft)");
+		else
+			warn("landlock ABI probe — default fs-policy NOT enforced");
+		return;
+	}
+	rsa.handled_access_fs = ll_handled_for(abi);
+	rfd = syscall(__NR_landlock_create_ruleset, &rsa, sizeof(rsa), 0);
+	if (rfd < 0) {
+		if (g_spec_readonly)
+			die("landlock_create_ruleset (default) — spec.ReadOnly needs it, refusing to boot");
+		warn("landlock_create_ruleset (default) — NOT enforced");
+		return;
+	}
+	rootfd = open("/", O_RDONLY | O_CLOEXEC);
+	if (rootfd < 0) {
+		warn("open / for Landlock (default)");
+		close(rfd);
+		return;
+	}
+	pb.allowed_access_fs = LL_ACCESS_RW;
+	pb.parent_fd = rootfd;
+	if (syscall(__NR_landlock_add_rule, rfd, LL_RULE_PATH_BENEATH, &pb, 0) < 0) {
+		warn("landlock_add_rule / (default)");
+		close(rootfd);
+		close(rfd);
+		return;
+	}
+	close(rootfd);
+	if (syscall(__NR_landlock_restrict_self, rfd, 0) < 0)
+		warn("landlock_restrict_self (default) — NOT enforced");
+	close(rfd);
+}
+
+/* #157/D64: spec.ReadOnly RO layer — applied in the PAYLOAD (child domain of
+ * the shim's default). "/" -> read-only, /tmp + /dev/shm -> writable. ALL
+ * errors die (fail-closed: operator asked for ro-root, must get it — #157
+ * closes the warn+boot holes). The payload is in a CHILD domain (more
+ * restrictive than the shim); PROC2 runs in default instances (same domain)
+ * so it's unaffected. */
+static void landlock_enforce_readonly(void)
+{
+	struct ll_ruleset_attr rsa;
+	struct ll_path_beneath_attr pb;
+	int rfd, rootfd, abi;
+
+	if (!g_spec_readonly)
+		return;
+	abi = landlock_abi();
+	if (abi < 0) {
+		if (errno == ENOSYS || errno == EOPNOTSUPP)
+			die("spec.ReadOnly RO layer: Landlock unavailable (kernel <5.13) — refusing to boot half-protected");
+		die("landlock ABI probe (readonly) — refusing to boot");
+	}
+	rsa.handled_access_fs = ll_handled_for(abi);
+	rfd = syscall(__NR_landlock_create_ruleset, &rsa, sizeof(rsa), 0);
+	if (rfd < 0)
+		die("landlock_create_ruleset (readonly) — refusing to boot");
+	rootfd = open("/", O_RDONLY | O_CLOEXEC);
+	if (rootfd < 0) {
+		close(rfd);
+		die("open / for Landlock (readonly)");
+	}
+	pb.allowed_access_fs = LL_ACCESS_RO;
+	pb.parent_fd = rootfd;
+	if (syscall(__NR_landlock_add_rule, rfd, LL_RULE_PATH_BENEATH, &pb, 0) < 0) {
+		close(rootfd);
+		close(rfd);
+		die("landlock_add_rule / (readonly)");
+	}
+	close(rootfd);
+	if (landlock_add_writable(rfd, "/tmp") < 0) {
+		close(rfd);
+		die("landlock_add_rule /tmp (readonly)");
+	}
+	if (landlock_add_writable(rfd, "/dev/shm") < 0) {
+		close(rfd);
+		die("landlock_add_rule /dev/shm (readonly)");
+	}
+	if (syscall(__NR_landlock_restrict_self, rfd, 0) < 0)
+		die("landlock_restrict_self (readonly) — refusing to boot half-protected");
+	close(rfd);
 }
 
 /* ---- payload fd + core-dump hardening (issue #5, D33) ----
@@ -1994,6 +2045,8 @@ int main(int argc, char **argv)
                  * (D16 env pair + D24 spec webports) */
                 spawn_web_relay();
 
+                landlock_enforce_default(); /* #157/D64: default policy at shim (before payload fork) — shim+payload same domain */
+
                 /* block the forwardable signals around the payload fork so
                  * one racing fork->g_payload_pid is QUEUED, not lost; they
                  * are delivered right after the handlers are installed.
@@ -2055,7 +2108,7 @@ int main(int argc, char **argv)
 
                         install_seccomp(); /* last lock: blocklist, before exec */
 
-                        landlock_enforce(); /* GĐ2 mục 6: ro-root if spec.ReadOnly + kernel >=5.13 */
+                        landlock_enforce_readonly(); /* #157/D64: spec.ReadOnly RO layer (child domain) — all errors die */
 
                         setenv("PATH", "/bin:/sbin:/usr/bin", 1);
                         setenv("HOME", "/", 1);
