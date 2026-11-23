@@ -409,3 +409,25 @@ Dừng?      : không (GĐ2 còn overlayfs (env-gated) + systemd-real + mục 4-
 ### Kế hoạch ngày mai
 - GĐ2 mục 6 (Landlock LSM) — "Ngay sau 3a" per roadmap; hoặc residual #139 nếu
   SCR/SIA đòi sửa. GD3 (Web UI) vẫn CHƯA chạm per chỉ thị owner.
+
+### Pha E — Kết ngày (SBG MODE=apply lần cuối)
+- CI main xanh `8fae49d` (ci + unicode-guard; #139 auto-close).
+- DELETE_MERGED: `sec/139-seccomp-allowlist` + 5 nhánh stale (26-27-check-docs,
+  gd2-observability, manifest-phase2, 55-alpine-empty-dirs, 75-web-free-port).
+- Ledger qua PR này (`chore(branches): ledger 2026-11-23 Phiên 24`).
+- Self-audit §7: make test 136 PASS + 13 SKIP env / test-web 9/9 / test-minictd
+  43+1SKIP trên main `8fae49d` (qua PR checks); cve-gate rc=0; host unchanged 3/3.
+
+=== SBG REPORT — 2026-11-23 (apply, Phiên 24) ===
+Đã gộp     : 3 — #142 + #140 (bởi owner sau needs-human; SCR/SIA của agent PASS
+             trước đó), #145 (squash `8fae49d` @ d725120)
+Đã xoá     : 6 — sec/139-seccomp-allowlist + 5 nhánh stale đã merge từ trước
+Giữ lại    : 0
+Còn lại    : main
+CI main    : xanh (8fae49d)
+Dừng?      : không (GĐ2 mục 6 Landlock là việc tiếp theo; GD3 CHƯA chạm per owner)
+=============================================
+
+DAY PASS — 2026-11-23 Phiên 24: issue #139 done (merge #145 `8fae49d` @ `d725120`;
+SCR PASS clean-room ×2; SIA PASS 11/11 + 2 low; 4/4 mutant đỏ; seccomp 25 + minictd
+43 + Go unit 7; #142/#140 SCR/SIA xong và owner gộp; remote chỉ `main`).
