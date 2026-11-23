@@ -1370,16 +1370,29 @@ static void landlock_enforce(void)
         struct ll_ruleset_attr rsa;
         struct ll_path_beneath_attr pb;
         int rfd, rootfd;
+        unsigned long long root_access;
 
-        if (!g_spec_readonly)
-                return;
+        /* #154/D63: Landlock now runs for EVERY instance (default defense-in-
+         * depth restrict-to-rootfs + spec.ReadOnly ro-root), not just spec.ReadOnly. */
         rsa.handled_access_fs = LL_HANDLED;
         rfd = syscall(__NR_landlock_create_ruleset, &rsa, sizeof(rsa), 0);
         if (rfd < 0) {
+                if (g_spec_readonly) {
+                        /* spec.ReadOnly is operator-requested ro-root. If Landlock is
+                         * unavailable (kernel <5.13), refuse to boot half-protected —
+                         * the operator asked for ro-root and can't get it. Fail-closed
+                         * (die), consistent with bind :ro + seccomp posture. */
+                        if (errno == ENOSYS || errno == EOPNOTSUPP)
+                                die("spec.ReadOnly requires Landlock (kernel >=5.13) — unavailable, refusing to boot half-protected");
+                        else
+                                die("landlock_create_ruleset — spec.ReadOnly NOT enforced, refusing to boot");
+                }
+                /* default (no spec.ReadOnly): Landlock is defense-in-depth. ENOSYS ->
+                 * warn (fail-soft; pivot_root+capdrop+seccomp remain primary). */
                 if (errno == ENOSYS || errno == EOPNOTSUPP)
-                        warn("Landlock unavailable (kernel <5.13) — spec.ReadOnly NOT enforced");
+                        warn("Landlock unavailable (kernel <5.13) — default fs-policy NOT enforced (defense-in-depth, fail-soft)");
                 else
-                        warn("landlock_create_ruleset — spec.ReadOnly NOT enforced");
+                        warn("landlock_create_ruleset — default fs-policy NOT enforced");
                 return;
         }
         rootfd = open("/", O_RDONLY | O_CLOEXEC);
@@ -1388,7 +1401,10 @@ static void landlock_enforce(void)
                 close(rfd);
                 return;
         }
-        pb.allowed_access_fs = LL_ACCESS_RO;
+        /* "/" rule: spec.ReadOnly -> read-only; default -> all accesses (rw,
+         * defense-in-depth: payload restricted to rootfs subtree, host denied). */
+        root_access = g_spec_readonly ? LL_ACCESS_RO : LL_ACCESS_RW;
+        pb.allowed_access_fs = root_access;
         pb.parent_fd = rootfd;
         if (syscall(__NR_landlock_add_rule, rfd, LL_RULE_PATH_BENEATH, &pb, 0) < 0) {
                 warn("landlock_add_rule /");
@@ -1397,13 +1413,16 @@ static void landlock_enforce(void)
                 return;
         }
         close(rootfd);
-        /* "/tmp" + "/dev/shm" writable (tmpfs mounts) */
-        landlock_add_writable(rfd, "/tmp");
-        landlock_add_writable(rfd, "/dev/shm");
-        /* bind mounts writable: residual — not tracked per-bind; writable binds
-         * inherit "/" read-only. Known limitation (document D61). */
+        if (g_spec_readonly) {
+                /* "/tmp" + "/dev/shm" writable (tmpfs mounts) */
+                landlock_add_writable(rfd, "/tmp");
+                landlock_add_writable(rfd, "/dev/shm");
+                /* bind mounts writable: residual — not tracked per-bind; writable
+                 * binds inherit "/" read-only. Known limitation (document D61). */
+        }
+        /* default: "/" LL_ACCESS_RW covers /tmp etc (no extra rules needed). */
         if (syscall(__NR_landlock_restrict_self, rfd, 0) < 0)
-                warn("landlock_restrict_self — spec.ReadOnly NOT enforced");
+                warn("landlock_restrict_self — fs-policy NOT enforced");
         close(rfd);
 }
 

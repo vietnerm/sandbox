@@ -283,3 +283,37 @@ block; restore-`old` would keep blocked. UNBLOCK fwd → clean. Effective mask u
 
 **Áp dụng:** parent sigprocmask(SIG_BLOCK {SIGTERM,SIGINT}) before pidns fork, unblock after
 g_child_pid; child shim+payload restore → SIG_UNBLOCK &fwd (not SIG_SETMASK &old).
+
+---
+
+# Research — 2026-11-23 (SDDA Phiên 28, issue #154 / Landlock fail-closed + default policy)
+
+Chủ đề: fail-closed vs fail-soft posture; default Landlock defense-in-depth; operator-requested vs always-on.
+
+## Nguồn 1 — Landlock restrict_self + errno (man7)
+- Link: https://man7.org/linux/man-pages/man2/landlock_restrict_self.2.html
+- `landlock_create_ruleset` returns -1 ENOSYS (kernel <5.13) or EOPNOTSUPP (Landlock disabled).
+- A process restricted via Landlock cannot loosen (rulesets are monotonic — restrict_self only adds).
+
+## Nguồn 2 — fail-closed posture in minict (repo D52/D11)
+- Link: `sandbox/minict.c` bind :ro die (D52), seccomp die (D11), mountinfo die (#117/D58).
+- Operator-requested feature unavailable → die (refuse half-protected). spec.ReadOnly is
+  operator-requested ro-root → Landlock unavailable → die (consistent). Default (always-on
+  defense-in-depth) → warn (fail-soft, pivot_root primary).
+
+## Nguồn 3 — Docker --read-only + security-opt no-new-privileges (docs.docker.com)
+- Link: https://docs.docker.com/reference/cli/docker/container/run/#read-only
+- `--read-only` is operator-requested; if the runtime can't enforce (e.g. no overlayfs),
+  docker errors (fail-closed). minict spec.ReadOnly via Landlock = same: unavailable → die.
+
+## Nguồn 4 — Landlock default sandbox (kernel.org samples)
+- Link: https://www.kernel.org/doc/html/latest/userspace-api/landlock.html + samples/landlock/sandboxer.c
+- The Landlock sandboxer sample restricts a process to a set of paths (default deny all,
+  allow listed). minict default: allow "/" (rootfs subtree) all accesses — payload restricted
+  to rootfs, host denied (defense-in-depth on pivot_root).
+
+**Trade-off:** fail-closed (spec.ReadOnly + no Landlock → die) vs fail-soft (default + no
+Landlock → warn). Operator-requested → die; always-on defense-in-depth → warn.
+
+**Áp dụng:** landlock_enforce() always runs; spec.ReadOnly + ENOSYS → die; default + ENOSYS →
+warn; "/" rule RO (spec.ReadOnly) or RW (default). LL2 (dev die) + LL3 (default boots).
