@@ -119,5 +119,37 @@ sc20() { "$MINICT" "$ROOTFS" /bin/sh -c 'mount -t tmpfs none /mnt5 2>/dev/null; 
 run_case SC20 "blocklist hit survives: rc=1 (EPERM), no SIGSYS death" pass \
     sc20
 
+# ---------- seccomp allowlist theo template (GĐ2 mục 3a, issue #139, D59) ----------
+# Profile = minictd/internal/minict/profiles/busybox.allow, MEASURED by
+# tools/syscall-probe on the suite-representative workload. The filter in
+# allowlist mode is: D11 blocklist floor + allowlist + default EPERM.
+# Cases:
+#   SE1  workload still runs (echo/grep/ls/cat/mktemp — readlinkat-based)
+#   SE2  readlink (89) NOT in profile -> EPERM (default-deny)
+#   SE3  control: readlink works blocklist-only (no profile in spec)
+#   SE4  floor wins: keyctl (250) LISTED in the profile is still EPERM
+SE_SPEC="$(mktemp)"
+trap 'rm -f "$PROBE_BIN" "$SE_SPEC"' EXIT
+{
+    echo "hostname minict-allow"
+    grep -v '^#' "$REPO/minictd/internal/minict/profiles/busybox.allow" \
+        | awk '{printf "%s%s", sep, $1; sep=","; if (++i % 40 == 0) { print ""; sep="" } } END { if (sep != "") print ""; }' \
+        | sed '/^$/d' \
+        | while IFS= read -r l; do echo "seccomp_allow $l"; done
+} > "$SE_SPEC"
+
+se1() { MINICT_SPEC="$SE_SPEC" "$MINICT" "$ROOTFS" /bin/sh -c 'echo ok | grep -q ok && ls / >/dev/null && cat /etc/passwd >/dev/null && mktemp >/dev/null'; }
+se2() { expect_eperm "$(MINICT_SPEC="$SE_SPEC" "$MINICT" "$ROOTFS" /home/scprobe readlink 2>/dev/null | tail -1)"; }
+se3() { expect_not_eperm "$("$MINICT" "$ROOTFS" /home/scprobe readlink 2>/dev/null | tail -1)"; }
+se4() {
+    local spec4="$SE_SPEC.4"
+    { cat "$SE_SPEC"; echo "seccomp_allow 250"; } > "$spec4"
+    expect_eperm "$(MINICT_SPEC="$spec4" "$MINICT" "$ROOTFS" /home/scprobe keyctl 2>/dev/null | tail -1)"
+}
+run_case SE1 "allowlist: workload still runs (busybox profile, D59)" pass se1
+run_case SE2 "allowlist: readlink (89) not in profile -> EPERM" pass se2
+run_case SE3 "control: readlink works blocklist-only (no profile)" pass se3
+run_case SE4 "floor wins: keyctl listed in profile still EPERM" pass se4
+
 echo "=== summary: PASS=$PASS FAIL=$FAIL ==="
 [[ $FAIL -eq 0 ]]

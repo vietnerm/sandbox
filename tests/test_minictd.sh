@@ -79,6 +79,10 @@
 #   MD40  GĐ2 mục 3 snapshot (issue #130): snapshot stopped instance -> tar.gz;
 #         run from `backup:<name>` restores rootfs (marker seen); snapshot
 #         on RUNNING -> 409 (trusted tar.gz path, D57)
+#   MD41  seccomp allowlist exec parity (GĐ2 mục 3a, issue #139, D59):
+#         seccomp_profile=busybox -> probe readlink EPERM + tcp OK in exec
+#   MD42  control: no profile -> readlink works in exec (blocklist default)
+#   MD43  template carries seccomp_profile (template:<name> -> EPERM in exec)
 #
 # Exit code: 0 if all expected results hold, 1 otherwise.
 set -u
@@ -151,7 +155,7 @@ cleanup() {
     # repo-scoped argv pattern instead (measured leak: 1 ocireg per suite
     # run without this, Phiên 16).
     pkill -TERM -f -- "tools/bin/ocireg $REG_PORT" 2>/dev/null || true
-    for n in md-a md-b md-c md-auto md-t md-f md-oci md-oci-bad md-oci-h md-oci-r md-oci-a md-rl md-s6a md-s6b md-tpl-src md-tpl-dst md-snap-src md-snap-dst; do
+    for n in md-a md-b md-c md-auto md-t md-f md-oci md-oci-bad md-oci-h md-oci-r md-oci-a md-rl md-s6a md-s6b md-tpl-src md-tpl-dst md-snap-src md-snap-dst md-sec md-sec2 md-sec-dst; do
         curl -s -m 5 -X POST -H "Authorization: Bearer $TOKEN" \
             "$API/v1/sandboxes/$n/remove" >/dev/null 2>&1 || true
     done
@@ -912,6 +916,79 @@ EOF
     [[ "$(jget 'd["stdout"].strip()')" == snap-marker ]]
 }
 run_case MD40 "GĐ2 mục 3: snapshot (stopped) + restore from backup:md-snap (marker seen)" pass md40
+
+#   MD41  seccomp allowlist + exec parity (GĐ2 mục 3a, issue #139, D59):
+#         instance Run with seccomp_profile=busybox -> the PAYLOAD and the
+#         setns EXEC children both enforce floor+allowlist: probe readlink
+#         (89, not in the measured profile) -> EPERM in exec, while socket
+#         AF_INET (listed) keeps working
+#   MD42  control: same instance WITHOUT a profile -> readlink works in exec
+#         (blocklist-only default, #29)
+#   MD43  template carries the profile: save-template on the stopped
+#         profiled instance -> run image=template:<name> -> exec still EPERM
+#         (spec.json rides the template copy — the issue #139 semantics)
+md_probe() {
+    cc -O2 -static -o "$WORK/scprobe" "$HERE/seccomp_probe.c" || return 1
+}
+
+md41() {
+    md_probe || return 1
+    api POST /v1/run "$(cat <<EOF
+{"name":"md-sec","image":"base",
+ "volumes":["$WORK/scprobe:/home/scprobe"],
+ "seccomp_profile":"busybox",
+ "cmd":["/bin/sh","-c","sleep 600"]}
+EOF
+)" >/dev/null || return 1
+    sleep 0.4
+    api GET /v1/sandboxes/md-sec >/dev/null && [[ "$(jget 'd["State"]["Status"]')" == running ]] || return 1
+    # listed syscall keeps working (socket AF_INET -> errno=0)
+    xv2 md-sec '{"cmd":["/home/scprobe","tcp"],"timeout_s":5}' || return 1
+    [[ "$(jget 'd["stdout"].strip()')" == tcp*errno=0 ]] || { echo "tcp: $(jget 'd["stdout"].strip()')"; return 1; }
+    # unlisted syscall -> EPERM in the EXEC child (minict-exec loaded the
+    # same profile via MINICT_SECCOMP_ALLOW, D59)
+    # the PAYLOAD path too: the daemon must have rendered the profile into
+    # the MINICT_SPEC file (a regression that only breaks the payload side
+    # would otherwise be invisible to the exec-based asserts above)
+    grep -q '^seccomp_allow ' "$STATE/md-sec/spec.minict" || { echo "spec.minict has no seccomp_allow lines"; return 1; }
+    xv2 md-sec '{"cmd":["/home/scprobe","readlink"],"timeout_s":5}' || return 1
+    [[ "$(jget 'd["stdout"].strip()')" == readlink*errno=1 ]] || { echo "readlink: $(jget 'd["stdout"].strip()')"; return 1; }
+}
+
+md42() {
+    api POST /v1/run "$(cat <<EOF
+{"name":"md-sec2","image":"base",
+ "volumes":["$WORK/scprobe:/home/scprobe"],
+ "cmd":["/bin/sh","-c","sleep 600"]}
+EOF
+)" >/dev/null || return 1
+    sleep 0.4
+    xv2 md-sec2 '{"cmd":["/home/scprobe","readlink"],"timeout_s":5}' || return 1
+    [[ "$(jget 'd["stdout"].strip()')" == readlink*errno=0 ]] || { echo "control readlink: $(jget 'd["stdout"].strip()')"; return 1; }
+}
+
+md43() {
+    # template carries seccomp_profile via spec.json (save-template copies it)
+    api POST /v1/sandboxes/md-sec/stop >/dev/null || return 1
+    sleep 0.5
+    api POST /v1/sandboxes/md-sec/save-template '{"template":"md-tpl-sec"}' >/dev/null || return 1
+    # NOTE: the template carries the profile via its saved spec.json (D59);
+    # volumes are NOT inherited (D56: template = rootfs clone) — the request
+    # redeclares the probe bind, but NOT the profile. That asymmetry is the
+    # assertion: EPERM here can only come from the template's spec.json.
+    api POST /v1/run "$(cat <<EOF
+{"name":"md-sec-dst","image":"template:md-tpl-sec",
+ "volumes":["$WORK/scprobe:/home/scprobe"],
+ "cmd":["/bin/sh","-c","sleep 600"]}
+EOF
+)" >/dev/null || return 1
+    sleep 0.4
+    xv2 md-sec-dst '{"cmd":["/home/scprobe","readlink"],"timeout_s":5}' || return 1
+    [[ "$(jget 'd["stdout"].strip()')" == readlink*errno=1 ]] || { echo "template readlink: $(jget 'd["stdout"].strip()')"; return 1; }
+}
+run_case MD41 "allowlist+exec parity: readlink EPERM, tcp OK (D59)" pass md41
+run_case MD42 "control: no profile -> readlink works in exec" pass md42
+run_case MD43 "template:md-tpl-sec carries seccomp_profile (EPERM)" pass md43
 
 echo "=== summary: PASS=$PASS SKIP=$SKIPPED FAIL=$FAIL ==="
 if [[ $FAIL -ne 0 ]]; then

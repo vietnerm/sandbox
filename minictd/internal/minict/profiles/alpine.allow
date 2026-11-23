@@ -1,0 +1,51 @@
+# seccomp allowlist profile 'alpine' (x86_64) — D59, issue #139.
+# Measured: tools/seccomp-workloads/alpine.sh via tools/syscall-probe
+# (--after-exec 2: payload tree only, D11 blocklist active).
+# Enforced as: D11 blocklist floor + allowlist + default EPERM;
+# blocklist entries stay denied even if listed here.
+# Regenerate: tools/seccomp-profile-gen.sh alpine
+0 __NR_read
+1 __NR_write
+2 __NR_open
+3 __NR_close
+4 __NR_stat
+5 __NR_fstat
+6 __NR_lstat
+8 __NR_lseek
+9 __NR_mmap
+10 __NR_mprotect
+11 __NR_munmap
+12 __NR_brk
+13 __NR_rt_sigaction
+14 __NR_rt_sigprocmask
+15 __NR_rt_sigreturn
+16 __NR_ioctl
+20 __NR_writev
+22 __NR_pipe
+33 __NR_dup2
+35 __NR_nanosleep
+40 __NR_sendfile
+57 __NR_fork
+59 __NR_execve
+61 __NR_wait4
+63 __NR_uname
+72 __NR_fcntl
+83 __NR_mkdir
+84 __NR_rmdir
+87 __NR_unlink
+95 __NR_umask
+99 __NR_sysinfo
+102 __NR_getuid
+104 __NR_getgid
+107 __NR_geteuid
+108 __NR_getegid
+115 __NR_getgroups
+130 __NR_rt_sigsuspend
+138 __NR_fstatfs
+158 __NR_arch_prctl
+217 __NR_getdents64
+218 __NR_set_tid_address
+231 __NR_exit_group
+257 __NR_openat
+258 __NR_mkdirat
+280 __NR_utimensat

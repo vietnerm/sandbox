@@ -132,7 +132,7 @@ loop:
 
 	case "up":
 		if len(rest) < 2 {
-			return errUsage("up <name> <image> [--cmd \"...\"] [--env K=V ...] [--webport N ...]")
+			return errUsage("up <name> <image> [--cmd \"...\"] [--env K=V ...] [--webport N ...] [--seccomp-profile name]")
 		}
 		spec := contract.RunSpec{Name: rest[0], Image: rest[1]}
 		rest = rest[2:]
@@ -151,8 +151,10 @@ loop:
 				spec.Hostname = rest[1]
 			case "--volume", "--v":
 				spec.Volumes = append(spec.Volumes, rest[1])
+			case "--seccomp-profile":
+				spec.SeccompProfile = rest[1]
 			default:
-				return errUsage("up: unknown flag %q (supported: --cmd --env --webport --hostname --volume)", rest[0])
+				return errUsage("up: unknown flag %q (supported: --cmd --env --webport --hostname --volume --seccomp-profile)", rest[0])
 			}
 			rest = rest[2:]
 		}

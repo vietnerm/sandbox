@@ -348,3 +348,64 @@ Còn lại    : main
 CI main    : xanh (abcc7ed — build-test ×2 + perf + scan; push-run pasta flake re-run pass)
 Dừng?      : không (GĐ2 còn overlayfs (env-gated) + systemd-real + mục 4-7; GD3 CHƯA chạm)
 =============================================
+
+---
+
+## Phiên 24 — Orchestrator (2026-11-23, ZAI SDDA)
+
+### Pha A — Sync + kế hoạch nhánh
+- Pull main `6a21582` (ff, +77 commit); sau đó re-sync nhận thêm #142/#140 đã được
+  owner MERGE (main `5d28a22`) — needs-human đã hoạt động đúng (2 PR G7 chờ review
+  người, owner đã gộp trong phiên).
+- SBG MODE=plan → `branch/plan.md` (mục Phiên 24): 2 PR mở (G7), 5 nhánh
+  DELETE_MERGED (đã xoá remote: docs/26-27-check-docs, docs/gd2-observability,
+  docs/manifest-phase2, fix/55-alpine-empty-dirs, fix/75-web-free-port).
+
+### Pha B/C — PR #142 + #140 (SCR + SIA)
+- PR #142 (sec/cve-kernel-ranges) @ 619f773: SCR PASS (clean-room ×2 rc=0; CI
+  runner 10 suites none-failed + MD0-40; mutants M1/M2 bắt được CK6/CK7; NVD thật
+  rc=0, control 8145 CPE/119d; gate rc=0 in rỗng). SIA: CONCERNS→PASS trong vòng
+  (B1 fix: tạo issue #143 + Closes #143; claims 0 sai — 4/4 dải runner khớp NVD
+  thật; 0 security finding; low: B3/B6 → issue #144, B10 → ledger). Label
+  audit:pass + needs-human (G7: workflows + manifest) → owner MERGE (5d28a22).
+- PR #140 (docs/security-boundary) @ 1dc7938: SCR PASS (docs-only; check-docs +
+  unicode + cve-gate clean-room; CI ×2 xanh). SIA PASS (B4 N/A docs-only; claims
+  khớp; 0 finding; low → #144). Label audit:pass + needs-human → owner MERGE
+  (e836e0a).
+- SBG MODE=apply (Pha C): không PR nào tự-gộp được (G7) — đúng luật; owner đã
+  review + gộp cả hai. DELETE_MERGED 5 nhánh thực thi ✓.
+
+### Pha D — Issue #139: seccomp allowlist theo template (GĐ2 mục 3a, D59)
+- Triage #139: bỏ needs-repro, status:in-progress (design #29 + roadmap 3a rõ).
+- Research (≥3 nguồn, journal research.md): Docker seccomp profile generate,
+  systemd SystemCallFilter, ptrace PTRACE_SYSCALL — mỗi nguồn 1 bài học áp dụng.
+- Develop (branch `sec/139-seccomp-allowlist`, D59 = decisions/seccomp-allowlist.md):
+  - `tools/syscall-probe.c` (~250 dòng, PTRACE_SYSCALL + TRACESYSGOOD/FORK/VFORK/
+    CLONE/EXEC, `--after-exec N` loại pha setup sandbox khỏi profile);
+  - 4 workload thật + gen script → 4 profile đo thật: busybox 61, alpine 45,
+    alpine-nginx 75, debian 59 (glibc clone3→ENOSYS fallback đo được);
+  - minict.c + minict-exec.c: allowlist mode (D11 floor + arg-checks + JEQ +
+    default EPERM), parse `seccomp_allow` (spec) / `MINICT_SECCOMP_ALLOW=` (exec);
+    **sửa thứ tự child minict-exec: drop_all_caps TRƯỚC install_seccomp** (bug đo
+    được: capset 125 bị filter riêng của nó chặn — "last lock" posture D11);
+  - Go: contract field, seccomp.go (go:embed + validate fail-closed), renderSpec +
+    execSeccompLines emission, CLI --seccomp-profile, template:<name> kế thừa
+    profile từ spec.json (D56 carry);
+  - Tests: SE1-SE4 (seccomp 21→25), MD41-43 (minictd 40→43; MD41 thêm assert
+    payload-path spec.minict sau khi M-render thoát), 7 Go unit;
+  - **4 mutant đều bị bắt**: M-allow→SE2; M-render→MD41; M-exec→MD41+MD43;
+    M-inherit→MD43.
+- CVE Check: `cve/seccomp-allowlist.{md,json}` — 4 rows (NVD partial), gate rc=0;
+  không component mới ship → watchlist không cần dòng mới (PR #142 đã thêm bảng
+  dải kernel — các CVE đó đã có).
+- Validation: `make test` 10/10 suites — 136 PASS + 13 SKIP env-blocked (isolation
+  35, seccomp 25, netns 7, alpine 9, debian 8+1S, escape-alpine 35, cve-check 4,
+  pasta 5+6S, stack 8, cg 6S); `make test-web` 9/9; `make test-minictd` 43+1SKIP;
+  host baseline unchanged 3/3; bench p50 1.8 ms / rss 1192 kB / disk ~2.05 MB
+  (không đổi — filter chỉ thêm JEQ trong allowlist mode).
+- Perf: cold_start=1.8 ms | rss=1192 kB | disk=2.05 MB (trong ngưỡng §0).
+- PR: `sec/139-seccomp-allowlist` → SCR/SIA trong phiên (bên dưới).
+
+### Kế hoạch ngày mai
+- GĐ2 mục 6 (Landlock LSM) — "Ngay sau 3a" per roadmap; hoặc residual #139 nếu
+  SCR/SIA đòi sửa. GD3 (Web UI) vẫn CHƯA chạm per chỉ thị owner.

@@ -531,6 +531,20 @@ func renderSpec(spec *contract.RunSpec, ports []int, cgAvail bool) (lines, notes
 		}
 	}
 
+	// --- seccomp allowlist (D59, issue #139): embed the profile's syscall
+	// numbers as seccomp_allow chunks; the C side installs the D11 blocklist
+	// floor + allowlist + default EPERM in both the payload child and the
+	// setns exec child (MD0 parity). Unknown profile = hard error, never a
+	// silent fallback to blocklist-only.
+	if spec.SeccompProfile != "" {
+		nrs, err := LoadSeccompProfile(spec.SeccompProfile)
+		if err != nil {
+			return nil, nil, err
+		}
+		lines = append(lines, seccompAllowLines(nrs)...)
+		addNote("seccomp allowlist %q: %d syscalls (D11 blocklist stays a floor; trusted workloads only, manifest §3)", spec.SeccompProfile, len(nrs))
+	}
+
 	// --- PidsLimit: cgroups v2 pids.max when available (CG1/S2), rlimit
 	// nproc approximation otherwise ---
 	// S2 measured on the runner (CI 44700961938): a shared per-uid nproc

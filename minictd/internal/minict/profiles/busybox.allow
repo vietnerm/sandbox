@@ -1,0 +1,67 @@
+# seccomp allowlist profile 'busybox' (x86_64) — D59, issue #139.
+# Measured: tools/seccomp-workloads/busybox.sh via tools/syscall-probe
+# (--after-exec 2: payload tree only, D11 blocklist active).
+# Enforced as: D11 blocklist floor + allowlist + default EPERM;
+# blocklist entries stay denied even if listed here.
+# Regenerate: tools/seccomp-profile-gen.sh busybox
+0 __NR_read
+1 __NR_write
+3 __NR_close
+5 __NR_fstat
+8 __NR_lseek
+9 __NR_mmap
+10 __NR_mprotect
+12 __NR_brk
+13 __NR_rt_sigaction
+14 __NR_rt_sigprocmask
+15 __NR_rt_sigreturn
+16 __NR_ioctl
+21 __NR_access
+33 __NR_dup2
+37 __NR_alarm
+39 __NR_getpid
+40 __NR_sendfile
+41 __NR_socket
+42 __NR_connect
+43 __NR_accept
+48 __NR_shutdown
+49 __NR_bind
+50 __NR_listen
+54 __NR_setsockopt
+56 __NR_clone
+58 __NR_vfork
+59 __NR_execve
+61 __NR_wait4
+62 __NR_kill
+63 __NR_uname
+72 __NR_fcntl
+79 __NR_getcwd
+80 __NR_chdir
+82 __NR_rename
+83 __NR_mkdir
+84 __NR_rmdir
+87 __NR_unlink
+88 __NR_symlink
+90 __NR_chmod
+95 __NR_umask
+102 __NR_getuid
+104 __NR_getgid
+107 __NR_geteuid
+108 __NR_getegid
+115 __NR_getgroups
+130 __NR_rt_sigsuspend
+157 __NR_prctl
+158 __NR_arch_prctl
+217 __NR_getdents64
+218 __NR_set_tid_address
+230 __NR_clock_nanosleep
+231 __NR_exit_group
+257 __NR_openat
+262 __NR_newfstatat
+267 __NR_readlinkat
+273 __NR_set_robust_list
+280 __NR_utimensat
+293 __NR_pipe2
+302 __NR_prlimit64
+318 __NR_getrandom
+334 __NR_rseq

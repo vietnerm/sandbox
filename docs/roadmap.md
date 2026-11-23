@@ -21,14 +21,21 @@
    + kernel: `python3 tools/cve-kernel.py --kernels "$(uname -r),6.1,6.6,6.12" --watchlist docs/cve-watchlist.md --discover-days 2`
    (dải NVD cho kernel thật + dòng LTS đích; CVE kernel mới — owner 2026-11-23)
    + cập nhật `docs/cve-watchlist.md`
-4. D — No-Compromise Validation: `make test` (isolation 31 + seccomp 21 + netns 7 +
-   alpine 9 + debian 9 + escape-alpine 31 + cve-check tool 4 + pasta 11 + cg 6 = 129, pipefail thật —
-   issue #14; cg suite từ #4/D48 2026-11-20, env-gated cgroups v2; dev: 127 PASS + 13 SKIP env-blocked)
+4. D — No-Compromise Validation: `make test` (isolation 35 + seccomp 25 + netns 7 +
+   alpine 9 + debian 9 + escape-alpine 35 + cve-check tool 4 + pasta 11 + stack 8 + cg 6 = 149,
+   pipefail thật — issue #14; cg suite từ #4/D48 2026-11-20, env-gated cgroups v2;
+   seccomp 25 từ #139/D59 2026-11-23 (SE1-4 allowlist); dev: 136 PASS + 13 SKIP env-blocked)
    + `make test-web` + `make test-minictd` (40, MD0–MD40) + lưu evidence vào
    `journal/YYYY-MM-DD/evidence/` + integrity check host
 5. Ghi `journal/YYYY-MM-DD/daily-log.md` (quy tắc thư mục: PROMPT.MD §10)
 
 ## Đã xong
+- [x] 2026-11-23 (phiên 24, SDDA): **GĐ2 mục 3a — seccomp allowlist theo template
+  (issue #139, D59)**: đo thật 4 profile bằng ptrace probe (syscall-probe,
+  --after-exec 2 tránh rò pha setup); filter floor+allowlist+EPERM cả payload lẫn
+  exec (MD0 parity); RunSpec.SeccompProfile → MINICT_SPEC/env-file; template carry;
+  SE1-4 + MD41-43 + 7 unit; 4 mutant đều đỏ. Perf không đổi (đo lại bench).
+  CVE gate rc=0. Residual: opt-in, runner re-measure, arm64, backup spec. (#139)
 - [x] 2026-11-23 (phiên 22, SDDA): **GĐ2 mục 3 sub — snapshot/backup/restore (issue #130,
   D57)**: `snapshot.go` mới — `tarGzTree` (Go archive/tar + compress/gzip stdlib,
   symlink-aware) + `extractGzTar` (**trusted path**: refuse `..`/absolute member paths,
@@ -425,17 +432,24 @@
    image form; tar.gz trusted (gzip stdlib, zstd deferred); MD40 e2e. Residual: overlayfs
    rootless + idmapped mounts (env-gated kernel 5.10 dev, cần ≥5.11; CI ubuntu-24.04 OK);
    zstd compression (gzip tạm); overlay layer (hiện full tar.gz, không thin-provision).
-3a. **Seccomp allowlist theo template (#29, hiện thực: #139) — ƯU TIÊN BẢO MẬT, làm trước mục 4–8**
-   (owner chốt 2026-11-23; manifest §3 "bảo mật ưu tiên số 1"):
-   - `seccomp/profiles/<template>.json`, một allowlist cho mỗi template (busybox,
-     alpine-nginx, debian trước); blocklist D11 giữ làm mặc định khi template chưa
-     có profile; `minict-exec` (setns) phải nạp cùng profile (parity MD0).
-   - Profile sinh từ đo thật (strace/`SCMP_ACT_LOG` trên workload của template),
-     không chép từ Docker default; mỗi profile có test "workload chạy được" +
-     test "syscall ngoài danh sách bị chặn" + control không filter.
-   - Chỉ áp cho workload tin cậy (manifest §3): allowlist thu hẹp bề mặt kernel,
-     không biến minict thành ranh giới cho code lạ.
-   - Ngay sau 3a: mục 6 (Landlock) cũng là việc bảo mật, làm trước mục 4, 5, 7, 8.
+3a. **Seccomp allowlist theo template — XONG 2026-11-23 Phiên 24 (#139, D59)**:
+   - `minictd/internal/minict/profiles/<name>.allow` (go:embed): 4 profile ĐO THẬT
+     bằng `tools/syscall-probe.c` (ptrace, `--after-exec 2` loại pha setup sandbox)
+     trên workload thật (`tools/seccomp-workloads/`): busybox 61, alpine 45,
+     alpine-nginx 75 (nginx+fcgiwrap+sqlite boot + traffic in-instance), debian 59
+     (glibc clone3→ENOSYS fallback được đo luôn) — không chép Docker default (#29).
+   - Filter (copy verbatim MD0 cả hai file): D11 blocklist floor + arg-check
+     clone-NS/socket-AF + clone3 ENOSYS + JEQ allowlist + default EPERM — floor
+     luôn thắng, allowlist không tái-được-nhận entry blocklist.
+   - Data-flow: `RunSpec.SeccompProfile` → renderSpec nhúng `seccomp_allow` vào
+     MINICT_SPEC (payload) + `MINICT_SECCOMP_ALLOW=` vào env-file exec setns
+     (parity); template:<name> kế thừa profile từ spec.json đã lưu.
+   - Tests: SE1-SE4 (workload chạy / syscall ngoài danh sách EPERM / control /
+     floor thắng) + MD41-43 (payload+exec parity / control / template carry) +
+     7 Go unit; mutants M-allow/M-render/M-exec/M-inherit đều bị bắt.
+   - Residual: opt-in (chưa auto-apply theo image); đo lại trên runner nếu surface
+     khác (đã đo dev 5.10); arm64 số syscall; backup:<name> không carry spec
+     (snapshot chỉ tar rootfs — D57 residual).
 4. Port-forward theo instance qua pasta, khai báo trong config instance.
 5. Quota CPU/RAM/pid qua cgroups v2 delegation; disk quota dạng cảnh báo.
    → **Xong phần core 2026-11-20 phiên 13 (#4, D48)**: cgroups v2 islands

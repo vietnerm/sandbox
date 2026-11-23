@@ -147,3 +147,37 @@ outright (consistent sibling caps), nhưng có thể break workload path >255 le
 
 **Áp dụng:** strlen check trước snprintf → die ≥256; memcpy sau check. BIND4 test
 255-byte name → suffix 256 → die. Gated mountinfo-fallback (dev 5.10).
+
+## Phiên 24 — seccomp allowlist theo template (issue #139, GĐ2 mục 3a)
+
+Vấn đề: blocklist D11 mặc định ALLOW — mọi syscall mới thêm vào kernel (vd. io_uring
+class) tự động Exposure. Allowlist theo template thu hẹp bề mặt cho workload đã biết.
+
+Nguồn 1: OCI runtime-spec + Docker seccomp profile generation — https://github.com/moby/moby/blob/master/profiles/seccomp/README.md
+  Docker sinh default.json bằng cách đo (giờ là sysexx/strace-based generate) rồi review
+  tay; clone3 được trả ENOSYS để glibc fallback về clone có arg-check (BPF không deref
+  được pointer) — cùng trick D11 đã dùng. Bài học: profile phải đo trên workload thật
+  của template, KHÔNG chép default của Docker (khác libc, khác phiên bản rootfs).
+Nguồn 2: systemd seccomp filter + SystemCallFilter — https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html#SystemCallFiltering
+  systemd unit dùng SystemCallFilter=~@obsolete (deny-set) hoặc =@system-service
+  (allow-set theo nhóm syscall-name, libseccomp). Bài học: cho phép ghép theo "nhóm"
+  giúp maintain; nhưng libseccomp là dep ngoài → minict giữ số syscall x86_64 trực tiếp
+  (đơn mục tiêu arch đã ghi manifest §5), tên chỉ là comment trong file profile.
+Nguồn 3 (tham chiếu thiết kế probe): strace PTRACE_SYSCALL mechanism — https://man7.org/linux/man-pages/man2/ptrace.2.html
+  Máy dev không có strace/sudo → viết `tools/syscall-probe.c` (~140 dòng, PTRACE_SETOPTIONS
+  TRACESYSGOOD|TRACEFORK|TRACEVFORK|TRACECLONE|TRACEEXEC) đếm tập syscall của toàn bộ
+  cây con của `minict` — đúng phạm vi payload, không nhiễm harness.
+
+Áp dụng cho minict:
+1. Profile = file text `minictd/internal/minict/profiles/<name>.allow` (go:embed —
+   số syscall x86_64 + tên làm comment; go:embed bắt buộc module-relative nên thư mục
+   nằm trong minictd/ — số(name) một dòng, # comment).
+2. Data-flow: Go load profile → render `seccomp_allow <nr>[,...]` vào MINICT_SPEC
+   (payload) và `MINICT_SECCOMP_ALLOW=<nr>[,...]` vào env-file (exec setns) → C parse
+   (host-side, trước unshare/setns) → install filter trong child (giống D11).
+3. Filter allowlist = blocklist D11 làm SÀN (JEQ→EPERM trước), rồi arg-checks
+   clone-NS/socket-AF giữ nguyên, rồi JEQ allowlist→ALLOW, default EPERM. clone3
+   luôn ENOSYS (fallback glibc/musl về clone đã arg-check). Không libseccomp.
+4. MD0 (so copy verbatim) giữ nguyên vùng so: enum + g_blocklist + install_seccomp —
+   hai bản sửa GIỐNG NHAU từng byte trong vùng đó; phần parse directive khác nhau nằm
+   ngoài vùng so.
