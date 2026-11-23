@@ -341,7 +341,7 @@
 ## Đang làm
 - (trống)
 
-## Giai đoạn 1 — minict runtime (HIỆN TẠI, theo thứ tự ưu tiên)
+## Giai đoạn 1 — minict runtime (XONG — DoD 6/6, manifest tick 2026-11-23)
 
 > Hướng dự án (manifest, chốt 2026-11-17): **"Proxmox nhẹ", rootless tuyệt đối**.
 > GĐ1 là nền runtime; lõi "Proxmox" (API, template, snapshot, quota) là GĐ2–3.
@@ -379,10 +379,10 @@
    (hiện nginx), API production-grade (thay CGI shell bằng runtime thật —
    GĐ2), SQLite WAL/concurrency tuning.
 
-## Giai đoạn 2 — Control plane + storage (HIỆN TẠI từ 2026-11-20 phiên 12; GĐ1 đã đóng cả 5 mục nền phiên 11)
+## Giai đoạn 2 — Control plane + storage (HIỆN TẠI — owner chốt 2026-11-23, manifest §8; ZAI bắt đầu từ phiên 12 ngày 2026-11-20)
 
-> Luật D27 (owner, 2026-11-18) HẾT hiệu lực chặn cho GĐ2: GĐ1 đã đóng cả 5
-> mục nền (rootfs alpine+debian, escape sâu, pasta, web stack — xem "Đã xong").
+> Luật D27 (owner, 2026-11-18) hết hiệu lực: owner chốt GĐ2 là giai đoạn hiện tại
+> ngày 2026-11-23 và manifest §8 đã ghi lại.
 
 0. **GATE research:** exec vào instance đang chạy rootless — **đo được 2026-11-18**
    (D25, `minict-exec` setns, MD5–MD13); xác nhận trên runner CI: **đạt** —

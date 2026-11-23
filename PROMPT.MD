@@ -325,8 +325,9 @@ Nếu tất cả xanh → ghi "DAY PASS" vào cuối daily-log. Nếu có đỏ 
    (giai đoạn hiện tại + thứ tự mục nằm ngay mục "Giai đoạn N" của file đó; hướng
    tổng thể 5 giai đoạn xem `idea/manifest.md` §7).
 
-**minictd (GĐ2 seed, D27):** không chọn việc GĐ2 trên `minictd/` khi GĐ1 còn mục
-mở — chỉ sửa bảo mật (S1–S6 trong `minictd/docs/GAPS.md`) và giữ `make test-minictd` xanh.
+**Giai đoạn hiện tại: GĐ2** (owner chốt 2026-11-23, manifest §8). Ngoại lệ D27
+("minictd chỉ sửa bảo mật") đã hết hiệu lực; việc GĐ2 trên `minictd/` theo thứ tự
+roadmap. Trước khi mở code GĐ3 phải dừng và hỏi owner.
 
 Khi roadmap trống hoặc không khả thi (mọi mục bị chặn môi trường/owner), mở issue
 `type:chore` `area:docs` đề xuất cập nhật `docs/roadmap.md` — không tự chế việc mới
