@@ -107,45 +107,53 @@ mặc định: single-uid mapping. Mọi file thuộc "root" trong instance, cá
 
 ## 7. Năm giai đoạn (What) và tiêu chí xong từng giai đoạn
 
-### Giai đoạn 1 — minict: runtime container mạnh (HIỆN TẠI)
+### Giai đoạn 1 — minict: runtime container mạnh (XONG 2026-11-20)
 
 **Đã xong** (chi tiết trong docs/roadmap.md): userns + mountns + pidns + utsns +
 ipcns + netns, pivot_root, capdrop, NNP, PDEATHSIG + pidns teardown, seccomp-bpf
-blocklist, busybox httpd trong netns qua unix-socket bridge, rootfs Alpine, pasta
-egress prototype; `make test` 7 suite / 105 case (2026-11-19), perf ~2 ms / ~1.2 MB / ~2 MB.
+blocklist, busybox httpd trong netns qua unix-socket bridge, rootfs Alpine + Debian,
+pasta egress + DNS + port-forward, web stack nginx + CGI + SQLite trong một instance;
+`make test` 10 suite (2026-11-23), perf ~2 ms / ~1.2 MB / ~2 MB.
 
-**DoD giai đoạn 1** (xong khi tất cả đúng; tick lại theo thực tế 2026-11-19 — 3/6):
-- [ ] **Rootfs distro thật**: Alpine hoặc Debian minirootfs chạy được trong
+**DoD giai đoạn 1** (tick lại theo thực tế 2026-11-23 — 6/6; owner chốt chuyển GĐ2 ngày 2026-11-23):
+- [x] **Rootfs distro thật**: Alpine hoặc Debian minirootfs chạy được trong
       instance (có `/proc` trên nền tảng mục tiêu, init tối thiểu, single-uid
       mapping theo §5), không còn chỉ busybox.
       → Alpine 3.22.8 chạy được + trọn isolation suite trên alpine (#24, #54);
-      `/proc` trong pidns đã sửa (#64, D39 — PROC1–4/AL4 xanh trên runner kernel 7.0);
-      tick khi owner gắn `verified` cho #31.
-- [ ] Stack web thật (nginx/caddy + API + SQLite hoặc Redis) chạy trong một
-      instance, host truy cập được. → **chưa bắt đầu** (cần DNS/egress để cài gói).
-- [ ] Mạng instance ↔ host/Internet qua **pasta hoặc slirp4netns**; bridge D16 chỉ còn là fallback.
-      → prototype egress + port-forward qua pasta đã gộp (#57/#59, xanh trên runner);
-      **còn thiếu DNS** (`apk add` online) → chưa tick.
+      `/proc` trong pidns đã sửa (#64, D39 — PROC1–4/AL4 xanh trên runner kernel 7.0;
+      owner đã gắn `verified` cho #31); Debian bookworm-slim (#88, D46, DB1–DB8).
+- [x] Stack web thật (nginx/caddy + API + SQLite hoặc Redis) chạy trong một
+      instance, host truy cập được. → nginx + fcgiwrap + CGI + SQLite trên alpine,
+      `./sandbox.sh up|down|bench`, cold start median 127 ms, ST1–ST7 (#85, D45).
+      Residual (không chặn GĐ2): caddy, API production-grade, đo RAM idle stack.
+- [x] Mạng instance ↔ host/Internet qua **pasta hoặc slirp4netns**; bridge D16 chỉ còn là fallback.
+      → egress + port-forward qua pasta (#57/#59), DNS `--dns-forward` (#74, D42),
+      `apk add` online (#79, D43), `apt` online (#88, D46).
 - [x] Escape suite mở rộng (issue #5): fd-based, /proc/self/root, setuid trong rootfs, core dump leak.
-      → #48 + #54 (D36); issue #5 chờ owner gắn `verified` (§6).
+      → #48 + #54 (D36); owner đã gắn `verified` cho #5.
 - [x] Graceful stop (issue #6), vì control plane GĐ2 cần. → pidns-1 signal shim (#21, D19).
 - [x] Perf vẫn trong ngưỡng perf-guard. → perf-check PASS trên runner mỗi PR.
 
-### Giai đoạn 2 — Control plane + storage (lõi "Proxmox nhẹ")
+### Giai đoạn 2 — Control plane + storage (lõi "Proxmox nhẹ") (HIỆN TẠI từ 2026-11-23)
 
 **Gate nghiên cứu trước khi viết code:** `exec` vào instance đang chạy rootless
 (daemon giữ caps trong userns nó tạo → `setns` từ phía daemon), phải đo được.
 → **Đo được 2026-11-18** (D25, `minict-exec`), cùng lúc owner gộp sớm "seed"
-`minictd/` (ngoại lệ §8 bên dưới). Các ô DoD dưới đây vẫn chưa tick.
+`minictd/` (2026-11-18, D27). Tiến độ thực tế ghi dưới từng ô; ô chỉ tick khi
+xong trọn vẹn.
 
 **DoD giai đoạn 2:**
 - [ ] Daemon user-level (systemd `--user` unit) + REST API + CLI `sandbox`:
       create/start/stop/destroy/list/exec cho nhiều instance; state machine
       created/running/stopped; **instance tồn tại qua reboot** (autostart tuỳ chọn).
-- [ ] Template: tạo instance từ template; lưu instance thành template.
+      → CLI `sandbox` + systemd `--user` unit + `--autostart` + reconcile (#92, D47);
+      còn thiếu: unit chạy thật dưới user manager (lingering) trên host có systemd.
+- [x] Template: tạo instance từ template; lưu instance thành template.
+      → `save-template` + `template:<name>` (#128, D56); residual: list/remove template.
 - [ ] Snapshot/backup/restore từng instance (overlay layer + tar.zst).
 - [ ] Port-forward theo instance (pasta), khai báo trong config instance.
 - [ ] Quota CPU/RAM/pid qua cgroups v2 delegation; quota disk dạng cảnh báo.
+      → CPU/RAM/pid xong (#95, D48, CG0–CG5); còn thiếu cảnh báo quota disk.
 - [ ] Control plane idle ≤ 30 MB RSS; destroy không rò rỉ process/mount/netns.
 
 ### Giai đoạn 3 — Web UI + console
@@ -183,8 +191,10 @@ GĐ1 → GĐ2 → GĐ3 → GĐ4 → GĐ5. Không nhảy giai đoạn; nếu bu�
 có sẵn sớm), cập nhật manifest + roadmap **trước** khi code. Mỗi issue/PR gắn
 đúng một giai đoạn (label `phase:N`).
 
-**Ngoại lệ đã ghi (2026-11-18, owner chốt trên decision card — D27):** code
-control-plane `minictd/` (daemon + `minict-exec` + `MINICT_SPEC`) do owner đặt
-viết ngoài chu trình được gộp sớm như **GĐ2 seed**. Giai đoạn hiện tại **vẫn là
-GĐ1**; với `minictd/` chỉ sửa bảo mật và giữ `make test-minictd` xanh, không mở
-việc GĐ2 mới trước khi DoD GĐ1 xong. PR của seed gắn `phase:2`.
+**Lịch sử chuyển giai đoạn:**
+- 2026-11-18 (D27): code control-plane `minictd/` do owner đặt viết ngoài chu trình
+  được gộp sớm như GĐ2 seed; khi đó GĐ1 vẫn là giai đoạn hiện tại, `minictd/` chỉ
+  sửa bảo mật và giữ `make test-minictd` xanh.
+- 2026-11-23: DoD GĐ1 đạt 6/6; owner chốt **GĐ2 là giai đoạn hiện tại**. Ngoại lệ
+  D27 hết hiệu lực, việc GĐ2 trên `minictd/` theo thứ tự trong `docs/roadmap.md`.
+  GĐ3 (Web UI) vẫn phải dừng và hỏi owner trước khi mở code.

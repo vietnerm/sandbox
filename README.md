@@ -25,14 +25,14 @@ guy hiểm + clone ns-flags + AF_ALG + AF_NETLINK; `MINICT_NO_SECCOMP=1` để t
 do A/B), PDEATHSIG + pidns teardown.
 Isolated dirs: tmpfs /tmp; /dev = bind 4 node (null/zero/urandom/random).
 
-## Control plane `minictd` (GĐ2 seed, 2026-11-18)
+## Control plane `minictd` (GĐ2 — giai đoạn hiện tại)
 
 Daemon rootless (Go stdlib) quản lý nhiều instance qua HTTP API + token:
 run/start/stop/remove/inspect/logs/stats và **exec vào instance đang chạy bằng
 setns** (`minict-exec`, seccomp cài lại). Cấu hình instance qua `MINICT_SPEC`
-(hostname, env, bind[:ro], tmpfs, shm, ulimit, nhiều webport). GĐ1 vẫn là giai
-đoạn hiện tại — minictd chỉ giữ xanh + sửa bảo mật (D27). Xem `minictd/README.md`;
-test: `make test-minictd` (20 case).
+(hostname, env, bind[:ro], tmpfs, shm, ulimit, nhiều webport), CLI `sandbox`,
+systemd `--user` unit, quota cgroups v2, template. GĐ1 xong 2026-11-20; GĐ2 là giai
+đoạn hiện tại từ 2026-11-23. Xem `minictd/README.md`; test: `make test-minictd`.
 
 ## Quick start
 
