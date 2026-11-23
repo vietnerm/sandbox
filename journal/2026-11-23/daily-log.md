@@ -236,11 +236,11 @@ Dừng?      : không (GĐ2 còn systemd-real + mục 3-7; GD3 CHƯA chạm per 
 - Host baseline: unchanged 3/3.
 - Bằng chứng: `evidence/snapshot.txt`.
 
-### Pha B — PR (feat/* theo thứ tự §11)
+### Pha B — PR #131 (feat/* theo thứ tự §11)
 - B1: nhánh con trực tiếp của main `2634286` → up-to-date.
-- B2 — SCR: ... (sau CI).
-- B3 — SIA: ... (sau CI).
-- B4 — verdict: ... (sau SIA).
+- B2 — SCR @ `1f54b29`: **PASS** — CI clean-room: build-test green ×2 = make test 10 suites + make test-web 9/9 + make test-minictd 40/40 (MD40 mới) + perf-check green; scan green. Dev local 9/10 (test_cg env Go). Mutant M-skip-stopped defer (low, MD40 non-vacuous). Comment SCR trên PR #131.
+- B3 — SIA @ `1f54b29`: **PASS** — 11/11 OK; claim 0 sai; test rỗng 0; bảo mật 0 critical/high/medium; 2 low (mutant deferral, CVE NVD partial). Label `audit:pass`. Comment SIA trên PR.
+- B4 — verdict pass → gộp (Pha C). Không cần sửa (chỉ low).
 
 ### Kế hoạch ngày mai
 - Sau merge #130: GĐ2 mục 3 snapshot/restore done; tiếp overlayfs rootless (phần a, env-gated,
@@ -249,4 +249,24 @@ Dừng?      : không (GĐ2 còn systemd-real + mục 3-7; GD3 CHƯA chạm per 
   tiên khi mọi mục GĐ2 hoàn thành. GĐ2: mục 1 (S-series done, residuals blocked), mục 2 done,
   mục 3 snapshot done (overlayfs deferred), mục 4-7 chưa mở.
 
-### Pha C/E — cập nhật sau merge (SBG apply + ledger sẽ ghi ở phần cuối phiên)
+### Pha C — Gộp (SBG MODE=apply)
+- CI `1f54b29` xanh 4/4 → flip ready (GraphQL) → **squash `32072aa`** REST PUT match-head → **#130 auto-close**.
+- Remote sau Phiên 22: **chỉ `main`** @ `32072aa`. SIA verdict PASS (không delta — code không đổi sau audit).
+
+### Pha E — Kết ngày (SBG)
+- SBG MODE=apply: `feat/130-snapshot` DELETE_MERGED; ledger qua PR này (`chore(branches): ledger 2026-11-23 Phiên 22`).
+- Roadmap: "Đã xong" thêm Phiên 22 (snapshot); **GĐ2 mục 3 snapshot/restore done** (overlayfs deferred env-gated).
+- Self-audit §7: CI main xanh (`32072aa`); cve-gate rc=0; host unchanged 3/3.
+
+DAY PASS — 2026-11-23 Phiên 22: issue #130 done (merge #131 `32072aa` @ `1f54b29`;
+SCR PASS CI clean-room (build-test ×2 green, test-minictd 40/40 MD40 mới, perf green);
+SIA PASS 11/11 + 2 low; CI xanh `32072aa`; remote chỉ `main`; GĐ2 mục 3 snapshot/restore done).
+
+=== SBG REPORT — 2026-11-23 (apply, Phiên 22) ===
+Đã gộp     : 2  — #131 (feat #130, squash `32072aa`), ledger PR này
+Đã xoá     : 1  (`feat/130-snapshot`)
+Giữ lại    : 0
+Còn lại    : main
+CI main    : xanh (32072aa)
+Dừng?      : không (GĐ2 còn overlayfs (env-gated) + systemd-real + mục 4-7; GD3 CHƯA chạm)
+=============================================
