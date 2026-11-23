@@ -1,7 +1,7 @@
 # Root Makefile — entry points required by PROMPT.MD / CI.
 # The binary build itself lives in sandbox/Makefile.
 
-.PHONY: all build minictd rootfs rootfs-alpine rootfs-debian test test-escape test-escape-alpine test-seccomp test-netns test-alpine test-debian test-web test-stack test-minictd test-pasta unicode-check test-unicode test-cve-gate check-docs test-check-docs perf-check cve-check bench clean help
+.PHONY: all build minictd rootfs rootfs-alpine rootfs-debian test test-escape test-escape-alpine test-seccomp test-netns test-alpine test-debian test-web test-stack test-minictd test-pasta unicode-check test-unicode test-cve-gate test-cve-kernel check-docs test-check-docs perf-check cve-check bench clean help
 
 all: build
 
@@ -78,6 +78,10 @@ perf-check: build rootfs
 cve-check:
 	python3 tools/cve-check.py
 
+# kernel CVE range evaluator + discovery (owner 2026-11-23), offline fixtures
+test-cve-kernel:
+	bash tests/test_cve_kernel.sh
+
 # README drift gate (issues #26, #27): Known Limitations links, relative
 # links, stale phrases, Platform Support vs manifest §5
 check-docs:
@@ -121,6 +125,7 @@ help:
 	@echo "make test-alpine  - alpine rootfs suite (8 cases)"
 	@echo "make perf-check   - cold start / RSS / disk vs thresholds"
 	@echo "make cve-check    - NVD check of the CVE watchlist"
+	@echo "make test-cve-kernel - cve-kernel.py self-test (16 checks, offline)"
 	@echo "make check-docs   - README drift gate (links, stale phrases, Platform Support vs manifest)"
 	@echo "make test-check-docs - check-docs self-test (6 cases, negative controls)"
 	@echo "make unicode-check - scan for hidden/bidi Unicode (Trojan Source)"
