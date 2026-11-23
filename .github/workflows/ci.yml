@@ -41,6 +41,11 @@ jobs:
         run: mkdir -p ci-evidence && make test 2>&1 | tee ci-evidence/test-all.txt
       - name: test-cve-gate (cve-daily issue gate, 7 cases)
         run: make test-cve-gate
+      # README drift gate (issues #26, #27): fails the PR when README points at
+      # missing files, repeats a fixed limitation, or its Platform Support
+      # table disagrees with idea/manifest.md §5. Self-test has negative controls.
+      - name: check-docs (README vs repo + manifest §5)
+        run: make check-docs && make test-check-docs
       - name: test-web (6 cases)
         run: mkdir -p ci-evidence && make test-web 2>&1 | tee ci-evidence/test-web.txt
       - name: perf-check (cold start / RSS / disk vs thresholds)

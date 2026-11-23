@@ -1,0 +1,5 @@
+# Một câu mỗi dòng, so khớp không phân biệt hoa thường với README.md.
+# Khi một giới hạn đã ghi được sửa, PR sửa nó thêm câu cũ vào đây (issue #26).
+bị môi trường nuốt
+host seccomp chặn mount proc
+Không /proc trong sandbox

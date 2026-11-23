@@ -22,3 +22,4 @@ Closes #<issue-number>
 - [ ] Rootless (uid ≥ 1000)
 - [ ] Có test mới trong `tests/`
 - [ ] Có `journal/YYYY-MM-DD/decisions/<slug>.md` tương ứng
+- [ ] Nếu PR sửa một giới hạn/hành vi đã ghi trong README → đã cập nhật `## Known Limitations` và thêm câu cũ vào `tools/docs-stale-phrases.txt` (`make check-docs`)
