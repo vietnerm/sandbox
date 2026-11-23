@@ -316,15 +316,35 @@ Dừng?      : không (GĐ2 còn overlayfs (env-gated) + systemd-real + mục 4-
 - Bằng chứng: `evidence/mountinfo-truncate.txt`.
 - **BIND4 PASS trên dev 5.10** (mountinfo-fallback) — fix verified locally.
 
-### Pha B — PR (fix/* theo thứ tự §11)
+### Pha B — PR #138 (fix/* theo thứ tự §11)
 - B1: nhánh con của main `a5b83fd` → up-to-date.
-- B2 — SCR: ... (sau CI).
-- B3 — SIA: ... (sau CI).
-- B4 — verdict: ... (sau SIA).
+- B2 — SCR @ `afda9c6`: **PASS** — CI clean-room (latest build-test green 137486446233 + re-run 137487796978 green; first push-run 137485805170 pasta flake PT1/PT2/NET10 — binary fetch infra, NOT regression #117, re-run pass) + dev local (isolation 35 BIND4 PASS mountinfo-fallback). C mutant (revert snprintf) buildable local → BIND4 đỏ (non-vacuous).
+- B3 — SIA @ `afda9c6`: **PASS** — 11/11 OK; claim 0 sai; test rỗng 0; bảo mật 0 critical/high/medium; 2 low (CI pasta flake re-run pass, CVE NVD partial). Label `audit:pass`. Comment SIA trên PR.
+- B4 — verdict pass → gộp (Pha C).
 
 ### Kế hoạch ngày mai
 - Sau merge #117: from-audit #117 closed; còn #119 (TOCTOU socket-path, Go), #109 (chờ
   maintainer). GĐ2 mục 4-7 env-gated; overlayfs rootless (mục 3 phần a) CI-only possible.
 - **GD3 (Web UI) CHƯA chạm** — per chỉ thị owner.
 
-### Pha C/E — cập nhật sau merge (SBG apply + ledger sẽ ghi ở phần cuối phiên)
+### Pha C — Gộp (SBG MODE=apply)
+- CI `afda9c6` xanh (sau re-run push-run pasta flake): build-test ×2 green + perf + scan → flip ready (GraphQL) → **squash `abcc7ed`** REST PUT match-head → **#117 auto-close**.
+- Remote sau Phiên 23: **chỉ `main`** @ `abcc7ed`. SIA verdict PASS.
+
+### Pha E — Kết ngày (SBG)
+- SBG MODE=apply: `fix/117-mountinfo-truncate` DELETE_MERGED; ledger qua PR này (`chore(branches): ledger 2026-11-23 Phiên 23`).
+- from-audit #117 closed; còn #119 (TOCTOU socket-path, Go), #109 (chờ maintainer).
+- Self-audit §7: CI main xanh (`abcc7ed`); cve-gate rc=0; host unchanged 3/3.
+
+DAY PASS — 2026-11-23 Phiên 23: issue #117 done (merge #138 `abcc7ed` @ `afda9c6`;
+SCR PASS (CI clean-room re-run green + dev BIND4 PASS mountinfo-fallback); SIA PASS 11/11 + 2 low;
+isolation 35 dev (BIND4) / 34 CI (BIND4 SKIP mount_setattr); CI xanh `abcc7ed`; remote chỉ `main`).
+
+=== SBG REPORT — 2026-11-23 (apply, Phiên 23) ===
+Đã gộp     : 2  — #138 (fix #117, squash `abcc7ed`), ledger PR này
+Đã xoá     : 1  (`fix/117-mountinfo-truncate`)
+Giữ lại    : 0
+Còn lại    : main
+CI main    : xanh (abcc7ed — build-test ×2 + perf + scan; push-run pasta flake re-run pass)
+Dừng?      : không (GĐ2 còn overlayfs (env-gated) + systemd-real + mục 4-7; GD3 CHƯA chạm)
+=============================================
