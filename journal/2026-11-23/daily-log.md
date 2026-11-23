@@ -535,15 +535,39 @@ Dừng?      : không (GĐ2 còn overlayfs/env-gated + mục 4-7; GD3 CHƯA ch�
 - Bằng chứng: `evidence/landlock.txt`.
 - **LL1 SKIP trên dev 5.10** (ENOSYS) — CI ubuntu-24.04 (6.x) verifies.
 
-### Pha B — PR (feat/* theo thứ tự §11)
+### Pha B — PR #150 (feat/* theo thứ tự §11)
 - B1: nhánh con của main `f48028d` → up-to-date.
-- B2 — SCR: env (no Go + Landlock ENOSYS) → CI clean-room (≥5.13) verifies LL1.
-- B3 — SIA: ... (sau CI).
-- B4 — verdict: ... (sau SIA).
+- B2 — SCR @ `470964d`: **PASS** — CI clean-room (kernel 6.x ≥5.13): build-test green ×2,
+isolation 36 incl **LL1 PASS** (spec.ReadOnly → write /etc EACCES, /tmp OK). Dev 5.10 LL1
+SKIP (ENOSYS). Mutant M-skip-restrict_self defer (CI-only). Comment SCR trên PR #150.
+- B3 — SIA @ `470964d`: **PASS** — 11/11 OK; claim 0 sai; test rỗng 0 (LL1 non-vacuous);
+bảo mật 0 critical/high/medium; 2 low (mutant deferral, CVE NVD partial). Label `audit:pass`.
+- B4 — verdict pass → gộp (Pha C).
 
 ### Kế hoạch ngày mai
 - #30 (signal race + stress test CI) theo chỉ thị user — Phiên 27.
 - GĐ2 còn overlayfs (env-gated), mục 4 port-forward (pasta), mục 7 RSS, systemd-real.
 - **GD3 (Web UI) CHƯA chạm** — per chỉ thị owner.
 
-### Pha C/E — cập nhật sau merge (SBG apply + ledger sẽ ghi ở phần cuối phiên)
+### Pha C — Gộp (SBG MODE=apply)
+- CI `470964d` xanh 4/4 (build-test ×2 + perf + scan; LL1 PASS trên kernel 6.x) → flip ready
+  (GraphQL) → **squash `b79f718`** REST PUT match-head → **#149 auto-close**.
+- Remote sau Phiên 26: **chỉ `main`** @ `b79f718`. SIA verdict PASS.
+
+### Pha E — Kết ngày (SBG)
+- SBG MODE=apply: `feat/149-landlock` DELETE_MERGED; ledger qua PR này.
+- **GĐ2 mục 6 (Landlock) XONG** (CI-only, kernel ≥5.13; spec.ReadOnly enforced ro-root).
+- Self-audit §7: CI main xanh (`b79f718`); cve-gate rc=0; host unchanged 3/3.
+
+DAY PASS — 2026-11-23 Phiên 26: issue #149 done (merge #150 `b79f718` @ `470964d`;
+SCR PASS CI clean-room (LL1 PASS kernel 6.x); SIA PASS 11/11 + 2 low; isolation 36 CI
+(LL1) / 35 dev (LL1 SKIP); CI xanh `b79f718`; remote chỉ `main`; GĐ2 mục 6 xong).
+
+=== SBG REPORT — 2026-11-23 (apply, Phiên 26) ===
+Đã gộp     : 2  — #150 (feat #149, squash `b79f718`), ledger PR này
+Đã xoá     : 1  (`feat/149-landlock`)
+Giữ lại    : 0
+Còn lại    : main
+CI main    : xanh (b79f718 — build-test ×2 + perf + scan; LL1 PASS kernel 6.x)
+Dừng?      : không (còn #30 Phiên 27 + overlayfs/mục 4-7; GD3 CHƯA chạm)
+=============================================
