@@ -103,7 +103,7 @@ Mỗi dòng là một câu và một link tới bằng chứng; chi tiết nằm
 
 - **Chỉ cho workload tin cậy tới khi có microVM (GĐ4):** instance chia chung kernel với host, một lỗ hổng kernel có thể thoát ra ngoài; namespace/capdrop/seccomp chỉ thu hẹp rủi ro ([cve-watchlist](docs/cve-watchlist.md), [roadmap](docs/roadmap.md)).
 - Single-uid mapping: mọi file trong instance thuộc "root", gói cần `chown` sang uid khác phải cài lúc build hoặc bỏ script ([alpine-rootfs](journal/2026-11-17/decisions/alpine-rootfs.md), [web-stack](journal/2026-11-20/decisions/web-stack.md)).
-- Seccomp là blocklist (mặc định ALLOW), chưa có allowlist theo template ([seccomp](journal/2026-11-17/decisions/seccomp.md)).
+- Seccomp allowlist theo template là **opt-in** (4 profile đo sẵn: busybox/alpine/alpine-nginx/debian; instance không đặt `seccomp_profile` → blocklist D11 vẫn mặc định); workload mới phải đo lại profile bằng `tools/seccomp-profile-gen.sh` trước ([seccomp-allowlist](journal/2026-11-23/decisions/seccomp-allowlist.md), [seccomp](journal/2026-11-17/decisions/seccomp.md)).
 - `/proc` trong pidns chỉ mount được khi host không chặn mount; nếu bị chặn, sandbox chạy tiếp không có `/proc` (warn-only) ([proc-pidns](journal/2026-11-19/decisions/proc-pidns.md)).
 - Chưa có overlayfs rootless: mỗi instance là một bản sao rootfs riêng ([roadmap GĐ2 mục 3](docs/roadmap.md)).
 - `minict.sh exec` tạo bộ namespace mới trên cùng rootfs; exec vào instance đang chạy (setns) chỉ có qua `minictd` ([minictd](journal/2026-11-18/decisions/minictd.md)).
