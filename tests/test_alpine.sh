@@ -44,9 +44,8 @@ ARCH="x86_64"
 
 [[ -x "$MINICT" ]] || { echo "build first: make -C sandbox"; exit 1; }
 
-if [[ ! -x "$ROOTFS/bin/busybox" ]]; then
-    bash "$REPO/sandbox/mkrootfs-alpine.sh" "$ROOTFS" >/dev/null || exit 1
-fi
+# idempotent: builds if missing, else restores empty package dirs (#55)
+bash "$REPO/sandbox/mkrootfs-alpine.sh" "$ROOTFS" >/dev/null || exit 1
 
 # --- pre-seed local repo: 1 gói nhỏ KHÔNG deps (acpid-openrc), version lấy
 # từ APKINDEX v3.22 main; signature được apk verify bằng alpine-keys preinstall

@@ -89,10 +89,47 @@ install_stack_pkgs() { # <target-dir> — best-effort, loud on failure
     fi
 }
 
+# restore_pkg_dirs <target-dir> — recreate every directory the apk DB says
+# the installed packages own (F: lines), with the mode from the M: line.
+# Root cause of issue #55: rootfs-alpine/ is tracked in git (D44 keeps it so)
+# but git does not store EMPTY directories. A fresh clone (CI checkout,
+# pristine clone) has bin/busybox + etc/alpine-release, so the "already
+# exists" path below skipped the build and the rootfs lacked home, tmp,
+# media, root, run, srv, sys, proc, mnt, opt, dev/pts, var/cache, ... —
+# exactly the "missing after build" set seen 2/4 runs (the 2 green runs were
+# rebuilt from the tarball). The DB is part of the tracked tree, so this
+# needs no network. Idempotent: existing dirs are left alone.
+restore_pkg_dirs() {
+    local T="$1" db="$1/lib/apk/db/installed" line d="" n=0
+    [[ -f "$db" ]] || { echo "no apk DB at $db — cannot restore dirs"; return 1; }
+    while IFS= read -r line; do
+        case "$line" in
+            F:*)
+                d="${line#F:}"
+                # the DB is ours, but never let a path leave the rootfs
+                case "/$d/" in */../*|*/./*|//*) d=""; continue ;; esac
+                if [[ ! -d "$T/$d" ]]; then
+                    mkdir -p "$T/$d"; n=$((n + 1))
+                    # remember the dir so a following M: line may set its mode
+                else
+                    d=""
+                fi ;;
+            M:*)
+                # M:<uid>:<gid>:<octal mode> — uid/gid collapse to the calling
+                # uid under the single-uid map (D20); only the mode matters
+                [[ -n "$d" ]] && chmod "${line##*:}" "$T/$d" ;;
+            P:*) d="" ;;
+        esac
+    done < "$db"
+    [[ $n -gt 0 ]] && echo "==> restored $n empty package dir(s) missing from the tree (#55)"
+    return 0
+}
+
 # MINICT_STACK_AUTOADD=1: rootfs already exists but lacks the stack — install
 # only (used by sandbox.sh/test_stack.sh to upgrade an older build in place).
 if [[ "${MINICT_STACK_AUTOADD:-0}" == "1" ]]; then
     if [[ -x "$TARGET/bin/busybox" && -f "$TARGET/etc/alpine-release" ]]; then
+        restore_pkg_dirs "$TARGET"
         [[ -x "$TARGET/usr/sbin/nginx" ]] || install_stack_pkgs "$TARGET"
         exit 0
     fi
@@ -102,6 +139,8 @@ fi
 
 if [[ -x "$TARGET/bin/busybox" && -f "$TARGET/etc/alpine-release" ]]; then
     echo "alpine rootfs '$TARGET' already exists, skipping (rm -rf it to rebuild)"
+    restore_pkg_dirs "$TARGET"
+    mkdir -p "$TARGET/home/minict"
     [[ -x "$TARGET/usr/sbin/nginx" ]] || echo "note: stack packages NOT in this rootfs (MINICT_STACK_AUTOADD=1 re-runs install)"
     exit 0
 fi
@@ -159,11 +198,10 @@ chmod 1777 "$TARGET/tmp"
 # sanity: minict requires /bin/busybox; minirootfs ships it (busybox static)
 [[ -x "$TARGET/bin/busybox" ]] || { echo "no /bin/busybox in minirootfs?!"; exit 1; }
 [[ -x "$TARGET/sbin/apk" ]] || { echo "no /sbin/apk in minirootfs?!"; exit 1; }
-# D36 residual: alpine 3.22.8 tarball ships /tmp + /home, but empty dirs
-# were observed MISSING after intermittent builds (2/4 runs 2026-11-19,
-# issue #55) — create them unconditionally, fail loud on failure
-mkdir -p "$TARGET/home/minict" "$TARGET/media" "$TARGET/root" "$TARGET/run" \
-         "$TARGET/srv" "$TARGET/sys"
+# issue #55: a fresh tarball extract already has every package dir; this is
+# a no-op there and keeps both build paths on the same code
+restore_pkg_dirs "$TARGET"
+mkdir -p "$TARGET/home/minict"
 
 # stack packages for fresh builds (D45) — MINICT_STACK=0 opts out (plain rootfs)
 if [[ "${MINICT_STACK:-1}" == "1" ]]; then

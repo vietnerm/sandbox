@@ -22,12 +22,10 @@ AROOTFS="$REPO/rootfs-alpine"
 # self-heal: intermittent builds were observed shipping WITHOUT the tarball's
 # empty dirs (home/tmp/media/root/run/srv/sys — issue #55); FS6/UID2 then fail
 # with a confusing "can't create /home/iso". Rebuild whenever dirs are missing.
-if ! [[ -d "$AROOTFS/bin" && -d "$AROOTFS/home" && -d "$AROOTFS/tmp" \
-        && -d "$AROOTFS/media" && -d "$AROOTFS/root" && -d "$AROOTFS/run" \
-        && -d "$AROOTFS/srv" && -d "$AROOTFS/sys" ]]; then
-    rm -rf "$AROOTFS"
-    bash "$REPO/sandbox/mkrootfs-alpine.sh" "$AROOTFS" >/dev/null || exit 1
-fi
+# the builder is idempotent: fresh build from the pinned tarball, or on an
+# existing git-checkout tree restore the empty package dirs git does not
+# store (issue #55 root cause) — no rm -rf of the tracked tree any more
+bash "$REPO/sandbox/mkrootfs-alpine.sh" "$AROOTFS" >/dev/null || exit 1
 [[ -x "$AROOTFS/bin/busybox" ]] || { echo "alpine rootfs build failed"; exit 1; }
 [[ -d "$AROOTFS/home" && -d "$AROOTFS/tmp" ]] \
     || { echo "alpine rootfs STILL missing /home//tmp after rebuild — issue #55"; exit 1; }

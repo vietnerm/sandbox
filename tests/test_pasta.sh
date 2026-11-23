@@ -218,7 +218,8 @@ run_case PT3C "control: WITHOUT pasta, resolver unavailable" pass pt3c_test
 # locally, rebuild once from the pinned tarball — a CDN failure here is
 # env-blocked (rc 125 = SKIP, never a fake PASS; same class as AL5, SIA #24)
 ensure_alpine_rootfs() {
-    [[ -d "$REPO/rootfs-alpine" ]] && return 0
+    # always run the builder: on an existing (git-checkout) tree it only
+    # restores the empty package dirs git cannot store (issue #55), offline
     bash "$REPO/sandbox/mkrootfs-alpine.sh" "$REPO/rootfs-alpine" >/dev/null 2>&1 \
         || return 125
     return 0
