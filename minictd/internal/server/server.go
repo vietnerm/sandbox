@@ -47,6 +47,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/sandboxes/{name}/state", s.handleState)
 	mux.HandleFunc("GET /v1/sandboxes/{name}/logs", s.handleLogs)
 	mux.HandleFunc("GET /v1/sandboxes/{name}/stats", s.handleStats)
+	mux.HandleFunc("POST /v1/sandboxes/{name}/save-template", s.handleSaveTemplate)
 	mux.HandleFunc("POST /v1/sandboxes/{name}/remove", s.handleRemove)
 	mux.HandleFunc("POST /v1/sandboxes/{name}/start", s.handleStart)
 	mux.HandleFunc("POST /v1/sandboxes/{name}/stop", s.handleStop)
@@ -117,6 +118,8 @@ func mapErr(w http.ResponseWriter, err error) {
 		writeErr(w, http.StatusConflict, err.Error())
 	case errors.Is(err, minict.ErrPortInUse):
 		writeErr(w, http.StatusConflict, err.Error())
+	case errors.Is(err, minict.ErrInstanceRunning):
+		writeErr(w, http.StatusConflict, err.Error())
 	case errors.Is(err, context.Canceled):
 		writeErr(w, 499, "client closed request")
 	default:
@@ -179,6 +182,20 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, st)
+}
+
+func (s *Server) handleSaveTemplate(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Template string `json:"template"`
+	}
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	if err := s.store.SaveTemplate(r.Context(), nameOf(r), req.Template); err != nil {
+		mapErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"template": req.Template})
 }
 
 func (s *Server) handleRemove(w http.ResponseWriter, r *http.Request) {

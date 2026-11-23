@@ -73,6 +73,9 @@
 #   MD38  S6 webport collision (issue #124): two instances same `minict.webport`
 #         -> second Run 409 (ErrPortInUse, detect up front); stop first ->
 #         port released -> second Run succeeds (daemon port allocation)
+#   MD39  GĐ2 mục 2 template (issue #127): save-template on stopped instance ->
+#         run from `template:<name>` clones rootfs (marker seen); save-template
+#         on RUNNING -> 409 (ErrInstanceRunning, fail-closed)
 #
 # Exit code: 0 if all expected results hold, 1 otherwise.
 set -u
@@ -145,7 +148,7 @@ cleanup() {
     # repo-scoped argv pattern instead (measured leak: 1 ocireg per suite
     # run without this, Phiên 16).
     pkill -TERM -f -- "tools/bin/ocireg $REG_PORT" 2>/dev/null || true
-    for n in md-a md-b md-c md-auto md-t md-f md-oci md-oci-bad md-oci-h md-oci-r md-oci-a md-rl md-s6a md-s6b; do
+    for n in md-a md-b md-c md-auto md-t md-f md-oci md-oci-bad md-oci-h md-oci-r md-oci-a md-rl md-s6a md-s6b md-tpl-src md-tpl-dst; do
         curl -s -m 5 -X POST -H "Authorization: Bearer $TOKEN" \
             "$API/v1/sandboxes/$n/remove" >/dev/null 2>&1 || true
     done
@@ -841,6 +844,39 @@ EOF
     api GET /v1/sandboxes/md-s6b >/dev/null && [[ "$(jget 'd["State"]["Status"]')" == running ]]
 }
 run_case MD38 "S6: webport collision -> 409; stop A -> B reuses port" pass md38
+
+# ---------- GĐ2 mục 2 template (issue #127, D56) ----------
+md39() {
+    # Run src instance (base), write a marker file to / (persistent rootfs,
+    # NOT /tmp which is tmpfs), stop it. save-template -> md-tpl. Run dst
+    # image=template:md-tpl -> exec sees the marker (proves rootfs cloned).
+    # Also: save-template on a RUNNING instance -> 409 (ErrInstanceRunning).
+    api POST /v1/run "$(cat <<EOF
+{"name":"md-tpl-src","image":"base",
+ "cmd":["/bin/sh","-c","echo template-marker > /tpl-marker; sleep 600"]}
+EOF
+)" >/dev/null || return 1
+    sleep 0.4
+    api GET /v1/sandboxes/md-tpl-src >/dev/null && [[ "$(jget 'd["State"]["Status"]')" == running ]] || return 1
+    # save-template on RUNNING -> 409 Conflict (ErrInstanceRunning)
+    local code_run
+    code_run=$(curl -s -m 10 -o "$WORK/resp" -w '%{http_code}' -X POST \
+        -H "Authorization: Bearer $TOKEN" \
+        -d '{"template":"md-tpl"}' \
+        "$API/v1/sandboxes/md-tpl-src/save-template")
+    [[ "$code_run" == 409 ]] || { echo "running save-template expected 409 got $code_run"; return 1; }
+    # stop src -> save-template succeeds (stopped)
+    api POST /v1/sandboxes/md-tpl-src/stop >/dev/null || return 1
+    sleep 0.5
+    api POST /v1/sandboxes/md-tpl-src/save-template '{"template":"md-tpl"}' >/dev/null || return 1
+    # run dst from template -> exec sees marker (rootfs cloned from template)
+    api POST /v1/run '{"name":"md-tpl-dst","image":"template:md-tpl","cmd":["/bin/sh","-c","sleep 600"]}' >/dev/null || return 1
+    sleep 0.4
+    api GET /v1/sandboxes/md-tpl-dst >/dev/null && [[ "$(jget 'd["State"]["Status"]')" == running ]] || return 1
+    xv2 md-tpl-dst '{"cmd":["/bin/cat","/tpl-marker"],"timeout_s":5}' || return 1
+    [[ "$(jget 'd["stdout"].strip()')" == template-marker ]]
+}
+run_case MD39 "GĐ2 mục 2: save-template (stopped) + run from template (marker seen)" pass md39
 
 echo "=== summary: PASS=$PASS SKIP=$SKIPPED FAIL=$FAIL ==="
 if [[ $FAIL -ne 0 ]]; then

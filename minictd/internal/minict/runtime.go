@@ -245,6 +245,54 @@ func (s *Store) Remove(ctx context.Context, name string) error {
 	return nil
 }
 
+// SaveTemplate snapshots a STOPPED instance's rootfs + spec into the template
+// store (<Root>/_templates/<templateName>/) so a subsequent Run with image
+// "template:<templateName>" can clone it (GĐ2 mục 2, issue #127, D56). The
+// instance MUST be stopped: copying a running rootfs races payload writes
+// (fail-closed → ErrInstanceRunning → 409). templateName shares the instance
+// name charset (validName).
+func (s *Store) SaveTemplate(ctx context.Context, name, templateName string) error {
+	if err := validName(name); err != nil {
+		return err
+	}
+	if err := validName(templateName); err != nil {
+		return fmt.Errorf("template name: %w", err)
+	}
+	st, err := s.loadState(name)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return contract.ErrNotFound
+		}
+		return err
+	}
+	st = s.alive(st)
+	if st.State != StateStopped {
+		return fmt.Errorf("%w: save-template requires instance %s stopped (state %s)", ErrInstanceRunning, name, st.State)
+	}
+	srcRootfs := filepath.Join(s.dir(name), "rootfs")
+	if _, err := os.Stat(srcRootfs); err != nil {
+		return fmt.Errorf("save-template %s: rootfs missing: %w", name, err)
+	}
+	tdir := filepath.Join(s.templatesDir(), templateName)
+	if err := os.MkdirAll(tdir, 0755); err != nil {
+		return err
+	}
+	dstRootfs := filepath.Join(tdir, "rootfs")
+	if err := os.RemoveAll(dstRootfs); err != nil {
+		return err
+	}
+	if err := copyTree(ctx, srcRootfs, dstRootfs); err != nil {
+		return fmt.Errorf("save-template %s: copy rootfs: %w", name, err)
+	}
+	specDst := filepath.Join(tdir, fSpec)
+	_ = os.Remove(specDst)
+	if err := copyTree(ctx, filepath.Join(s.dir(name), fSpec), specDst); err != nil {
+		return fmt.Errorf("save-template %s: copy spec: %w", name, err)
+	}
+	s.Log.Info("minictd save-template", "name", name, "template", templateName)
+	return nil
+}
+
 // Start boots a stopped instance from its saved spec on the SAME rootfs
 // (filesystem changes persist across stop/start — docker parity). A no-op
 // when already running (docker.Client.Start contract).
@@ -532,6 +580,11 @@ func (s *Store) ListByNamePrefix(ctx context.Context, prefix string) ([]string, 
 	var names []string
 	for _, e := range entries {
 		if !e.IsDir() {
+			continue
+		}
+		// Skip non-instance dirs (e.g. _templates, GĐ2 mục 2 issue #127):
+		// nameRe rejects the "_" prefix; only valid instance names list.
+		if !nameRe.MatchString(e.Name()) {
 			continue
 		}
 		if strings.HasPrefix(e.Name(), prefix) {

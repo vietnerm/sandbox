@@ -22,11 +22,23 @@
 4. D — No-Compromise Validation: `make test` (isolation 31 + seccomp 21 + netns 7 +
    alpine 9 + debian 9 + escape-alpine 31 + cve-check tool 4 + pasta 11 + cg 6 = 129, pipefail thật —
    issue #14; cg suite từ #4/D48 2026-11-20, env-gated cgroups v2; dev: 127 PASS + 13 SKIP env-blocked)
-   + `make test-web` + `make test-minictd` (38, MD0–MD38) + lưu evidence vào
+   + `make test-web` + `make test-minictd` (39, MD0–MD39) + lưu evidence vào
    `journal/YYYY-MM-DD/evidence/` + integrity check host
 5. Ghi `journal/YYYY-MM-DD/daily-log.md` (quy tắc thư mục: PROMPT.MD §10)
 
 ## Đã xong
+- [x] 2026-11-23 (phiên 21, SDDA): **GĐ2 mục 2 — template (issue #127, D56)**:
+  `rootfs.go prepareRootfs` thêm case `template:<name>` → copy `<Root>/_templates/<name>/rootfs`
+  (cp -a, parity `base`/`dir:`). `runtime.go SaveTemplate(name, templateName)` — validate
+  validName, yêu cầu instance STOPPED (fail-closed `ErrInstanceRunning` → 409, copy running
+  rootfs races payload writes), `copyTree` rootfs + spec.json vào `<Root>/_templates/<name>/`.
+  `runtime.go ListByNamePrefix` filter `nameRe` (skip `_templates` + non-instance dirs, không
+  pollute List). `server.go` route `POST /v1/sandboxes/{name}/save-template` body
+  `{"template":"<name>"}` → 200; `mapErr` `ErrInstanceRunning` → 409. Test MD39: run src (base,
+  write marker), stop, save-template `md-tpl`; run dst `image=template:md-tpl` → exec sees
+  marker (rootfs cloned); save-template on RUNNING → 409. Perf không đổi (cp -a + state dir,
+  không runtime hot path). CVE gate rc=0. Residual: list/remove-template API chưa có (cleanup
+  qua state dir); template spec.json lưu reference, chưa auto-apply defaults. (#127)
 - [x] 2026-11-23 (phiên 20, SDDA): **S6 — webport collision detection up front (issue #124,
   D55, GĐ2 mục 1)**: daemon `store.go` thêm `portsHeldBy(except)` — scan tất cả instance qua
   `ListByNamePrefix`, filter `alive().State == running`, collect `port -> name` (trừ instance
@@ -388,6 +400,9 @@
      apply BEFORE capdrop (D54)**; **S6 FIXED #124 2026-11-23 — webport collision
      detection up front (`ErrPortInUse` → 409, D55)**; A3 reconcile proactive đã có — heartbeat P4 mở).
 2. Template: instance từ template; lưu instance thành template.
+   → **Xong 2026-11-23 Phiên 21 (#127, D56)**: `save-template` API + `template:<name>` image
+   form; MD39 e2e (save stopped → run from template → marker seen; running → 409). Residual:
+   list/remove-template API (cleanup qua state dir).
 3. Storage: overlayfs rootless + idmapped mounts (thay private copy 2 MB/instance);
    snapshot/backup/restore (overlay layer + tar.zst).
 4. Port-forward theo instance qua pasta, khai báo trong config instance.

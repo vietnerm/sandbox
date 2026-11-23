@@ -19,6 +19,7 @@ import (
 //	               — was `tar -xf`, which leaned on incidental GNU tar
 //	               1.35 protections; busybox/old tar extract ".." members)
 //	oci:<ref>   -> crane export <ref> - | secureUnpack (same extractor)
+//	template:<name> -> copy <Root>/_templates/<name>/rootfs (GĐ2 mục 2, D56)
 //
 // The OCI path needs the `crane` binary in PATH (P2 in the integration
 // plan); everything else only needs cp. Untrusted content (oci: refs and
@@ -40,6 +41,8 @@ func (s *Store) prepareRootfs(ctx context.Context, dir, image string) error {
 		kind, arg = "tar", image[len("tar:"):]
 	case strings.HasPrefix(image, "oci:"):
 		kind, arg = "oci", image[len("oci:"):]
+	case strings.HasPrefix(image, "template:"):
+		kind, arg = "template", image[len("template:"):]
 	case strings.HasPrefix(image, "/"):
 		// Bare absolute path: dir if a directory, tar if a file.
 		fi, err := os.Stat(image)
@@ -90,6 +93,18 @@ func (s *Store) prepareRootfs(ctx context.Context, dir, image string) error {
 			return err
 		}
 		return unpackOCI(ctx, arg, dst)
+	case "template":
+		if arg == "" {
+			return fmt.Errorf("image template: missing name")
+		}
+		if err := validName(arg); err != nil {
+			return fmt.Errorf("image template: name: %w", err)
+		}
+		src := filepath.Join(s.templatesDir(), arg, "rootfs")
+		if _, err := os.Stat(src); err != nil {
+			return fmt.Errorf("image template:%s: not found (save-template first): %w", arg, err)
+		}
+		return copyTree(ctx, src, dst)
 	}
 	return fmt.Errorf("unsupported image form %q", image)
 }

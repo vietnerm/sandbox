@@ -99,3 +99,63 @@ Còn lại    : main
 CI main    : xanh (bf878f7 — build-test + scan + perf-guard)
 Dừng?      : không (GĐ2 mục 1 S-series done, còn systemd-real + mục 2-7; GD3 CHƯA chạm per chỉ thị owner)
 =============================================
+
+---
+
+## Phiên 21 — Orchestrator (ZAI, §11)
+
+### Pha A — Sync + SBG plan
+- Pull main `2d18aeb` (ff, ledger Phiên 20 qua PR #126); remote chỉ `origin/main`.
+- SBG MODE=plan → `branch/plan.md` (Phiên 21): 0 PR mở đầu chu trình → vào thẳng Pha D.
+
+### Triage + chọn issue
+- 17 issue mở đều đã label; không có `type:security priority:p0/p1` chen ngang.
+- GĐ2 mục 1 S-series done (Phiên 20); còn systemd-real (env-gated) + #109 (chờ maintainer) —
+  cả hai blocked. Move tới mục 2. Tạo **#127** (template, type:feature p2, GĐ2 mục 2) theo §8.
+
+### Research (`research.md` Phiên 21 — 4 nguồn)
+- docker commit/image tag: running snapshot (overlayfs freeze); minict yêu cầu stop.
+- cp -a vs overlayfs vs tar: template = frozen base → cp -a đủ; overlayfs thin-provision là mục 3.
+- nameRe rejects `_` prefix → `_templates` dir tự skip ListByNamePrefix.
+- RFC 9110 §15.5.10: ErrInstanceRunning → 409 (state conflict, parity ErrNotRunning/ErrPortInUse).
+
+### Development (`feat/127-template`, D56 — `decisions/template.md`)
+- `rootfs.go prepareRootfs`: case `template:<name>` → copy `<Root>/_templates/<name>/rootfs`
+  (cp -a, parity base/dir). validName check (path injection defense).
+- `runtime.go SaveTemplate(name, templateName)`: yêu cầu STOPPED (fail-closed
+  `ErrInstanceRunning` → 409), copyTree rootfs + spec.json vào `_templates/<name>/`.
+- `runtime.go ListByNamePrefix`: filter `nameRe` (skip `_templates` + non-instance dirs).
+- `store.go`: `ErrInstanceRunning` sentinel + `templatesDir()` helper.
+- `server.go`: route `POST /v1/sandboxes/{name}/save-template` + `mapErr` `ErrInstanceRunning` → 409.
+- Tests: MD39 trong `tests/test_minictd.sh` (38→39) — run src (marker `/tpl-marker`), save-template
+  RUNNING → 409, stop, save-template OK, run dst `template:md-tpl` → exec sees marker.
+- Không đụng C (minict/minict-exec unchanged) → MD0-MD38 parity giữ nguyên.
+- Docs: roadmap "Đã xong" Phiên 21 + mục 2 → "Xong"; journal ngày (research, D56, branch/plan).
+
+### CVE Check
+- Kernel: `5.10.134-013.15.kangaroo.al8.x86_64`
+- `cve/template.{md,json}`: watchlist rows; cve-gate rc=0 → 0 mới ngoài watchlist.
+- Caveat AUDIT §F fixed-list (NVD transient,Phiên 19/20 documented).
+- Không component mới ship (Go stdlib os/fmt/filepath/errors đã có) → watchlist không cần dòng mới.
+
+### Validation "không bị nhiễm"
+- `make test`: 9/10 suites PASS (test_cg FAIL = env Go missing, không regression template).
+- `make test-web`: 9/9 PASS.
+- `make test-minictd`: SKIP env (không Go local) — CI ubuntu-24.04 chạy MD0-MD39.
+- Host baseline: unchanged 3/3 (passwd/bash/sudo khớp Phiên 14-20).
+- Bằng chứng: `evidence/template.txt`.
+
+### Pha B — PR (feat/* theo thứ tự §11)
+- B1: nhánh con trực tiếp của main `2d18aeb` → merge origin/main up-to-date.
+- B2 — SCR: ... (sau CI).
+- B3 — SIA: ... (sau CI).
+- B4 — verdict: ... (sau SIA).
+
+### Kế hoạch ngày mai
+- Sau merge #127: GĐ2 mục 2 (template) xong; tiếp mục 3 (storage overlayfs rootless +
+  snapshot/backup/restore) hoặc systemd-real (env-gated); from-audit #117/#119 nếu dư phiên.
+- **GD3 (Web UI) CHƯA chạm** — per chỉ thị owner: DỪNG + nhắc owner TRƯỚC dòng code UI đầu
+  tiên khi mọi mục GĐ2 hoàn thành. GĐ2: mục 1 (S-series done, còn systemd-real + #109),
+  mục 2 (done Phiên 21), mục 3-7 chưa mở.
+
+### Pha C/E — cập nhật sau merge (SBG apply + ledger sẽ ghi ở phần cuối phiên)
