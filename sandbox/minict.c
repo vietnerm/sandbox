@@ -1352,8 +1352,14 @@ static int landlock_add_writable(int ruleset_fd, const char *path)
         struct ll_path_beneath_attr pb;
         int fd = open(path, O_RDONLY | O_CLOEXEC);
 
-        if (fd < 0)
+        if (fd < 0) {
+                /* #157/D64: /dev/shm is optional (only mounted if spec shm).
+                 * Skip ENOENT (path doesn't exist → no rule needed); other
+                 * errors (EACCES etc.) are real. */
+                if (errno == ENOENT)
+                        return 0;
                 return -1;
+        }
         pb.allowed_access_fs = LL_ACCESS_RW;
         pb.parent_fd = fd;
         if (syscall(__NR_landlock_add_rule, ruleset_fd, LL_RULE_PATH_BENEATH, &pb, 0) < 0) {
@@ -1369,12 +1375,12 @@ static int landlock_add_writable(int ruleset_fd, const char *path)
 
 static int landlock_abi(void)
 {
-	return syscall(__NR_landlock_create_ruleset, NULL, 0, 1 /* LANDLOCK_CREATE_RULESET_VERSION */);
+        return syscall(__NR_landlock_create_ruleset, NULL, 0, 1 /* LANDLOCK_CREATE_RULESET_VERSION */);
 }
 
 static unsigned long long ll_handled_for(int abi)
 {
-	return (abi >= 2) ? LL_HANDLED : (LL_HANDLED & ~LL_FS_REFER);
+        return (abi >= 2) ? LL_HANDLED : (LL_HANDLED & ~LL_FS_REFER);
 }
 
 /* #157/D64: DEFAULT Landlock policy — applied at the SHIM (after pivot_root,
@@ -1388,50 +1394,50 @@ static unsigned long long ll_handled_for(int abi)
  * spec.ReadOnly -> die (the payload's RO layer needs Landlock). */
 static void landlock_enforce_default(void)
 {
-	struct ll_ruleset_attr rsa;
-	struct ll_path_beneath_attr pb;
-	int rfd, rootfd, abi;
+        struct ll_ruleset_attr rsa;
+        struct ll_path_beneath_attr pb;
+        int rfd, rootfd, abi;
 
-	abi = landlock_abi();
-	if (abi < 0) {
-		if (g_spec_readonly) {
-			if (errno == ENOSYS || errno == EOPNOTSUPP)
-				die("spec.ReadOnly requires Landlock (kernel >=5.13, ABI >=1) — unavailable, refusing to boot");
-			else
-				die("landlock ABI probe — spec.ReadOnly needs Landlock, refusing to boot");
-		}
-		if (errno == ENOSYS || errno == EOPNOTSUPP)
-			warn("Landlock unavailable (kernel <5.13) — default fs-policy NOT enforced (defense-in-depth, fail-soft)");
-		else
-			warn("landlock ABI probe — default fs-policy NOT enforced");
-		return;
-	}
-	rsa.handled_access_fs = ll_handled_for(abi);
-	rfd = syscall(__NR_landlock_create_ruleset, &rsa, sizeof(rsa), 0);
-	if (rfd < 0) {
-		if (g_spec_readonly)
-			die("landlock_create_ruleset (default) — spec.ReadOnly needs it, refusing to boot");
-		warn("landlock_create_ruleset (default) — NOT enforced");
-		return;
-	}
-	rootfd = open("/", O_RDONLY | O_CLOEXEC);
-	if (rootfd < 0) {
-		warn("open / for Landlock (default)");
-		close(rfd);
-		return;
-	}
-	pb.allowed_access_fs = LL_ACCESS_RW;
-	pb.parent_fd = rootfd;
-	if (syscall(__NR_landlock_add_rule, rfd, LL_RULE_PATH_BENEATH, &pb, 0) < 0) {
-		warn("landlock_add_rule / (default)");
-		close(rootfd);
-		close(rfd);
-		return;
-	}
-	close(rootfd);
-	if (syscall(__NR_landlock_restrict_self, rfd, 0) < 0)
-		warn("landlock_restrict_self (default) — NOT enforced");
-	close(rfd);
+        abi = landlock_abi();
+        if (abi < 0) {
+                if (g_spec_readonly) {
+                        if (errno == ENOSYS || errno == EOPNOTSUPP)
+                                die("spec.ReadOnly requires Landlock (kernel >=5.13, ABI >=1) — unavailable, refusing to boot");
+                        else
+                                die("landlock ABI probe — spec.ReadOnly needs Landlock, refusing to boot");
+                }
+                if (errno == ENOSYS || errno == EOPNOTSUPP)
+                        warn("Landlock unavailable (kernel <5.13) — default fs-policy NOT enforced (defense-in-depth, fail-soft)");
+                else
+                        warn("landlock ABI probe — default fs-policy NOT enforced");
+                return;
+        }
+        rsa.handled_access_fs = ll_handled_for(abi);
+        rfd = syscall(__NR_landlock_create_ruleset, &rsa, sizeof(rsa), 0);
+        if (rfd < 0) {
+                if (g_spec_readonly)
+                        die("landlock_create_ruleset (default) — spec.ReadOnly needs it, refusing to boot");
+                warn("landlock_create_ruleset (default) — NOT enforced");
+                return;
+        }
+        rootfd = open("/", O_RDONLY | O_CLOEXEC);
+        if (rootfd < 0) {
+                warn("open / for Landlock (default)");
+                close(rfd);
+                return;
+        }
+        pb.allowed_access_fs = LL_ACCESS_RW;
+        pb.parent_fd = rootfd;
+        if (syscall(__NR_landlock_add_rule, rfd, LL_RULE_PATH_BENEATH, &pb, 0) < 0) {
+                warn("landlock_add_rule / (default)");
+                close(rootfd);
+                close(rfd);
+                return;
+        }
+        close(rootfd);
+        if (syscall(__NR_landlock_restrict_self, rfd, 0) < 0)
+                warn("landlock_restrict_self (default) — NOT enforced");
+        close(rfd);
 }
 
 /* #157/D64: spec.ReadOnly RO layer — applied in the PAYLOAD (child domain of
@@ -1442,46 +1448,46 @@ static void landlock_enforce_default(void)
  * so it's unaffected. */
 static void landlock_enforce_readonly(void)
 {
-	struct ll_ruleset_attr rsa;
-	struct ll_path_beneath_attr pb;
-	int rfd, rootfd, abi;
+        struct ll_ruleset_attr rsa;
+        struct ll_path_beneath_attr pb;
+        int rfd, rootfd, abi;
 
-	if (!g_spec_readonly)
-		return;
-	abi = landlock_abi();
-	if (abi < 0) {
-		if (errno == ENOSYS || errno == EOPNOTSUPP)
-			die("spec.ReadOnly RO layer: Landlock unavailable (kernel <5.13) — refusing to boot half-protected");
-		die("landlock ABI probe (readonly) — refusing to boot");
-	}
-	rsa.handled_access_fs = ll_handled_for(abi);
-	rfd = syscall(__NR_landlock_create_ruleset, &rsa, sizeof(rsa), 0);
-	if (rfd < 0)
-		die("landlock_create_ruleset (readonly) — refusing to boot");
-	rootfd = open("/", O_RDONLY | O_CLOEXEC);
-	if (rootfd < 0) {
-		close(rfd);
-		die("open / for Landlock (readonly)");
-	}
-	pb.allowed_access_fs = LL_ACCESS_RO;
-	pb.parent_fd = rootfd;
-	if (syscall(__NR_landlock_add_rule, rfd, LL_RULE_PATH_BENEATH, &pb, 0) < 0) {
-		close(rootfd);
-		close(rfd);
-		die("landlock_add_rule / (readonly)");
-	}
-	close(rootfd);
-	if (landlock_add_writable(rfd, "/tmp") < 0) {
-		close(rfd);
-		die("landlock_add_rule /tmp (readonly)");
-	}
-	if (landlock_add_writable(rfd, "/dev/shm") < 0) {
-		close(rfd);
-		die("landlock_add_rule /dev/shm (readonly)");
-	}
-	if (syscall(__NR_landlock_restrict_self, rfd, 0) < 0)
-		die("landlock_restrict_self (readonly) — refusing to boot half-protected");
-	close(rfd);
+        if (!g_spec_readonly)
+                return;
+        abi = landlock_abi();
+        if (abi < 0) {
+                if (errno == ENOSYS || errno == EOPNOTSUPP)
+                        die("spec.ReadOnly RO layer: Landlock unavailable (kernel <5.13) — refusing to boot half-protected");
+                die("landlock ABI probe (readonly) — refusing to boot");
+        }
+        rsa.handled_access_fs = ll_handled_for(abi);
+        rfd = syscall(__NR_landlock_create_ruleset, &rsa, sizeof(rsa), 0);
+        if (rfd < 0)
+                die("landlock_create_ruleset (readonly) — refusing to boot");
+        rootfd = open("/", O_RDONLY | O_CLOEXEC);
+        if (rootfd < 0) {
+                close(rfd);
+                die("open / for Landlock (readonly)");
+        }
+        pb.allowed_access_fs = LL_ACCESS_RO;
+        pb.parent_fd = rootfd;
+        if (syscall(__NR_landlock_add_rule, rfd, LL_RULE_PATH_BENEATH, &pb, 0) < 0) {
+                close(rootfd);
+                close(rfd);
+                die("landlock_add_rule / (readonly)");
+        }
+        close(rootfd);
+        if (landlock_add_writable(rfd, "/tmp") < 0) {
+                close(rfd);
+                die("landlock_add_rule /tmp (readonly)");
+        }
+        if (landlock_add_writable(rfd, "/dev/shm") < 0) {
+                close(rfd);
+                die("landlock_add_rule /dev/shm (readonly)");
+        }
+        if (syscall(__NR_landlock_restrict_self, rfd, 0) < 0)
+                die("landlock_restrict_self (readonly) — refusing to boot half-protected");
+        close(rfd);
 }
 
 /* ---- payload fd + core-dump hardening (issue #5, D33) ----
