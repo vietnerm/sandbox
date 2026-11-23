@@ -49,9 +49,15 @@
 
 ### Pha B — PR (sec/* theo thứ tự §11)
 - B1: nhánh con trực tiếp của main `cdb0e56` → merge origin/main up-to-date.
-- B2 — SCR: ... (sau CI).
-- B3 — SIA: ... (sau CI).
-- B4 — verdict: ... (sau SIA).
+- B2 — SCR @ `3293b59`: **PASS** — env dev (không Go) → SCR dùng CI ubuntu-24.04
+  clean-room (§0b): build-test green ×2 (run 45097181467) = make test 10 suites +
+  make test-web 9/9 + make test-minictd 38/38 (MD38 mới) + perf-check green; scan
+  green; perf green. Dev local 9/10 (test_cg env-fail Go missing, không regression S6).
+  Mutant M-skip-portsHeldBy defer (low, MD38 non-vacuous by construction). Comment SCR trên PR #125.
+- B3 — SIA @ `3293b59`: **PASS** — 11/11 OK; claim 0 sai; test rỗng 0 (MD38 non-vacuous);
+  bảo mật 0 critical/high/medium; 2 low (mutant deferral, CVE NVD partial 5/7 rows).
+  Label `audit:pass`. Comment SIA trên PR.
+- B4 — verdict pass → PR vào hàng chờ gộp (Pha C). Không cần sửa (chỉ low).
 
 ### Kế hoạch ngày mai
 - Sau merge #124: GĐ2 mục 1 S-series (S1-S6) hoàn thành; còn systemd-real unit + residual #109
@@ -61,4 +67,35 @@
   tiên khi mọi mục GĐ2 hoàn thành. GĐ2 mục 1 gần xong (S-series done, còn systemd-real + #109);
   mục 2-7 chưa mở.
 
-### Pha C/E — cập nhật sau merge (SBG apply + ledger sẽ ghi ở phần cuối phiên)
+### Pha C — Gộp (SBG MODE=apply)
+- CI `3293b59` xanh 4/4 (build-test ×2 + perf + scan) → flip ready (GraphQL
+  `markPullRequestReadyForReview`) → **squash `bf878f7`** REST PUT match-head-commit
+  `3293b59` → **#124 auto-close** 01:58:54Z (precedent #113/#116/#121) + gỡ
+  `status:in-progress`.
+- Kiểm sau merge: nhánh xoá local + remote; remote sau Phiên 20: **chỉ `main`** @ `bf878f7`.
+- SIA verdict PASS (không phải delta — code PR không đổi sau audit, chỉ journal).
+
+### Pha E — Kết ngày (SBG)
+- SBG MODE=apply: `sec/124-s6-webport-alloc` DELETE_MERGED (local + remote sau squash);
+  không nhánh KEEP mới; ledger qua PR này (`chore(branches): ledger 2026-11-23 Phiên 20`).
+- Roadmap: "Đã xong" thêm Phiên 20 (S6); **GĐ2 mục 1 S-series (S1-S6) hoàn thành**;
+  còn mở: systemd-real, residual #109 (chờ maintainer); from-audit mở: #117, #119.
+  Mục 2-7 chưa mở.
+- Self-audit cuối ngày theo §7: CI main xanh (`bf878f7` — build-test + perf-guard +
+  scan); cve-gate rc=0 (caveat NVD transient); host unchanged 3/3.
+
+DAY PASS — 2026-11-23 Phiên 20: issue #124 done (merge #125 `bf878f7` @ `3293b59`;
+SCR PASS via CI clean-room (build-test ×2 green, test-minictd 38/38 MD38 mới, perf green);
+SIA PASS 11/11 + 2 low; isolation 34/seccomp 21/netns 7/alpine 9/debian 8+1SKIP/
+escape-alpine 34/cve-check 4/pasta 5+6SKIP/stack 8 (dev); CVE gate rc=0;
+host unchanged 3/3; main xanh `bf878f7`; remote chỉ `main`; issue mới #124 triage;
+GĐ2 mục 1 S-series hoàn thành).
+
+=== SBG REPORT — 2026-11-23 (apply, Phiên 20) ===
+Đã gộp     : 2  — #125 (sec #124, squash `bf878f7`), ledger PR này
+Đã xoá     : 1  (sau merge: `sec/124-s6-webport-alloc` local + remote)
+Giữ lại    : 0
+Còn lại    : main
+CI main    : xanh (bf878f7 — build-test + scan + perf-guard)
+Dừng?      : không (GĐ2 mục 1 S-series done, còn systemd-real + mục 2-7; GD3 CHƯA chạm per chỉ thị owner)
+=============================================
