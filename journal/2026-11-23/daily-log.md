@@ -270,3 +270,61 @@ Còn lại    : main
 CI main    : xanh (32072aa)
 Dừng?      : không (GĐ2 còn overlayfs (env-gated) + systemd-real + mục 4-7; GD3 CHƯA chạm)
 =============================================
+
+---
+
+## Phiên 23 — Orchestrator (ZAI, §11)
+
+### Pha A — Sync + SBG plan
+- Pull main `a5b83fd` (concurrent activity #132-134 + ledger Phiên 22 #135); remote chỉ `main`.
+- SBG MODE=plan → `branch/plan.md` (Phiên 23): 0 PR mở → Pha D.
+
+### Triage + chọn issue
+- 17 issue mở; không security p0/p1. GĐ2 mục 1-3 done; mục 4-7 env-gated (overlayfs/
+  port-forward/Landlock/systemd-real — kernel ≥5.11/Go/pasta). #117 (from-audit Phiên 17,
+  C fix minict.c mountinfo truncation) — actionable + locally testable → chọn. Assign + in-progress.
+
+### Research (`research.md` Phiên 23 — 4 nguồn)
+- snprintf(3): silent truncation nếu src >n-1; check strlen hoặc return value.
+- minict.c sibling caps (D52): >16 submounts die, mp>1024 die — truncation cùng class → die.
+- NAME_MAX 255 / PATH_MAX 4096: 255-byte name → suffix 256 → die (boundary test).
+- mount_setattr (≥5.12) vs mountinfo-fallback (<5.12): truncation chỉ trong fallback path (dev 5.10).
+
+### Development (`fix/117-mountinfo-truncate`, D58 — `decisions/mountinfo-truncate.md`)
+- `sandbox/minict.c`: trước `snprintf(b->submounts[n], ...)`, check `strlen(mp+len) >=
+  SPEC_SUBMOUNT_PATH` → die (exit 125) với message (bind src, suffix len, cap). Sau check,
+  `memcpy` (an toàn). Die thay warn (issue gợi ý warn low) — consistent sibling caps (>16/>1024),
+  đóng lỗ silent-truncation outright (partial-ro config lie worse than refuse).
+- Tests: BIND4 trong `tests/test_isolation.sh` (isolation 34→35) — 255-byte submount name
+  → suffix 256 byte → die. Assert rc != 0 + stderr "exceeds cap / refusing truncated".
+  Gated `S3_ENV == ok && S3_MECH == mountinfo-fallback` (kernel <5.12); ≥5.12 SKIP
+  (mount_setattr path, no enumeration).
+- Không đụng Go/test-minictd (chỉ C + isolation test).
+- Docs: journal ngày (research, D58, branch/plan).
+
+### CVE Check
+- Kernel: `5.10.134-013.15.kangaroo.al8.x86_64`
+- `cve/mountinfo-truncate.{md,json}`: 4 rows (partial NVD); cve-gate rc=0.
+- Caveat AUDIT §F fixed-list.
+- Không component mới ship → watchlist không cần dòng.
+
+### Validation "không bị nhiễm"
+- `make test`: 9/10 PASS (isolation 35 gồm BIND4 mới, seccomp 21, netns 7, alpine 9, debian
+  8+1SKIP, escape-alpine 34, cve-check 4, pasta 5+6SKIP, stack 8); test_cg FAIL env Go.
+- `make test-web`: 9/9 PASS.
+- Host baseline: unchanged 3/3.
+- Bằng chứng: `evidence/mountinfo-truncate.txt`.
+- **BIND4 PASS trên dev 5.10** (mountinfo-fallback) — fix verified locally.
+
+### Pha B — PR (fix/* theo thứ tự §11)
+- B1: nhánh con của main `a5b83fd` → up-to-date.
+- B2 — SCR: ... (sau CI).
+- B3 — SIA: ... (sau CI).
+- B4 — verdict: ... (sau SIA).
+
+### Kế hoạch ngày mai
+- Sau merge #117: from-audit #117 closed; còn #119 (TOCTOU socket-path, Go), #109 (chờ
+  maintainer). GĐ2 mục 4-7 env-gated; overlayfs rootless (mục 3 phần a) CI-only possible.
+- **GD3 (Web UI) CHƯA chạm** — per chỉ thị owner.
+
+### Pha C/E — cập nhật sau merge (SBG apply + ledger sẽ ghi ở phần cuối phiên)

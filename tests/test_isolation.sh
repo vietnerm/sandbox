@@ -515,6 +515,26 @@ bind3_test() {
     grep -q w-top <<<"$out" && grep -q w-sub <<<"$out"
 }
 
+# BIND4 (#117/D58): a submount whose src-relative suffix >=256 byte must die
+# (fail-closed), not silently truncate to a wrong path (partial-ro config lie).
+# Build a 255-byte submount name under a fresh bind src; the suffix "/<255>"
+# = 256 byte >= SPEC_SUBMOUNT_PATH → die. Only meaningful on the
+# mountinfo-fallback path (kernel <5.12); mount_setattr (>=5.12) needs no
+# enumeration, so the die code path is not reached there (SKIP).
+bind4_test() {
+    local longname sub
+    longname="$(printf 'A%.0s' $(seq 1 255))"   # 255-byte single component (NAME_MAX)
+    sub="$S3WORK/longsrc/$longname"
+    mkdir -p "$sub"
+    printf 'bind %s:/data:ro\n' "$S3WORK/longsrc" > "$S3WORK/spec4"
+    MINICT_SPEC="$S3WORK/spec4" unshare --user --map-root-user --mount -- sh -c \
+        'mount -t tmpfs none "$1" >/dev/null 2>&1 || { echo S3ENVFAIL; exit 9; }
+         "$2" "$3" /bin/sh -c "true"' \
+        bind4run "$sub" "$MINICT" "$ROOTFS" 2>"$S3WORK/bind4.err"
+    local rc=$?
+    [[ $rc -ne 0 ]] && grep -q "exceeds.*cap\|refusing truncated" "$S3WORK/bind4.err"
+}
+
 run_case BIND1 "bind :ro plain tree: visible, top mount read-only" pass \
     bind1_test
 if [[ $S3_ENV == ok ]]; then
@@ -522,8 +542,14 @@ if [[ $S3_ENV == ok ]]; then
         pass bind2_test
     run_case BIND3 "control: same tree WITHOUT :ro — top+submount writable" \
         pass bind3_test
+    if [[ $S3_MECH == mountinfo-fallback ]]; then
+        run_case BIND4 "bind :ro submount suffix >256 -> die fail-closed (#117)" \
+            pass bind4_test
+    else
+        echo "SKIP BIND4: mountinfo-fallback path not active (kernel >=5.12 uses mount_setattr, no enumeration)"
+    fi
 else
-    echo "SKIP BIND2/BIND3: userns tmpfs submount unavailable on this host"
+    echo "SKIP BIND2/BIND3/BIND4: userns tmpfs submount unavailable on this host"
 fi
 rm -rf "$S3WORK"
 
