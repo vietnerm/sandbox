@@ -45,7 +45,7 @@ m_none()   { :; }
 m_nolink() { sed -i '/^## Known Limitations/,/^## /{0,/^- /s/^- .*/- Một giới hạn không có link bằng chứng./}' "$1/README.md"; }
 m_broken() { printf '\nXem [file mất](journal/2099-01-01/none.md).\n' >> "$1/README.md"; }
 m_stale()  { printf '\nKhông /proc trong sandbox (host seccomp chặn mount proc).\n' >> "$1/README.md"; }
-m_kernel() { sed -i 's/^| Linux kernel | ≥ 6\.1 |/| Linux kernel | ≥ 6.6 |/' "$1/idea/manifest.md"; }
+m_kernel() { sed -i '/^| Linux kernel |/s/≥ 6\.1/≥ 6.6/' "$1/idea/manifest.md"; }
 m_cgv1()   { sed -i 's/^| cgroups | v2 cho/| cgroups | v1 cho/' "$1/README.md"; }
 
 echo "=== check-docs self-test ($(date '+%F %T')) ==="

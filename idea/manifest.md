@@ -73,7 +73,7 @@ không sao chép toàn bộ Proxmox:
 
 | Hạng mục | Mức mục tiêu | Lý do |
 |---|---|---|
-| Linux kernel | ≥ 6.1 | Landlock ổn định, overlayfs rootless + idmapped mounts an toàn (CVE-2023-0386 đã vá), cgroups v2 mặc định |
+| Linux kernel | ≥ 6.1, ở patch level LTS mới (tối thiểu 2026-11-23: 6.1.190 / 6.6.159 / 6.12.113 — `docs/cve-watchlist.md`) | Landlock ổn định, overlayfs rootless + idmapped mounts an toàn (CVE-2023-0386 đã vá), cgroups v2 mặc định |
 | cgroups | **v2**, có delegation cho user (systemd user slice) | quota CPU/RAM/pid rootless |
 | KVM | `/dev/kvm` đọc/ghi được bởi user (GĐ4) | Firecracker cần, không cần root |
 | User-space networking | `pasta` hoặc `slirp4netns` có sẵn | mạng rootless |
