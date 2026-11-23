@@ -173,9 +173,14 @@ func (s *Store) execStart(ctx context.Context, name string, req contract.ExecV2R
 		if err != nil {
 			return nil, err
 		}
-		fileLines := make([]string, 0, len(env)+len(rlimitLines))
+		seccompLines, err := s.execSeccompLines(name)
+		if err != nil {
+			return nil, err
+		}
+		fileLines := make([]string, 0, len(env)+len(rlimitLines)+len(seccompLines))
 		fileLines = append(fileLines, env...)
 		fileLines = append(fileLines, rlimitLines...)
+		fileLines = append(fileLines, seccompLines...)
 		if err := os.WriteFile(envf, []byte(strings.Join(fileLines, "\n")+"\n"), 0600); err != nil {
 			return nil, err
 		}
@@ -319,6 +324,31 @@ func (s *Store) execRlimitLines(name string) ([]string, error) {
 		}
 	}
 	return out, nil
+}
+
+// execSeccompLines builds the MINICT_SECCOMP_ALLOW= directives for the
+// setns exec path (D59, issue #139) — parity with the payload's
+// MINICT_SPEC seccomp_allow lines (store.go renderSpec). The profile rides
+// spec.json, so template:<name> carries it automatically (issue #139).
+// A missing spec.json yields no lines — exec then behaves exactly as
+// before (host blocklist only). A profile that was valid at Run time but
+// fails to load here means binaries drifted — fail closed.
+func (s *Store) execSeccompLines(name string) ([]string, error) {
+	spec, err := s.loadSpec(name)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if spec.SeccompProfile == "" {
+		return nil, nil
+	}
+	nrs, err := LoadSeccompProfile(spec.SeccompProfile)
+	if err != nil {
+		return nil, err
+	}
+	return seccompEnvLines(nrs), nil
 }
 
 func orEmpty(in []byte) []byte {

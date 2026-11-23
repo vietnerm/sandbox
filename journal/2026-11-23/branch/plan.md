@@ -94,3 +94,41 @@ Chu trình: Phiên 23 (SDDA, issue #117 / mountinfo truncation fail-closed).
 
 - PR `fix/117-mountinfo-truncate` (issue #117) — Pha B→C (draft → CI → SCR → SIA →
   flip ready → squash). Ledger qua PR `chore(branches): ledger 2026-11-23 Phiên 23`.
+
+---
+
+# SBG — Branch Gate plan 2026-11-23 (MODE=plan, Pha A — Phiên 24)
+
+Chu trình: Phiên 24 (SDDA — Pha B: PR #142, #140; Pha D: issue #139 seccomp allowlist).
+
+## Trạng thái đầu chu trình
+
+- Pull main `6a21582` (ff, +77 commit từ phiên trước); local chỉ `main`.
+- PR mở: **2** — #142 `sec/cve-kernel-ranges` (CI xanh @ 1bb5913), #140
+  `docs/security-boundary` (CI xanh @ 1704805). Cả hai đụng file G7
+  (`.github/workflows/**` / `idea/manifest.md`) → theo luật §11: retest/audit/sửa
+  nhưng **không tự gộp** → `needs-human`.
+- Nhánh remote đã merge (squash, SHA khớp, chờ DELETE_MERGED ở Pha E):
+  `docs/26-27-check-docs` (#136), `docs/gd2-observability` (#137),
+  `docs/manifest-phase2` (#132), `fix/55-alpine-empty-dirs` (#134),
+  `fix/75-web-free-port` (#133).
+- Issue mở: 14; #139 `type:security` `priority:p1` (seccomp allowlist GĐ2 mục 3a,
+  owner chốt ưu tiên trước mục 4–8) → chọn cho Pha D.
+
+## Kế hoạch Pha B (thứ tự §11: sec → docs)
+
+1. PR #142: B1 merge main (behind 2) → CI lại → B2 SCR → B3 SIA → B4 verdict.
+   G7 → `needs-human`, không gộp.
+2. PR #140: B1 merge main (behind 2) → CI lại → B2 SCR (docs-only) → B3 SIA → B4.
+   G7 → `needs-human`, không gộp.
+
+## Kế hoạch gộp trong ngày
+
+- Không PR nào tự-gộp được (G7). Sau Pha B: cả hai KEEP `needs-human`.
+- Ledger qua PR `chore(branches): ledger 2026-11-23 Phiên 24`.
+
+## Kế hoạch DELETE_MERGED / KEEP
+
+- DELETE_MERGED: 5 nhánh trên (sau khi xác minh lại SHA tại thời điểm apply).
+- KEEP: `sec/cve-kernel-ranges`, `docs/security-boundary` (`needs-human`).
+- PR mới của Phiên D (seccomp allowlist): qua Pha B→C ngay trong phiên.

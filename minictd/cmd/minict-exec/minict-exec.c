@@ -207,6 +207,41 @@ static const unsigned short g_blocklist[] = {
         NR_io_uring_register,
 };
 
+/* ---------- seccomp allowlist (GĐ2 mục 3a, issue #139, D59) ----------
+ * Populated host-side BEFORE unshare/setns by spec_seccomp_allow() /
+ * record_seccomp() from MINICT_SPEC / MINICT_SECCOMP_ALLOW directives.
+ * In allowlist mode the program is: D11 blocklist floor (EPERM) + clone
+ * NS-mask + socket AF_ALG/AF_NETLINK arg-checks + clone3 ENOSYS (glibc and
+ * musl fall back to the arg-checked clone) + JEQ allowlist -> ALLOW +
+ * default EPERM. An allowlist can never re-admit a floor entry: the floor
+ * is evaluated first. MD0 (tests/test_minictd.sh seccomp_src) keeps this
+ * decl + allow_add + install_seccomp byte-identical with
+ * minictd/cmd/minict-exec/minict-exec.c — edit both or nothing. */
+#define SECCOMP_ALLOW_MAX 512
+static unsigned short g_allowlist[SECCOMP_ALLOW_MAX];
+static size_t g_allowlist_n;
+
+/* dedupe on insert; range-checked; full before-first-filter validation */
+static void allow_add(unsigned int nr)
+{
+        size_t i;
+
+        if (nr > 511) {
+                fprintf(stderr, "minict-seccomp: allowlist syscall %u out "
+                                "of range (cap 511)\n", nr);
+                exit(125);
+        }
+        for (i = 0; i < g_allowlist_n; i++)
+                if (g_allowlist[i] == (unsigned short)nr)
+                        return;
+        if (g_allowlist_n >= SECCOMP_ALLOW_MAX) {
+                fprintf(stderr, "minict-seccomp: allowlist exceeds cap %d\n",
+                        SECCOMP_ALLOW_MAX);
+                exit(125);
+        }
+        g_allowlist[g_allowlist_n++] = (unsigned short)nr;
+}
+
 /* any namespace-creation flag on clone() is denied (fits in 32 bits) */
 #define CLONE_NS_MASK (CLONE_NEWNS | CLONE_NEWUTS | CLONE_NEWIPC | \
                        CLONE_NEWUSER | CLONE_NEWPID | CLONE_NEWNET | \
@@ -217,7 +252,7 @@ static const unsigned short g_blocklist[] = {
 
 static void install_seccomp(void)
 {
-        struct sock_filter prog[160];
+        struct sock_filter prog[1280];
         struct sock_fprog fprog;
         size_t i, n = 0;
 
@@ -276,8 +311,23 @@ static void install_seccomp(void)
                                                0, 1, NR_clone3);
         prog[n++] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K,
                                                  SECCOMP_ENOSYS);
-        prog[n++] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K,
-                                                 SECCOMP_RET_ALLOW);
+
+        if (g_allowlist_n) {
+                /* allowlist mode (D59): a syscall must be listed to pass —
+                 * the floor and the arg-checks above still win */
+                for (i = 0; i < g_allowlist_n; i++) {
+                        prog[n++] = (struct sock_filter)BPF_DT(BPF_JMP | BPF_JEQ | BPF_K,
+                                                               0, 1,
+                                                               g_allowlist[i]);
+                        prog[n++] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K,
+                                                                 SECCOMP_RET_ALLOW);
+                }
+                prog[n++] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K,
+                                                         SECCOMP_EPERM);
+        } else {
+                prog[n++] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K,
+                                                         SECCOMP_RET_ALLOW);
+        }
 
         if (n > sizeof(prog) / sizeof(prog[0]))
                 die("seccomp program overflow (build bug)");
@@ -321,6 +371,7 @@ static int g_envkv_n;
  */
 #define SPEC_RLIMIT_MAX 16
 #define RLIMIT_PREFIX "MINICT_RLIMIT_"
+#define SECCOMP_PREFIX "MINICT_SECCOMP_ALLOW="
 
 struct exec_spec_rlimit {
         int res;
@@ -405,6 +456,33 @@ static void record_rlimit(char *kv, const char *path)
                 r->res = res;
         }
         g_spec_rlimit_n++;
+}
+
+/* record one MINICT_SECCOMP_ALLOW=<nr>[,<nr>]* line (D59) from the env-file
+ * into the allowlist array. Not exported to the cmd env (R2 parity: filter
+ * config must not leak into the exec'd process env). Parse errors DIE
+ * fail-closed, same posture as the payload's spec_seccomp_allow. */
+static void record_seccomp(char *val, const char *path)
+{
+        size_t before = g_allowlist_n;
+        char *tok, *end;
+        unsigned long v;
+
+        for (tok = strtok(val, ","); tok; tok = strtok(NULL, ",")) {
+                v = strtoul(tok, &end, 10);
+                if (end == tok || *end != '\0') {
+                        fprintf(stderr, "minict-exec: %s: bad seccomp number "
+                                        "\"%s\" (need decimal 0..511)\n",
+                                path, tok);
+                        exit(125);
+                }
+                allow_add((unsigned int)v);
+        }
+        if (g_allowlist_n == before) {
+                fprintf(stderr, "minict-exec: %s: empty MINICT_SECCOMP_ALLOW "
+                                "line\n", path);
+                exit(125);
+        }
 }
 
 /* apply the recorded rlimits in the child BEFORE capdrop (D23 parity
@@ -507,6 +585,13 @@ static void load_env_file(const char *path)
                  * but never stored, so the mutation is harmless. */
                 if (strncmp(line, RLIMIT_PREFIX, strlen(RLIMIT_PREFIX)) == 0) {
                         record_rlimit(line, path);
+                        continue;
+                }
+                /* D59 (issue #139): MINICT_SECCOMP_ALLOW=<nr>[,...] lines are
+                 * allowlist directives, NOT env vars — same posture as the
+                 * rlimit lines above (record + continue, never export). */
+                if (strncmp(line, SECCOMP_PREFIX, strlen(SECCOMP_PREFIX)) == 0) {
+                        record_seccomp(line + strlen(SECCOMP_PREFIX), path);
                         continue;
                 }
                 g_envkv[g_envkv_n++] = line;
@@ -696,9 +781,17 @@ int main(int argc, char **argv)
 
                 apply_spec_rlimits(); /* S5: spec rlimits BEFORE capdrop (D23) */
 
-                install_seccomp(); /* NOT inherited via setns — mandatory */
-
                 drop_all_caps();
+
+                /* install LAST: "the filter is the last lock before exec"
+                 * (minict.c D11 posture). The D59 allowlist makes the order
+                 * MATTER in a new way: drop_all_caps calls SYS_capset (125),
+                 * which is deliberately absent from every measured profile —
+                 * installing the filter first would EPERM our own capset
+                 * (measured: md-sec exec died "capset: Operation not
+                 * permitted"). PR_SET_SECCOMP stays legal after capdrop
+                 * because NO_NEW_PRIVS was set pre-fork (inherited). */
+                install_seccomp();
 
                 /* start from an EMPTY environment (R2, 2026-11-18): the
                  * exec must not inherit whatever the caller had — only

@@ -76,6 +76,21 @@ func (s *Store) Run(ctx context.Context, spec contract.RunSpec) (string, error) 
 	}
 	// CG1/S2: resolve the cgroup manager once so renderSpec can note the
 	// true enforcement posture (cgroup mapping vs fallback).
+	// D59 (issue #139): a template carries the seccomp_profile of the saved
+	// instance — its saved posture, not just its filesystem (save-template
+	// copies spec.json; D56). The request's explicit seccomp_profile wins
+	// (operator override); the inherited one is written back into the new
+	// instance's spec.json below (writeJSON), so the setns exec enforces
+	// the same allowlist the payload got. Name is validName-checked before
+	// it becomes a path (R1 parity with rootfs.go).
+	if spec.SeccompProfile == "" && strings.HasPrefix(spec.Image, "template:") {
+		if arg := strings.TrimPrefix(spec.Image, "template:"); arg != "" && validName(arg) == nil {
+			var tspec contract.RunSpec
+			if err := s.readJSON(filepath.Join(s.templatesDir(), arg, fSpec), &tspec); err == nil {
+				spec.SeccompProfile = tspec.SeccompProfile
+			}
+		}
+	}
 	cgAvail := s.cgroupManager().Avail
 	lines, notes, err := renderSpec(&spec, ports, cgAvail)
 	if err != nil {

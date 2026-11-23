@@ -51,7 +51,7 @@ type Runtime interface {
 // RunSpec carries every flag the Phase 2/3 sandbox-up script emitted.
 // No defaults; callers fill all of these explicitly.
 //
-// Field count: 23 (Name..Cmd below, in source order).
+// Field count: 24 (Name..Cmd below, in source order).
 type RunSpec struct {
 	Name        string   `json:"name"`         // --name
 	Hostname    string   `json:"hostname"`     // --hostname
@@ -76,6 +76,14 @@ type RunSpec struct {
 	Restart     string   `json:"restart"`      // --restart policy ("" = none)
 	Image       string   `json:"image"`        // last positional
 	Cmd         []string `json:"cmd"`          // optional CMD override
+
+	// SeccompProfile names an embedded allowlist
+	// (internal/minict/profiles/<name>.allow, D59, issue #139). "" keeps
+	// the D11 blocklist default. The allowlist is a NARROWER filter than
+	// the blocklist, never a replacement: floor entries stay denied. It
+	// rides spec.json, so save-template carries it to template:<name>
+	// runs automatically. Trusted workloads only (manifest §3).
+	SeccompProfile string `json:"seccomp_profile,omitempty"` // --seccomp-profile
 }
 
 // LabelMinictWebports is the reserved label key a control plane sets to ask

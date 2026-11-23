@@ -59,6 +59,15 @@ static struct result try_syscall(const char *name)
                 /* socket(AF_INET, SOCK_STREAM) — control: ordinary sockets
                  * MUST keep working under the filter (httpd needs them) */
                 r.rc = syscall(SYS_socket, 2 /*AF_INET*/, 1 /*SOCK_STREAM*/, 0);
+        } else if (strcmp(name, "readlink") == 0) {
+                /* SYS_readlink = 89 — NOT in the measured busybox allowlist
+                 * (busybox calls readlinkat instead, D59) and not floor-
+                 * blocked nor cap-gated: the allowlist discriminator. The
+                 * target MUST be a real symlink (/bin/sh -> /bin/busybox):
+                 * readlink on a regular file returns EINVAL, which would
+                 * collide with the assertion logic. */
+                char buf[64];
+                r.rc = syscall(SYS_readlink, "/bin/sh", buf, sizeof(buf));
         } else if (strcmp(name, "clone_userns") == 0) {
                 r.rc = syscall(SYS_clone, (unsigned long)(SIGCHLD | CLONE_NEWUSER),
                                (void *)0, (void *)0, (void *)0, (void *)0);

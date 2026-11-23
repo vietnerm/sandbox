@@ -297,6 +297,41 @@ struct spec_rlimit {            /* setrlimit in payload BEFORE capdrop */
 static struct spec_rlimit g_spec_rlimit[SPEC_MAX_ENTRIES];
 static int g_spec_rlimit_n;
 
+/* ---------- seccomp allowlist (GĐ2 mục 3a, issue #139, D59) ----------
+ * Populated host-side BEFORE unshare/setns by spec_seccomp_allow() /
+ * record_seccomp() from MINICT_SPEC / MINICT_SECCOMP_ALLOW directives.
+ * In allowlist mode the program is: D11 blocklist floor (EPERM) + clone
+ * NS-mask + socket AF_ALG/AF_NETLINK arg-checks + clone3 ENOSYS (glibc and
+ * musl fall back to the arg-checked clone) + JEQ allowlist -> ALLOW +
+ * default EPERM. An allowlist can never re-admit a floor entry: the floor
+ * is evaluated first. MD0 (tests/test_minictd.sh seccomp_src) keeps this
+ * decl + allow_add + install_seccomp byte-identical with
+ * minictd/cmd/minict-exec/minict-exec.c — edit both or nothing. */
+#define SECCOMP_ALLOW_MAX 512
+static unsigned short g_allowlist[SECCOMP_ALLOW_MAX];
+static size_t g_allowlist_n;
+
+/* dedupe on insert; range-checked; full before-first-filter validation */
+static void allow_add(unsigned int nr)
+{
+        size_t i;
+
+        if (nr > 511) {
+                fprintf(stderr, "minict-seccomp: allowlist syscall %u out "
+                                "of range (cap 511)\n", nr);
+                exit(125);
+        }
+        for (i = 0; i < g_allowlist_n; i++)
+                if (g_allowlist[i] == (unsigned short)nr)
+                        return;
+        if (g_allowlist_n >= SECCOMP_ALLOW_MAX) {
+                fprintf(stderr, "minict-seccomp: allowlist exceeds cap %d\n",
+                        SECCOMP_ALLOW_MAX);
+                exit(125);
+        }
+        g_allowlist[g_allowlist_n++] = (unsigned short)nr;
+}
+
 static int write_all(int fd, const char *buf, size_t len)
 {
         size_t off = 0;
@@ -744,6 +779,29 @@ static void spec_ulimit(char *arg, int lineno)
         g_spec_rlimit_n++;
 }
 
+/* seccomp_allow <nr>[,<nr>]* (D59) — one chunk of the profile the daemon
+ * rendered from minictd/internal/minict/profiles/<name>.allow. Parse errors
+ * DIE (fail-closed): a half-loaded allowlist would default-deny syscalls
+ * the operator believes are allowed, and an empty line would brick the
+ * payload entirely. The floor (blocklist) still wins at filter time, so a
+ * listed-but-denied syscall is harmless noise, not a hole. */
+static void spec_seccomp_allow(char *arg, int lineno)
+{
+        char *tok, *end;
+        size_t before = g_allowlist_n;
+        unsigned long v;
+
+        for (tok = strtok(arg, ","); tok; tok = strtok(NULL, ",")) {
+                v = strtoul(tok, &end, 10);
+                if (end == tok || *end != '\0')
+                        spec_die(lineno, "seccomp_allow: bad syscall number "
+                                         "(need decimal 0..511)");
+                allow_add((unsigned int)v);
+        }
+        if (g_allowlist_n == before)
+                spec_die(lineno, "seccomp_allow: empty directive");
+}
+
 /* one line, in-place (we own g_spec_text) */
 static void spec_parse_line(char *line, int lineno)
 {
@@ -783,6 +841,8 @@ static void spec_parse_line(char *line, int lineno)
                 spec_shm(arg, lineno);
         else if (!strcmp(dir, "ulimit"))
                 spec_ulimit(arg, lineno);
+        else if (!strcmp(dir, "seccomp_allow"))
+                spec_seccomp_allow(arg, lineno);
         else
                 fprintf(stderr, "minict-spec: line %d: unknown directive "
                                 "'%s' — skipped\n", lineno, dir);
@@ -1391,7 +1451,7 @@ static const unsigned short g_blocklist[] = {
 
 static void install_seccomp(void)
 {
-        struct sock_filter prog[160];
+        struct sock_filter prog[1280];
         struct sock_fprog fprog;
         size_t i, n = 0;
 
@@ -1450,8 +1510,23 @@ static void install_seccomp(void)
                                                0, 1, NR_clone3);
         prog[n++] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K,
                                                  SECCOMP_ENOSYS);
-        prog[n++] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K,
-                                                 SECCOMP_RET_ALLOW);
+
+        if (g_allowlist_n) {
+                /* allowlist mode (D59): a syscall must be listed to pass —
+                 * the floor and the arg-checks above still win */
+                for (i = 0; i < g_allowlist_n; i++) {
+                        prog[n++] = (struct sock_filter)BPF_DT(BPF_JMP | BPF_JEQ | BPF_K,
+                                                               0, 1,
+                                                               g_allowlist[i]);
+                        prog[n++] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K,
+                                                                 SECCOMP_RET_ALLOW);
+                }
+                prog[n++] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K,
+                                                         SECCOMP_EPERM);
+        } else {
+                prog[n++] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K,
+                                                         SECCOMP_RET_ALLOW);
+        }
 
         if (n > sizeof(prog) / sizeof(prog[0]))
                 die("seccomp program overflow (build bug)");

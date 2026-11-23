@@ -1,0 +1,65 @@
+# seccomp allowlist profile 'debian' (x86_64) — D59, issue #139.
+# Measured: tools/seccomp-workloads/debian.sh via tools/syscall-probe
+# (--after-exec 2: payload tree only, D11 blocklist active).
+# Enforced as: D11 blocklist floor + allowlist + default EPERM;
+# blocklist entries stay denied even if listed here.
+# Regenerate: tools/seccomp-profile-gen.sh debian
+0 __NR_read
+1 __NR_write
+3 __NR_close
+8 __NR_lseek
+9 __NR_mmap
+10 __NR_mprotect
+11 __NR_munmap
+12 __NR_brk
+13 __NR_rt_sigaction
+14 __NR_rt_sigprocmask
+15 __NR_rt_sigreturn
+16 __NR_ioctl
+17 __NR_pread64
+21 __NR_access
+27 __NR_mincore
+33 __NR_dup2
+39 __NR_getpid
+41 __NR_socket
+42 __NR_connect
+58 __NR_vfork
+59 __NR_execve
+61 __NR_wait4
+63 __NR_uname
+72 __NR_fcntl
+80 __NR_chdir
+83 __NR_mkdir
+89 __NR_readlink
+95 __NR_umask
+102 __NR_getuid
+104 __NR_getgid
+107 __NR_geteuid
+108 __NR_getegid
+110 __NR_getppid
+115 __NR_getgroups
+130 __NR_rt_sigsuspend
+131 __NR_sigaltstack
+137 __NR_statfs
+138 __NR_fstatfs
+158 __NR_arch_prctl
+191 __NR_getxattr
+192 __NR_lgetxattr
+202 __NR_futex
+217 __NR_getdents64
+218 __NR_set_tid_address
+221 __NR_fadvise64
+230 __NR_clock_nanosleep
+231 __NR_exit_group
+257 __NR_openat
+262 __NR_newfstatat
+263 __NR_unlinkat
+268 __NR_fchmodat
+273 __NR_set_robust_list
+280 __NR_utimensat
+302 __NR_prlimit64
+316 __NR_renameat2
+318 __NR_getrandom
+326 __NR_copy_file_range
+332 __NR_statx
+334 __NR_rseq
