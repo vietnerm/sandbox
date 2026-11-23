@@ -461,10 +461,10 @@ SCR PASS clean-room ×2; SIA PASS 11/11 + 2 low; 4/4 mutant đỏ; seccomp 25 + 
 - Docs-only: `make test` không affected (journal/decision only). CI xanh (docs PR).
 - Host baseline: unchanged 3/3 (passwd/bash/sudo khớp Phiên 14-23).
 
-### Pha B — PR (chore/* theo thứ tự §11)
+### Pha B — PR #147 (chore/* theo thứ tự §11)
 - B1: nhánh con của main `1f78f2f` → up-to-date.
-- B2 — SCR: docs-only, CI xanh = SCR.
-- B3 — SIA: docs delta, verdict PASS.
+- B2 — SCR @ `0f7f10b`: docs-only, CI xanh ×2 (build-test + perf + scan) = SCR.
+- B3 — SIA @ `0f7f10b`: **PASS** (delta) — docs-only (journal research.md + decision + branch/plan + daily-log), code không đổi. Label `audit:pass`. Comment SIA delta trên PR.
 - B4 — verdict pass → gộp (Pha C).
 
 ### Kế hoạch ngày mai
@@ -472,4 +472,24 @@ SCR PASS clean-room ×2; SIA PASS 11/11 + 2 low; 4/4 mutant đỏ; seccomp 25 + 
   systemd-real. from-audit còn #99/#93/#77/#72/#62/#61/#30 (p3, hard-to-test/env-gated).
 - **GD3 (Web UI) CHƯA chạm** — per chỉ thị owner.
 
-### Pha C/E — cập nhật sau merge (SBG apply + ledger sẽ ghi ở phần cuối phiên)
+### Pha C — Gộp (SBG MODE=apply)
+- CI `0f7f10b` xanh 4/4 (docs-only, PR ready) → **squash `30b0efe`** REST PUT match-head → **#144 auto-close**.
+- Remote sau Phiên 25: **chỉ `main`** @ `30b0efe`.
+
+### Pha E — Kết ngày (SBG)
+- SBG MODE=apply: `chore/144-research-b6` DELETE_MERGED; ledger qua PR này.
+- from-audit #144 closed (B6 research restored cho PR #142; B3 note documented).
+- Self-audit §7: CI main xanh (`30b0efe`); docs-only, host unchanged.
+
+DAY PASS — 2026-11-23 Phiên 25: issue #144 done (merge #147 `30b0efe` @ `0f7f10b`;
+SCR PASS CI green ×2; SIA PASS delta docs; #144 closed — B6 research restored, B3 note;
+remote chỉ `main`; CI xanh `30b0efe`).
+
+=== SBG REPORT — 2026-11-23 (apply, Phiên 25) ===
+Đã gộp     : 2  — #147 (chore #144, squash `30b0efe`), ledger PR này
+Đã xoá     : 1  (`chore/144-research-b6`)
+Giữ lại    : 0
+Còn lại    : main
+CI main    : xanh (30b0efe — docs-only PR, build-test ×2 + perf + scan)
+Dừng?      : không (GĐ2 còn overlayfs/env-gated + mục 4-7; GD3 CHƯA chạm per owner)
+=============================================
