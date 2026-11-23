@@ -571,3 +571,53 @@ Còn lại    : main
 CI main    : xanh (b79f718 — build-test ×2 + perf + scan; LL1 PASS kernel 6.x)
 Dừng?      : không (còn #30 Phiên 27 + overlayfs/mục 4-7; GD3 CHƯA chạm)
 =============================================
+
+---
+
+## Phiên 27 — Orchestrator (ZAI, §11)
+
+### Pha A — Sync + SBG plan
+- Pull main `9ff9539` (ledger Phiên 26 #151); remote chỉ `main`.
+- SBG MODE=plan → `branch/plan.md` (Phiên 27): 0 PR mở → Pha D.
+
+### Triage + chọn issue
+- Theo chỉ thị user: #30 (signal race + stress test CI). Assign #30 + in-progress.
+
+### Research (`research.md` Phiên 27 — 4 nguồn)
+- sigprocmask(2) + signal(7): SIG_BLOCK/UNBLOCK/SETMASK; blocked signal QUEUED.
+- fork(2): child inherits parent signal mask + dispositions.
+- minict.c shim flow (D19): fwd_sig + g_child_pid + fork→BLOCK race.
+- signal-safety(7): sigprocmask async-signal-safe (fork window).
+
+### Development (`fix/30-signal-race`, D62 — `decisions/signal-race.md`)
+- `sandbox/minict.c`: parent `sigprocmask(SIG_BLOCK {SIGTERM,SIGINT})` before pidns fork
+  (g_parent_sig_old); unblock after `g_child_pid` set. Child shim + payload restore:
+  `SIG_SETMASK &old` → `SIG_UNBLOCK &fwd` (old captures parent block; restore would keep
+  blocked → handlers never fire). Effective masks unchanged → SIG1-SIG5 PASS.
+- Tests: SIG_STRESS trong `tests/test_isolation.sh` (35→36) — 20x SIGTERM during spawn →
+  exit 143 all. Best-effort stress (µs window); SIG1-SIG5 deterministic regression.
+- Docs: journal ngày (research, D62, branch/plan).
+
+### CVE Check
+- Kernel: `5.10.134-013.15.kangaroo.al8.x86_64`
+- Không component mới ship. cve-gate rc=0 (baseline).
+
+### Validation "không bị nhiễm"
+- `make test`: dev isolation 36 (SIG_STRESS PASS + BIND4 + LL1 SKIP); 9/10 (test_cg env Go).
+- `make test-web`: 9/9 PASS.
+- Host baseline: unchanged 3/3.
+- Bằng chứng: `evidence/signal-race.txt`.
+- **SIG1-SIG5 PASS + SIG_STRESS PASS (20/20→143) trên dev** — fix verified locally.
+
+### Pha B — PR (fix/* theo thứ tự §11)
+- B1: nhánh con của main `9ff9539` → up-to-date.
+- B2 — SCR: ... (sau CI).
+- B3 — SIA: ... (sau CI).
+- B4 — verdict: ... (sau SIA).
+
+### Kế hoạch ngày mai
+- GĐ2 còn overlayfs (env-gated), mục 4 port-forward (pasta), mục 7 RSS, systemd-real.
+  from-audit còn #99/#93/#77/#72/#62/#61 (p3).
+- **GD3 (Web UI) CHƯA chạm** — per chỉ thị owner.
+
+### Pha C/E — cập nhật sau merge (SBG apply + ledger sẽ ghi ở phần cuối phiên)
