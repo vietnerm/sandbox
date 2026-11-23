@@ -641,3 +641,53 @@ Còn lại    : main
 CI main    : xanh (d057df7 — build-test ×2 + perf + scan; SIG_STRESS PASS)
 Dừng?      : không (GĐ2 còn overlayfs/mục 4-7 + from-audit p3; GD3 CHƯA chạm)
 =============================================
+
+---
+
+## Phiên 28 — Orchestrator (ZAI, §11)
+
+### Pha A — Sync + SBG plan
+- Pull main `d81df65` (ledger Phiên 27 #153); remote chỉ `main`.
+- SBG MODE=plan → `branch/plan.md` (Phiên 28): 0 PR mở → Pha D.
+
+### Triage + chọn issue
+- Theo chỉ thị user: Landlock fail-closed + default policy. Tạo **#154**. Overlayfs/
+  port-forward/RSS = Phiên sau.
+
+### Research (`research.md` Phiên 28 — 4 nguồn)
+- landlock_restrict_self + errno (ENOSYS/EOPNOTSUPP); rulesets monotonic.
+- fail-closed posture (D52/D11/#117): operator-requested unavailable → die.
+- Docker --read-only fail-closed parity.
+- Landlock default sandbox (kernel.org sample): restrict to paths, default deny.
+
+### Development (`feat/154-landlock-default`, D63 — `decisions/landlock-default.md`)
+- `sandbox/minict.c landlock_enforce()`: restructure — always run (not just spec.ReadOnly).
+  spec.ReadOnly + ENOSYS → **die** (exit 126, fail-closed, refuse half-protected). default
+  + ENOSYS → warn (fail-soft). "/" rule: spec.ReadOnly → LL_ACCESS_RO; default →
+  LL_ACCESS_RW (restrict-to-rootfs defense-in-depth). root_access var.
+- Tests: LL2 (dev <5.13, spec.ReadOnly → die 126) + LL3 (any, default → boots + /tmp OK)
+  vào `tests/test_isolation.sh`. LL1 (CI, ro-root) existing.
+- Docs: journal ngày (research, D63, branch/plan).
+
+### CVE Check
+- Kernel: `5.10.134-013.15.kangaroo.al8.x86_64`; không component mới. cve-gate rc=0.
+
+### Validation "không bị nhiễm"
+- `make test`: dev isolation 38 (LL2 fail-closed PASS + LL3 default PASS + SIG_STRESS +
+  BIND4; LL1 SKIP <5.13); 9/10 (test_cg env Go).
+- Host baseline: unchanged 3/3.
+- Bằng chứng: `evidence/landlock-default.txt`.
+- **LL2 PASS dev** (spec.ReadOnly → die 126, fail-closed verified) + **LL3 PASS** (default boots).
+
+### Pha B — PR (feat/* theo thứ tự §11)
+- B1: nhánh con của main `d81df65` → up-to-date.
+- B2 — SCR: ... (sau CI).
+- B3 — SIA: ... (sau CI).
+- B4 — verdict: ... (sau SIA).
+
+### Kế hoạch ngày mai
+- Overlayfs rootless (mục 3a, CI-only) + port-forward pasta (mục 4) + observability/RSS
+  (mục 7) theo chỉ thị user — Phiên 29+.
+- **GD3 (Web UI) CHƯA chạm** — per chỉ thị owner.
+
+### Pha C/E — cập nhật sau merge (SBG apply + ledger sẽ ghi ở phần cuối phiên)

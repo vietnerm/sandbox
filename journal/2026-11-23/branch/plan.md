@@ -199,3 +199,25 @@ Chu trình: Phiên 27 (SDDA, issue #30 / signal race fork→g_child_pid + stress
 
 - PR `fix/30-signal-race` (issue #30) — Pha B→C (draft → CI → SCR → SIA → squash). Ledger
   qua PR `chore(branches): ledger 2026-11-23 Phiên 27`.
+
+---
+
+# SBG — Branch Gate plan 2026-11-23 (MODE=plan, Pha A — Phiên 28)
+
+Chu trình: Phiên 28 (SDDA, issue #154 / Landlock fail-closed + default policy).
+
+## Trạng thái đầu chu trình
+
+- Pull main `d81df65` (ff, ledger Phiên 27 #153); local chỉ `main`.
+- PR mở: **0** → Pha B/C rỗng → Pha D.
+- Theo chỉ thị user: Landlock fail-closed (spec.ReadOnly + no Landlock → die) + default
+  policy (mọi instance). Tạo #154. Overlayfs/port-forward/RSS = Phiên sau.
+
+## Kế hoạch DELETE_MERGED / KEEP
+
+- `feat/154-landlock-default` DELETE_MERGED sau squash. Không KEEP.
+
+## Kế hoạch gộp trong ngày
+
+- PR `feat/154-landlock-default` (issue #154) — Pha B→C (draft → CI → SCR → SIA → squash).
+  Ledger qua PR `chore(branches): ledger 2026-11-23 Phiên 28`.
