@@ -90,13 +90,16 @@ if [[ -z "$ps" ]]; then
 elif [[ -z "$ms" ]]; then
     bad D4 "cannot find manifest §5 in idea/manifest.md"
 else
-    # kernel: manifest "≥ 6.1" must appear verbatim in the README row
+    # kernel: minimum line of manifest and README rows must be equal
     mk="$(row_cell "$ms" '^Linux kernel$' 2)"
     rk="$(row_cell "$ps" '^Kernel$' 2)"
+    # compare the FIRST x.y of each row (the minimum line), not a substring:
+    # a patch-level note like "6.6.159" must not satisfy a "6.6" target
     mkv="$(grep -oE '[0-9]+\.[0-9]+' <<<"$mk" | head -1)"
+    rkv="$(grep -oE '[0-9]+\.[0-9]+' <<<"$rk" | head -1)"
     if [[ -z "$mkv" ]]; then
         bad D4 "manifest §5 has no kernel version"
-    elif ! grep -Fq "$mkv" <<<"$rk"; then
+    elif [[ "$mkv" != "$rkv" ]]; then
         bad D4 "Platform Support kernel '$rk' != manifest §5 '$mk'"
     fi
     # cgroups: the manifest's version token (v1/v2) must match the README row
