@@ -132,3 +132,27 @@ Chu trình: Phiên 24 (SDDA — Pha B: PR #142, #140; Pha D: issue #139 seccomp 
 - DELETE_MERGED: 5 nhánh trên (sau khi xác minh lại SHA tại thời điểm apply).
 - KEEP: `sec/cve-kernel-ranges`, `docs/security-boundary` (`needs-human`).
 - PR mới của Phiên D (seccomp allowlist): qua Pha B→C ngay trong phiên.
+
+---
+
+# SBG — Branch Gate plan 2026-11-23 (MODE=plan, Pha A — Phiên 25)
+
+Chu trình: Phiên 25 (SDDA, issue #144 / B6 retroactive research + B3 note).
+
+## Trạng thái đầu chu trình
+
+- Pull main `1f78f2f` (owner concurrent: Phiên 24 #139 seccomp allowlist merged #145);
+  local chỉ `main`.
+- PR mở: **0** → Pha B/C rỗng → Pha D.
+- Issue mở: from-audit #144 (B6 research cho PR #142 owner) — docs, actionable, no env-gate.
+  GĐ2 mục 4-7 env-gated (overlayfs/Landlock kernel ≥5.11, port-forward pasta, systemd-real).
+  #30 (signal race) hard-to-test. #144 là clean docs fix → chọn.
+
+## Kế hoạch DELETE_MERGED / KEEP
+
+- `chore/144-research-b6` DELETE_MERGED sau squash. Không KEEP mới.
+
+## Kế hoạch gộp trong ngày
+
+- PR `chore/144-research-b6` (docs) — Pha B→C (draft → CI → SIA delta → squash). Ledger gộp
+  vào PR này (docs-only, precedent Phiên 17-23 ledger).

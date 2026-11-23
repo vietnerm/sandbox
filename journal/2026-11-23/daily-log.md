@@ -431,3 +431,45 @@ Dừng?      : không (GĐ2 mục 6 Landlock là việc tiếp theo; GD3 CHƯA c
 DAY PASS — 2026-11-23 Phiên 24: issue #139 done (merge #145 `8fae49d` @ `d725120`;
 SCR PASS clean-room ×2; SIA PASS 11/11 + 2 low; 4/4 mutant đỏ; seccomp 25 + minictd
 43 + Go unit 7; #142/#140 SCR/SIA xong và owner gộp; remote chỉ `main`).
+
+---
+
+## Phiên 25 — Orchestrator (ZAI, §11)
+
+### Pha A — Sync + SBG plan
+- Pull main `1f78f2f` (owner Phiên 24 #139 merged #145); remote chỉ `main`.
+- SBG MODE=plan → `branch/plan.md` (Phiên 25): 0 PR mở → Pha D.
+
+### Triage + chọn issue
+- from-audit #144 (B6 research cho PR #142 owner + B3 note) — docs, actionable. GĐ2 mục 4-7
+  env-gated (overlayfs/Landlock kernel ≥5.11, port-forward pasta, systemd-real); #30 signal
+  race hard-to-test. #144 clean docs fix → chọn. Assign + in-progress.
+
+### Development (`chore/144-research-b6`, D60 — `decisions/b6-research.md`)
+- Append research section cho PR #142 vào `journal/2026-11-23/research.md` (B6 fix): 2 nguồn
+  (NVD API v2.0 rate-limit/CPE, kernel.org CNA flow/lore) + context `cve-kernel.py`
+  (CPE `linux_kernel`, LTS 6.1/6.6/6.12, control query, CVE-2026-98432/53266).
+- B3 note: nhánh `sec/cve-kernel-ranges` (owner) thiếu `<N>-<slug>` — không rename, ghi nhận
+  precedent `sec/<N>-<slug>` cho nhánh sau (Phiên 17-23).
+- Docs-only (journal + decision). Không test mới (parity ledger PRs — docs exempt §1 B5).
+
+### CVE Check
+- Kernel: `5.10.134-013.15.kangaroo.al8.x86_64`
+- Không component mới ship. cve-gate rc=0 (Phiên 23 baseline).
+
+### Validation "không bị nhiễm"
+- Docs-only: `make test` không affected (journal/decision only). CI xanh (docs PR).
+- Host baseline: unchanged 3/3 (passwd/bash/sudo khớp Phiên 14-23).
+
+### Pha B — PR (chore/* theo thứ tự §11)
+- B1: nhánh con của main `1f78f2f` → up-to-date.
+- B2 — SCR: docs-only, CI xanh = SCR.
+- B3 — SIA: docs delta, verdict PASS.
+- B4 — verdict pass → gộp (Pha C).
+
+### Kế hoạch ngày mai
+- GĐ2 còn overlayfs (env-gated CI-only), mục 4 port-forward (pasta), mục 6 Landlock, mục 7 RSS,
+  systemd-real. from-audit còn #99/#93/#77/#72/#62/#61/#30 (p3, hard-to-test/env-gated).
+- **GD3 (Web UI) CHƯA chạm** — per chỉ thị owner.
+
+### Pha C/E — cập nhật sau merge (SBG apply + ledger sẽ ghi ở phần cuối phiên)

@@ -181,3 +181,30 @@ Nguồn 3 (tham chiếu thiết kế probe): strace PTRACE_SYSCALL mechanism —
 4. MD0 (so copy verbatim) giữ nguyên vùng so: enum + g_blocklist + install_seccomp —
    hai bản sửa GIỐNG NHAU từng byte trong vùng đó; phần parse directive khác nhau nằm
    ngoài vùng so.
+
+---
+
+# Research — 2026-11-23 (B6 retroactive, PR #142 CVE kernel evaluation, issue #144)
+
+Phiên 25 (SDDA): bổ sung mục research cho PR #142 (from-audit #144 B6 — PR #142 thiếu
+research ≥2 nguồn; research nằm rải trong PR body). PR #142 thêm `tools/cve-kernel.py`
+đánh giá CVE kernel theo dải NVD CPE `linux_kernel` cho kernel runner + dòng LTS đích.
+
+## Nguồn 1 — NVD API v2.0 rate-limit + CPE matching (NVD docs)
+- Link: https://nvd.nist.gov/developers/vulnerabilities (API v2.0; rate limits 5 req/30s anonymous, 50/30s API key)
+- NVD API v2.0 `/rest/json/cves/2.0?cpeName=cpe:2.3:o:linux:linux_kernel:*` trả CVE ảnh hưởng CPE đó.
+  Rate-limit anonymous 5/30s — #142 dùng control query (CPE 119 ngày, text kernel.org, toàn NVD)
+  để verify "0 mới" không rỗng nghĩa (control bắt dạng CPE rút gọn trả 0, run 45113493786).
+- Áp dụng: `cve-kernel.py` query CPE linux_kernel cho runner `uname -r` + dòng LTS đích
+  (6.1/6.6/6.12), đánh giá "vá từ X / chưa có bản vá / ngoài dải".
+
+## Nguồn 2 — kernel.org CNA flow + lore linux-cve-announce (kernel.org)
+- Link: https://www.kernel.org/doc/html/latest/process/cve.html (CNA flow, CVE numbering authority)
+- kernel.org là CNA cho linux kernel. CVE kernel công bố qua lore.kernel.org/linux-cve-announce.
+  NVD phân tích CVE kernel muộn (≤120 ngày công bố ≤2 ngày NVD sửa) — #142 đo được
+  CVE-2026-98432 (TCP 9.8) + CVE-2026-53266 (ebtables 8.8) trên runner azure 7.0.0-1017.
+- Áp dụng: `cve-daily.yml` bước mới; CVE HIGH/CRITICAL ngoài watchlist đi qua `cve-gate.py` (≥8.0).
+
+**B3 note** (#144): nhánh `sec/cve-kernel-ranges` thiếu `<N>-<slug>` (PROMPT §1 B5). Không rename
+(nhánh owner). Các nhánh sec/ sau dùng đúng `sec/<N>-<slug>` (precedent Phiên 17-23:
+sec/113-..., sec/121-..., sec/124-..., fix/117-...).
