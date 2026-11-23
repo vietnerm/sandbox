@@ -101,6 +101,7 @@ docs/branch-ledger.md   sổ gộp/xoá nhánh (append-only)
 Mỗi dòng là một câu và một link tới bằng chứng; chi tiết nằm ở link, không chép lại
 ở đây. `tools/check-docs.sh` (CI) chặn dòng không có link và các câu đã lỗi thời.
 
+- **Chỉ cho workload tin cậy tới khi có microVM (GĐ4):** instance chia chung kernel với host, một lỗ hổng kernel có thể thoát ra ngoài; namespace/capdrop/seccomp chỉ thu hẹp rủi ro ([cve-watchlist](docs/cve-watchlist.md), [roadmap](docs/roadmap.md)).
 - Single-uid mapping: mọi file trong instance thuộc "root", gói cần `chown` sang uid khác phải cài lúc build hoặc bỏ script ([alpine-rootfs](journal/2026-11-17/decisions/alpine-rootfs.md), [web-stack](journal/2026-11-20/decisions/web-stack.md)).
 - Seccomp là blocklist (mặc định ALLOW), chưa có allowlist theo template ([seccomp](journal/2026-11-17/decisions/seccomp.md)).
 - `/proc` trong pidns chỉ mount được khi host không chặn mount; nếu bị chặn, sandbox chạy tiếp không có `/proc` (warn-only) ([proc-pidns](journal/2026-11-19/decisions/proc-pidns.md)).

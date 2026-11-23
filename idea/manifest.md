@@ -44,6 +44,13 @@ khuyến nghị tối thiểu 2 GB RAM chỉ cho OS + dịch vụ quản lý):
 - **Không Docker** (daemon, CLI, containerd, image build).
 - **Nhẹ được đo**: các chỉ số §1 + ngưỡng perf-guard; vượt ngưỡng phải giải trình trong PR.
 - **Không merge khi CI đỏ**, và CI phải xanh thật (exit code thật, pipefail; issue #14).
+- **Bảo mật là ưu tiên số 1** (owner chốt 2026-11-23). Instance minict chia chung
+  kernel với host: một lỗ hổng kernel có thể đưa tiến trình thoát ra ngoài, và
+  namespace/capdrop/seccomp chỉ thu hẹp chứ không xoá được rủi ro đó. Vì vậy,
+  **cho tới khi GĐ4 (microVM) xong, minict/minictd chỉ chạy workload tin cậy**:
+  code của chính owner hoặc image đã kiểm. Mọi tài liệu, API và UI không được
+  quảng cáo minict là ranh giới an toàn cho code lạ. Khi một việc bảo mật và một
+  tính năng tranh nhau thứ tự trong cùng giai đoạn, việc bảo mật làm trước.
 
 ## 4. Phạm vi KHÔNG làm (Non-goals)
 
@@ -150,6 +157,10 @@ xong trọn vẹn.
       còn thiếu: unit chạy thật dưới user manager (lingering) trên host có systemd.
 - [x] Template: tạo instance từ template; lưu instance thành template.
       → `save-template` + `template:<name>` (#128, D56); residual: list/remove template.
+- [ ] **Seccomp allowlist theo template** (#29, thêm 2026-11-23, ưu tiên bảo mật):
+      mỗi template có profile allowlist riêng, blocklist D11 giữ làm mặc định khi
+      template chưa có profile; mỗi profile có test "workload chạy được" + test
+      "syscall ngoài danh sách bị chặn".
 - [ ] Snapshot/backup/restore từng instance (overlay layer + tar.zst).
 - [ ] Port-forward theo instance (pasta), khai báo trong config instance.
 - [ ] Quota CPU/RAM/pid qua cgroups v2 delegation; quota disk dạng cảnh báo.
