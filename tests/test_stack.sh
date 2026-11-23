@@ -40,9 +40,8 @@ command -v curl >/dev/null 2>&1 || { echo "ST* need curl"; exit 1; }
 command -v ss >/dev/null 2>&1 || { echo "ST* need 'ss' (iproute2)"; exit 1; }
 [[ -x "$MINICT" ]] || { echo "build first: make -C sandbox"; exit 1; }
 
-if [[ ! -d "$ROOTFS" ]]; then
-    bash "$REPO/sandbox/mkrootfs-alpine.sh" "$ROOTFS" >/dev/null || exit 1
-fi
+# idempotent: builds if missing, else restores empty package dirs (#55)
+bash "$REPO/sandbox/mkrootfs-alpine.sh" "$ROOTFS" >/dev/null || exit 1
 # upgrade an older alpine build in place if stack packages are missing
 if [[ ! -x "$ROOTFS/usr/sbin/nginx" ]]; then
     MINICT_STACK_AUTOADD=1 bash "$REPO/sandbox/mkrootfs-alpine.sh" "$ROOTFS" >/dev/null 2>&1 || true
