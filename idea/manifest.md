@@ -154,6 +154,12 @@ xong trọn vẹn.
 - [ ] Port-forward theo instance (pasta), khai báo trong config instance.
 - [ ] Quota CPU/RAM/pid qua cgroups v2 delegation; quota disk dạng cảnh báo.
       → CPU/RAM/pid xong (#95, D48, CG0–CG5); còn thiếu cảnh báo quota disk.
+- [ ] Observability (thêm 2026-11-23, owner duyệt): log JSON có cấu trúc cho mọi
+      sự kiện vòng đời instance + lỗi trong `minictd`; metrics từng instance
+      (CPU/RAM/IO/pids đọc từ cgroups v2) qua endpoint `/metrics` dạng Prometheus
+      text, **chỉ bind 127.0.0.1/unix socket**, cùng token của API. Chỉ dùng Go
+      stdlib (không OpenTelemetry SDK, không thư viện Prometheus client) để giữ
+      ngân sách RSS của mục dưới. Chi tiết + test: roadmap GĐ2 mục 7.
 - [ ] Control plane idle ≤ 30 MB RSS; destroy không rò rỉ process/mount/netns.
 
 ### Giai đoạn 3 — Web UI + console
@@ -162,7 +168,8 @@ xong trọn vẹn.
 - [ ] Web UI single-user: danh sách instance, tạo từ template, start/stop,
       snapshot/restore, port-forward, quota. Mặc định bind 127.0.0.1 + token.
 - [ ] Web terminal vào instance đang chạy (qua `exec` của GĐ2).
-- [ ] Biểu đồ CPU/RAM/IO theo instance từ thống kê cgroup.
+- [ ] Biểu đồ CPU/RAM/IO theo instance, **dùng lại `/metrics` của GĐ2** (không thu
+      thập riêng lần hai).
 - [ ] UI tĩnh, không framework nặng; tổng RSS control plane + UI vẫn ≤ 30 MB.
 
 ### Giai đoạn 4 — Backend microVM (Firecracker)
