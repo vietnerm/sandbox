@@ -317,3 +317,43 @@ Landlock → warn). Operator-requested → die; always-on defense-in-depth → w
 
 **Áp dụng:** landlock_enforce() always runs; spec.ReadOnly + ENOSYS → die; default + ENOSYS →
 warn; "/" rule RO (spec.ReadOnly) or RW (default). LL2 (dev die) + LL3 (default boots).
+
+---
+
+# Research — 2026-11-23 (SDDA Phiên 29, issue #157 / Landlock ptrace-scope + fail-closed)
+
+Chủ đề: Landlock ptrace scope; shim vs payload domain; ABI probe; fail-closed completeness.
+
+## Nguồn 1 — Landlock ptrace scope (kernel.org)
+- Link: https://www.kernel.org/doc/html/latest/userspace-api/landlock.html#ptrace
+- A process in a Landlock domain can ptrace (PTRACE_MODE_READ, incl. readlink
+  /proc/<pid>/root) only processes in the SAME domain or DESCENDANT domains. A process
+  NOT in a domain (unrestricted) can ptrace any. Applying Landlock to the PAYLOAD (after
+  fork from shim) leaves the SHIM outside the domain → payload (domain) can't ptrace shim
+  (no domain) — wait, actually unrestricted shim CAN be ptraced by restricted payload?
+  No: the PTRACER must be same/ancestor domain. Payload (domain) → shim (no domain) =
+  payload is MORE restricted → can't ptrace shim → EACCES on /proc/1/root.
+
+## Nguồn 2 — landlock_create_ruleset VERSION (man7)
+- Link: https://man7.org/linux/man-pages/man2/landlock_create_ruleset.2.html
+- `landlock_create_ruleset(NULL, 0, LANDLOCK_CREATE_RULESET_VERSION)` returns the ABI
+  version (1=5.13, 2=5.19+ with REFER). Probe → conditional handled set (avoid EINVAL
+  on ABI 1 with REFER bit).
+
+## Nguồn 3 — fork + Landlock domain inheritance (kernel.org)
+- Link: https://www.kernel.org/doc/html/latest/userspace-api/landlock.html
+- fork(2): child inherits the parent's Landlock domain. Applying Landlock at the SHIM
+  (before payload fork) → payload inherits the shim's domain (same domain). Applying at
+  the payload (after fork) → payload in a NEW child domain, shim in parent domain.
+
+## Nguồn 4 — /proc/<pid>/root + PTRACE_MODE_READ (proc(5))
+- Link: https://man7.org/linux/man-pages/man5/proc.5.html (/proc/[pid]/root)
+- `/proc/<pid>/root` is a magic link to the process's root. readlink/access requires
+  PTRACE_MODE_READ (ptrace access check). Landlock scopes this to same/descendant domain.
+
+**Trade-off:** apply Landlock at shim (before payload fork) → shim+payload same domain →
+PROC2 ptrace OK. spec.ReadOnly adds child domain in payload (more restrictive, can't ptrace
+shim, but PROC2 runs in default instances). Fail-closed: all readonly errors die.
+
+**Áp dụng:** landlock_enforce_default() at shim (after pivot_root, before fork); 
+landlock_enforce_readonly() at payload (child domain, all-die). ABI probe.

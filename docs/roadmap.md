@@ -459,6 +459,12 @@
    runner nếu sudo bootstrap được. Residual: memory.swap.max/io.max mapping,
    cpu.weight mapping tuyến tính (D48).
 6. Landlock LSM cho fs-policing (kernel ≥ 5.13, runner đạt).
+   → **Xong 2026-11-23 Phiên 26+28+#157** (#149/D61 ro-root + #154/D63 fail-closed + #157/D64
+   ptrace-scope fix + default policy re-enabled). Landlock áp dụng ở SHIM (sau pivot_root,
+   trước fork payload) → shim+payload cùng domain (fix PROC2 ptrace). spec.ReadOnly =
+   child domain RO layer (fail-closed die). LL_FS_REFER (ABI ≥2) cho rename. ABI probe
+   (LANDLOCK_CREATE_RULESET_VERSION). LL1 (CI ro-root) + LL2 (dev fail-closed die) + LL3
+   (default boots).
 7. **Observability** (mới 2026-11-23, owner duyệt; manifest DoD GĐ2). Thứ tự:
    sau mục 4 (port-forward), **trước mục 8** vì mục 8 đo RSS phải tính cả phần này;
    mục 6 (Landlock) độc lập, làm trước hay sau đều được. Chỉ Go stdlib (`log/slog`, `net/http`,

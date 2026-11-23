@@ -221,3 +221,23 @@ Chu trình: Phiên 28 (SDDA, issue #154 / Landlock fail-closed + default policy)
 
 - PR `feat/154-landlock-default` (issue #154) — Pha B→C (draft → CI → SCR → SIA → squash).
   Ledger qua PR `chore(branches): ledger 2026-11-23 Phiên 28`.
+
+---
+
+# SBG — Branch Gate plan 2026-11-23 (MODE=plan, Pha A — Phiên 29)
+
+Chu trình: Phiên 29 (SDDA, issue #157 / Landlock ptrace-scope + fail-closed complete).
+
+## Trạng thái đầu chu trình
+- Pull main `8127c17` (ledger Phiên 28 #156); local chỉ `main`.
+- PR mở: **0** → Pha B/C rỗng → Pha D.
+- #157 (p1 security): fail-closed chưa trọn + PROC2 ptrace scope (default revert oan).
+  Fix: áp Landlock ở SHIM (shim+payload same domain) + all-die readonly + ABI probe +
+  default re-enabled. Assign #157 + in-progress.
+
+## Kế hoạch DELETE_MERGED / KEEP
+- `fix/157-landlock-ptrace-scope` DELETE_MERGED sau squash. Không KEEP.
+
+## Kế hoạch gộp
+- PR `fix/157-landlock-ptrace-scope` (issue #157) — Pha B→C. Ledger qua PR
+  `chore(branches): ledger 2026-11-23 Phiên 29`.
