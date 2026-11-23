@@ -947,6 +947,10 @@ EOF
     [[ "$(jget 'd["stdout"].strip()')" == tcp*errno=0 ]] || { echo "tcp: $(jget 'd["stdout"].strip()')"; return 1; }
     # unlisted syscall -> EPERM in the EXEC child (minict-exec loaded the
     # same profile via MINICT_SECCOMP_ALLOW, D59)
+    # the PAYLOAD path too: the daemon must have rendered the profile into
+    # the MINICT_SPEC file (a regression that only breaks the payload side
+    # would otherwise be invisible to the exec-based asserts above)
+    grep -q '^seccomp_allow ' "$STATE/md-sec/spec.minict" || { echo "spec.minict has no seccomp_allow lines"; return 1; }
     xv2 md-sec '{"cmd":["/home/scprobe","readlink"],"timeout_s":5}' || return 1
     [[ "$(jget 'd["stdout"].strip()')" == readlink*errno=1 ]] || { echo "readlink: $(jget 'd["stdout"].strip()')"; return 1; }
 }
