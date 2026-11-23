@@ -296,6 +296,7 @@ struct spec_rlimit {            /* setrlimit in payload BEFORE capdrop */
 };
 static struct spec_rlimit g_spec_rlimit[SPEC_MAX_ENTRIES];
 static int g_spec_rlimit_n;
+static int g_spec_readonly;  /* "readonly" directive -> Landlock ro-root (GĐ2 mục 6, #149) */
 
 /* ---------- seccomp allowlist (GĐ2 mục 3a, issue #139, D59) ----------
  * Populated host-side BEFORE unshare/setns by spec_seccomp_allow() /
@@ -841,6 +842,8 @@ static void spec_parse_line(char *line, int lineno)
                 spec_shm(arg, lineno);
         else if (!strcmp(dir, "ulimit"))
                 spec_ulimit(arg, lineno);
+        else if (!strcmp(dir, "readonly"))
+                g_spec_readonly = 1;
         else if (!strcmp(dir, "seccomp_allow"))
                 spec_seccomp_allow(arg, lineno);
         else
@@ -1299,6 +1302,109 @@ static void apply_spec_rlimits(void)
                 if (setrlimit(g_spec_rlimit[i].res, &rl) < 0)
                         die("setrlimit (spec ulimit)");
         }
+}
+
+/* ---------- Landlock ro-root (GĐ2 mục 6, issue #149, D61) ----------
+ *
+ * spec.ReadOnly enforcement via Landlock (kernel >=5.13, rootless). The rootfs
+ * "/" is granted read+execute only; "/tmp" and "/dev/shm" (tmpfs mounts) get
+ * write accesses too — a Docker --read-only equivalent without overlayfs (D2
+ * noted-only before). Defense-in-depth on top of pivot_root. ENOSYS (<5.13)
+ * -> warn (fail-soft; pivot_root + capdrop + seccomp remain primary).
+ *
+ * Landlock rules: a dir rule grants accesses to its subtree (union of ancestor
+ * rules); accesses NOT in handled_access_fs are unrestricted.
+ */
+#ifndef __NR_landlock_create_ruleset
+#define __NR_landlock_create_ruleset 444
+#endif
+#ifndef __NR_landlock_add_rule
+#define __NR_landlock_add_rule 445
+#endif
+#ifndef __NR_landlock_restrict_self
+#define __NR_landlock_restrict_self 446
+#endif
+#define LL_RULE_PATH_BENEATH 1
+
+#define LL_FS_EXECUTE      (1ULL << 0)
+#define LL_FS_WRITE_FILE   (1ULL << 1)
+#define LL_FS_READ_FILE    (1ULL << 2)
+#define LL_FS_READ_DIR     (1ULL << 3)
+#define LL_FS_REMOVE_DIR   (1ULL << 4)
+#define LL_FS_REMOVE_FILE  (1ULL << 5)
+#define LL_FS_MAKE_DIR     (1ULL << 7)
+#define LL_FS_MAKE_REG     (1ULL << 8)
+#define LL_FS_MAKE_SYM     (1ULL << 12)
+#define LL_ACCESS_RO (LL_FS_READ_FILE | LL_FS_READ_DIR | LL_FS_EXECUTE)
+#define LL_ACCESS_RW (LL_ACCESS_RO | LL_FS_WRITE_FILE | LL_FS_REMOVE_FILE | \
+                      LL_FS_REMOVE_DIR | LL_FS_MAKE_REG | LL_FS_MAKE_DIR | LL_FS_MAKE_SYM)
+#define LL_HANDLED   (LL_FS_EXECUTE | LL_FS_WRITE_FILE | LL_FS_READ_FILE | LL_FS_READ_DIR | \
+                      LL_FS_REMOVE_DIR | LL_FS_REMOVE_FILE | LL_FS_MAKE_DIR | LL_FS_MAKE_REG | \
+                      LL_FS_MAKE_SYM)
+
+struct ll_ruleset_attr { unsigned long long handled_access_fs; };
+struct ll_path_beneath_attr { unsigned long long allowed_access_fs; int parent_fd; };
+
+static int landlock_add_writable(int ruleset_fd, const char *path)
+{
+        struct ll_path_beneath_attr pb;
+        int fd = open(path, O_RDONLY | O_CLOEXEC);
+
+        if (fd < 0)
+                return -1;
+        pb.allowed_access_fs = LL_ACCESS_RW;
+        pb.parent_fd = fd;
+        if (syscall(__NR_landlock_add_rule, ruleset_fd, LL_RULE_PATH_BENEATH, &pb, 0) < 0) {
+                int e = errno;
+
+                close(fd);
+                errno = e;
+                return -1;
+        }
+        close(fd);
+        return 0;
+}
+
+static void landlock_enforce(void)
+{
+        struct ll_ruleset_attr rsa;
+        struct ll_path_beneath_attr pb;
+        int rfd, rootfd;
+
+        if (!g_spec_readonly)
+                return;
+        rsa.handled_access_fs = LL_HANDLED;
+        rfd = syscall(__NR_landlock_create_ruleset, &rsa, sizeof(rsa), 0);
+        if (rfd < 0) {
+                if (errno == ENOSYS || errno == EOPNOTSUPP)
+                        warn("Landlock unavailable (kernel <5.13) — spec.ReadOnly NOT enforced");
+                else
+                        warn("landlock_create_ruleset — spec.ReadOnly NOT enforced");
+                return;
+        }
+        rootfd = open("/", O_RDONLY | O_CLOEXEC);
+        if (rootfd < 0) {
+                warn("open / for Landlock");
+                close(rfd);
+                return;
+        }
+        pb.allowed_access_fs = LL_ACCESS_RO;
+        pb.parent_fd = rootfd;
+        if (syscall(__NR_landlock_add_rule, rfd, LL_RULE_PATH_BENEATH, &pb, 0) < 0) {
+                warn("landlock_add_rule /");
+                close(rootfd);
+                close(rfd);
+                return;
+        }
+        close(rootfd);
+        /* "/tmp" + "/dev/shm" writable (tmpfs mounts) */
+        landlock_add_writable(rfd, "/tmp");
+        landlock_add_writable(rfd, "/dev/shm");
+        /* bind mounts writable: residual — not tracked per-bind; writable binds
+         * inherit "/" read-only. Known limitation (document D61). */
+        if (syscall(__NR_landlock_restrict_self, rfd, 0) < 0)
+                warn("landlock_restrict_self — spec.ReadOnly NOT enforced");
+        close(rfd);
 }
 
 /* ---- payload fd + core-dump hardening (issue #5, D33) ----
@@ -1903,6 +2009,8 @@ int main(int argc, char **argv)
                         drop_all_caps(); /* after ALL privileged work is done */
 
                         install_seccomp(); /* last lock: blocklist, before exec */
+
+                        landlock_enforce(); /* GĐ2 mục 6: ro-root if spec.ReadOnly + kernel >=5.13 */
 
                         setenv("PATH", "/bin:/sbin:/usr/bin", 1);
                         setenv("HOME", "/", 1);

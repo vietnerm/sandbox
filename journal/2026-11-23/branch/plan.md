@@ -156,3 +156,25 @@ Chu trình: Phiên 25 (SDDA, issue #144 / B6 retroactive research + B3 note).
 
 - PR `chore/144-research-b6` (docs) — Pha B→C (draft → CI → SIA delta → squash). Ledger gộp
   vào PR này (docs-only, precedent Phiên 17-23 ledger).
+
+---
+
+# SBG — Branch Gate plan 2026-11-23 (MODE=plan, Pha A — Phiên 26)
+
+Chu trình: Phiên 26 (SDDA, issue #149 / GĐ2 mục 6 Landlock ro-root, CI-only).
+
+## Trạng thái đầu chu trình
+
+- Pull main `f48028d` (ff, ledger Phiên 25 qua #148); local chỉ `main`.
+- PR mở: **0** → Pha B/C rỗng → Pha D.
+- Issue mở: không security p0/p1. GĐ2 mục 4-7 env-gated; owner đang active (#139 seccomp
+  allowlist Phiên 24). Tạo #149 (Landlock mục 6, CI-only kernel ≥5.13) theo chỉ thị user.
+
+## Kế hoạch DELETE_MERGED / KEEP
+
+- `feat/149-landlock` DELETE_MERGED sau squash. Không KEEP.
+
+## Kế hoạch gộp trong ngày
+
+- PR `feat/149-landlock` (issue #149) — Pha B→C (draft → CI → SCR → SIA → squash). Ledger
+  qua PR `chore(branches): ledger 2026-11-23 Phiên 26`.

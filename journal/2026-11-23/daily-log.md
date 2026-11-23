@@ -493,3 +493,57 @@ Còn lại    : main
 CI main    : xanh (30b0efe — docs-only PR, build-test ×2 + perf + scan)
 Dừng?      : không (GĐ2 còn overlayfs/env-gated + mục 4-7; GD3 CHƯA chạm per owner)
 =============================================
+
+---
+
+## Phiên 26 — Orchestrator (ZAI, §11)
+
+### Pha A — Sync + SBG plan
+- Pull main `f48028d` (ledger Phiên 25 #148); remote chỉ `main`.
+- SBG MODE=plan → `branch/plan.md` (Phiên 26): 0 PR mở → Pha D.
+
+### Triage + chọn issue
+- Theo chỉ thị user: GĐ2 mục 6 Landlock (CI-only) + #30 (sau). Tạo **#149** (Landlock
+  ro-root, type:feature p2, mục 6). Dev 5.10 Landlock ENOSYS → CI-only.
+
+### Research (`research.md` Phiên 26 — 4 nguồn)
+- Landlock(7) + create_ruleset(2): unprivileged fs control, dir rule subtree semantics.
+- LANDLOCK_ACCESS_FS_* flags (linux/landlock.h): EXECUTE/WRITE_FILE/READ_FILE/...
+- Docker --read-only + tmpfs parity: rootfs ro, tmpfs writable.
+- Landlock rootless + kernel ≥5.13 gate (ENOSYS <5.13).
+
+### Development (`feat/149-landlock`, D61 — `decisions/landlock.md`)
+- `sandbox/minict.c`: `landlock_enforce()` — nếu `g_spec_readonly` + Landlock available:
+  ruleset handled all core fs; rule "/" read-only (READ_FILE|READ_DIR|EXECUTE); rule
+  "/tmp"+"/dev/shm" read-write; `landlock_restrict_self`. ENOSYS → warn (fail-soft).
+  `readonly` spec directive → `g_spec_readonly`. Call after install_seccomp (last lock).
+- `store.go renderSpec`: spec.ReadOnly → emit `readonly` directive (thay note-only D2).
+- Tests: LL1 trong `tests/test_isolation.sh` — spec.ReadOnly → write /etc EACCES, /tmp OK.
+  Gated landlock probe (create_ruleset syscall); dev <5.13 SKIP, CI ≥5.13 PASS.
+- Không đụng Go/test-minictd (chỉ C + daemon spec render + isolation test).
+- Docs: journal ngày (research, D61, branch/plan).
+
+### CVE Check
+- Kernel: `5.10.134-013.15.kangaroo.al8.x86_64`
+- Không component mới ship (C syscall + Go stdlib). cve-gate rc=0 (baseline).
+
+### Validation "không bị nhiễm"
+- `make test`: dev isolation 35 (LL1 SKIP <5.13, BIND4 PASS); 9/10 (test_cg env Go).
+- `make test-web`: 9/9 PASS.
+- `make test-minictd`: SKIP env (no Go local) — CI chạy MD0-MD40 + LL1.
+- Host baseline: unchanged 3/3.
+- Bằng chứng: `evidence/landlock.txt`.
+- **LL1 SKIP trên dev 5.10** (ENOSYS) — CI ubuntu-24.04 (6.x) verifies.
+
+### Pha B — PR (feat/* theo thứ tự §11)
+- B1: nhánh con của main `f48028d` → up-to-date.
+- B2 — SCR: env (no Go + Landlock ENOSYS) → CI clean-room (≥5.13) verifies LL1.
+- B3 — SIA: ... (sau CI).
+- B4 — verdict: ... (sau SIA).
+
+### Kế hoạch ngày mai
+- #30 (signal race + stress test CI) theo chỉ thị user — Phiên 27.
+- GĐ2 còn overlayfs (env-gated), mục 4 port-forward (pasta), mục 7 RSS, systemd-real.
+- **GD3 (Web UI) CHƯA chạm** — per chỉ thị owner.
+
+### Pha C/E — cập nhật sau merge (SBG apply + ledger sẽ ghi ở phần cuối phiên)
