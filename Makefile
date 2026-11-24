@@ -75,6 +75,13 @@ test-minictd: build rootfs minictd
 perf-check: build rootfs
 	bash tools/perf-check.sh
 
+examples: build rootfs
+	@for ex in examples/*/run.sh; do \
+		echo "=== $$ex ==="; \
+		bash "$$ex" || { echo "FAIL: $$ex"; exit 1; }; \
+	done
+	@echo "=== examples: all PASS ==="
+
 cve-check:
 	python3 tools/cve-check.py
 
