@@ -147,5 +147,33 @@
   không đổi (pasta chỉ spawn khi config declare; attach latency ghi note)
 - Bằng chứng: journal/2026-11-25/evidence/pasta-portforward.txt
 
-### PR
-- #<pr> — ready — CI: <xanh/đỏ> — merge: <có/không>
+### Pha B/C — PR #166 (squash `d7cb8a3`)
+- CI lần 1 đỏ (run 45582995043): MD48/49 port probe sai ngữ nghĩa — TIME_WAIT
+  của curl trước đó giữ EADDRINUSE sau khi listener đóng → probe đổi sang
+  listener-gone `ss -tln` (commit f48bb08; passt đặt SO_REUSEADDR — đo từ
+  source pin nên re-attach trong cửa sổ TIME_WAIT hợp lệ).
+- CI lần 2 đỏ push/đỏ xanh PR (run 45587261541 vs 45587273793) — **PRODUCT
+  BUG thật, MD49 flaky**: pasta `setns` vào INIT userns → EINVAL vì shim
+  chưa unshare lúc pasta spawn (stat ns/net chỉ chứng minh process sống).
+  Fix `waitNsDistinct` (so link-target ns của shim với /proc/self) +
+  TestWaitNsDistinct + readiness giờ đọc đúng route ns instance (artifact
+  "attach 0ms" của MD47 cùng gốc — commit 04f51db).
+- B2 — SCR @ 04f51db: dev 43 PASS + 7 SKIP; runner CI cùng SHA **49 PASS +
+  1 SKIP + 0 FAIL** — MD47/48/49 PASS thật (run 45590685583); mutant 6/6
+  caught (M-fwd-parse/-2, M-args, M-gw, M-resolver, M-stop-pasta), control
+  PASS; perf dev 1.96 ms / 1200 kB / 2.05 MB PASS; host unchanged.
+- B3 — SIA @ 04f51db: PASS — 11/11 contract OK, claim sai 0, test rỗng 0,
+  bảo mật 0 critical/high/medium, 2 low (→ residual D67, không chặn). Label
+  `audit:pass`.
+- B4/C — SBG apply: squash `--match-head-commit 04f51db` → **`d7cb8a3` trên
+  main; #165 auto-close**; nhánh DELETE_MERGED.
+
+### Pha E — Kết ngày (SBG)
+- `feat/165-pasta-portforward-config` DELETE_MERGED (không cần archive —
+  đã gộp trọn). **#165 XONG.**
+- Ledger qua PR `chore(branches): ledger 2026-11-25 Phiên 32`.
+- Remote kỳ vọng: chỉ `main`.
+
+## PR
+- #166 — ready — CI: xanh (run 45590685583 + unicode-guard + perf-guard) — merged squash `d7cb8a3`
+- Merge: CÓ (#165 auto-close)

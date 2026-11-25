@@ -57,3 +57,29 @@ File: journal/2026-11-25/cve/pasta-portforward.md + .json
 ### host baseline
 sha256 /etc/passwd /etc/shadow(unreadable) /bin/bash /usr/bin/sudo
 trước/sau phiên: UNCHANGED (diff rỗng)
+
+### CI findings trong phiên (B1 loop, không mở PR mới)
+1. run 45582995043 (đỏ): MD48/49 port probe bind() EADDRINUSE — TIME_WAIT của
+   kết nối curl MD47 giữ port ~60s sau khi pasta chết (listener đã đóng).
+   Fix probe → listener-gone `ss -tln` + pattern [^0-9]<port> (f48bb08).
+   So sánh: passt đặt SO_REUSEADDR trên mọi listen socket (tcp.c:3733,
+   util.c:107 — grep từ source pin tools/cache/passt-2026_10_02) → re-attach
+   hợp lệ trong cửa sổ TIME_WAIT; assert đúng phải là "listener gone".
+2. run 45587261541 (đỏ push) vs 45587273793 (xanh PR, cùng SHA): MD49 flaky —
+   pasta "Couldn't enter user namespace /proc/<pid>/ns/user: Invalid argument".
+   Root cause PRODUCT: spawnPasta stat /proc/<pid>/ns/net trước unshare của
+   shim → pasta setns vào INIT userns → EINVAL (user_namespaces(7): cấm
+   re-enter own/ancestor ns); readiness false-positive route init ns
+   (MD47 note "attach 0ms" là cùng artifact).
+   Fix (04f51db): waitNsDistinct so link-target /proc/<pid>/ns/{user,net} vs
+   /proc/self (shim phải khác daemon ns trước khi spawn pasta, bound 2s);
+   TestWaitNsDistinct (unshare -Urn thật + self-control + dead-process).
+   Chạy lại: run 45590685583 — MD47/48/49 PASS, minictd PASS=49 SKIP=1 FAIL=0.
+
+### mutants (SIA B3, scripts/mutants-d67.py — /tmp backup, repo sạch)
+M-fwd-parse: CAUGHT · M-fwd-parse-2: CAUGHT · M-args: CAUGHT · M-gw: CAUGHT ·
+M-resolver: CAUGHT · M-stop-pasta: CAUGHT · CONTROL (pristine): PASS
+
+### CI cuối cùng trên HEAD đã gộp (04f51db → squash d7cb8a3)
+ci:completed:success ×2 · unicode-guard:completed:success · perf-guard:completed:success
+test-minictd (runner): PASS=49 SKIP=1 FAIL=0 — MD47/48/49 PASS
