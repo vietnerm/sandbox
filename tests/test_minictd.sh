@@ -1020,7 +1020,11 @@ ovl_probe() { # <upper-base>  — mounts overlay with upper/work under $1
         2>&1
 }
 ovl_probe "$WORK" >/tmp/ovlprobe.$$.log 2>&1 && OVL_SUPPORTED=1 \
-    || echo "ovl-probe: unsupported on this host — MD44-46 SKIP ($(cat /tmp/ovlprobe.$$.log 2>/dev/null | tail -1))"
+    || { echo "ovl-probe: unsupported on this host — MD44-46 SKIP. full output:"
+         sed 's/^/    /' /tmp/ovlprobe.$$.log 2>/dev/null
+         echo "    fs: $(stat -f -c %T "$REPO/rootfs" 2>/dev/null) lower | $(stat -f -c %T "$WORK" 2>/dev/null) work | kernel: $(uname -r)"
+         echo "    apparmor userns: $(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || echo n/a)"
+       }
 rm -f /tmp/ovlprobe.$$.log
 if [[ "$OVL_SUPPORTED" != 1 ]]; then
     # Fallback: /tmp may be tmpfs WITHOUT user.* xattr support (< 6.13) —
