@@ -25,7 +25,7 @@
    alpine 9 + debian 9 + escape-alpine 35 + cve-check tool 4 + pasta 11 + stack 8 + cg 6 = 149,
    pipefail thật — issue #14; cg suite từ #4/D48 2026-11-20, env-gated cgroups v2;
    seccomp 25 từ #139/D59 2026-11-23 (SE1-4 allowlist); dev: 136 PASS + 13 SKIP env-blocked)
-   + `make test-web` + `make test-minictd` (40, MD0–MD40) + lưu evidence vào
+   + `make test-web` + `make test-minictd` (47, MD0–MD46 — MD44–46 overlay D66 env-gated kernel ≥5.11) + lưu evidence vào
    `journal/YYYY-MM-DD/evidence/` + integrity check host
 5. Ghi `journal/YYYY-MM-DD/daily-log.md` (quy tắc thư mục: PROMPT.MD §10)
 
