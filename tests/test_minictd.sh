@@ -1015,7 +1015,7 @@ ovl_probe() { # <upper-base>  — mounts overlay with upper/work under $1
     [[ -d "$REPO/rootfs/bin" ]] || { echo "ovl-probe: no rootfs/bin"; return 125; }
     command -v unshare >/dev/null 2>&1 || { echo "ovl-probe: no unshare"; return 125; }
     mkdir -p "$ub/ovlupper" "$ub/ovlwork" "$ub/ovlmnt" || return 125
-    unshare -Ur sh -c \
+    unshare -Urm sh -c \
         "mount -t overlay overlay -o lowerdir=$REPO/rootfs,upperdir=$ub/ovlupper,workdir=$ub/ovlwork,userxattr $ub/ovlmnt && ls $ub/ovlmnt/bin >/dev/null && umount $ub/ovlmnt" \
         2>&1
 }
@@ -1026,7 +1026,7 @@ ovl_probe() { # <upper-base>  — mounts overlay with upper/work under $1
 ovl_bisect() {
     local d="$WORK/ovlbi"
     mkdir -p "$d/ext" || return 0
-    unshare -Ur sh -c "
+    unshare -Urm sh -c "
         mkdir -p $d/ext/u $d/ext/w $d/ext/m $d/tfs || exit 1
         mount -t tmpfs tmpfs $d/tfs 2>/dev/null && echo 'BI1 tmpfs-in-userns: OK' || echo 'BI1 tmpfs-in-userns: FAIL(EPERM-class)'
         mkdir -p $d/tfs/l $d/tfs/u $d/tfs/w $d/tfs/m $d/tfs/m2 2>/dev/null && echo bisect-marker > $d/tfs/l/f
