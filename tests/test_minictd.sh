@@ -155,6 +155,10 @@ cleanup() {
     # repo-scoped argv pattern instead (measured leak: 1 ocireg per suite
     # run without this, Phiên 16).
     pkill -TERM -f -- "tools/bin/ocireg $REG_PORT" 2>/dev/null || true
+    # D66 overlay fallback state dir lives OUTSIDE $WORK (HOME-fs, see the
+    # probe block) — clean it too, plus any daemon left on it.
+    pkill -TERM -f -- ".minictd-ovl-test" 2>/dev/null || true
+    rm -rf "$HOME/.minictd-ovl-test" 2>/dev/null || true
     for n in md-a md-b md-c md-auto md-t md-f md-oci md-oci-bad md-oci-h md-oci-r md-oci-a md-rl md-s6a md-s6b md-tpl-src md-tpl-dst md-snap-src md-snap-dst md-sec md-sec2 md-sec-dst; do
         curl -s -m 5 -X POST -H "Authorization: Bearer $TOKEN" \
             "$API/v1/sandboxes/$n/remove" >/dev/null 2>&1 || true
@@ -996,23 +1000,39 @@ run_case MD43 "template:md-tpl-sec carries seccomp_profile (EPERM)" pass md43
 # ---------- GĐ2 mục 3 residual: overlayfs rootfs (issue #162, D66) ----------
 # Env-gated (MINICT_OVERLAY=1 on a SEPARATE daemon — the main daemon keeps
 # the legacy copy path so every MD case above exercises the default mode).
-# The unprivileged overlay mount needs kernel >= 5.11 (measured: 5.10 EPERM);
-# the probe below mounts the SAME layer pair the cases use (lower=$REPO/
-# rootfs, upper/work under $WORK) in a userns — unsupported -> SKIP (rc=125).
+# The unprivileged overlay mount needs kernel >= 5.11 (measured: 5.10 EPERM).
+# The probe mounts the SAME layer pair the cases use and PRINTS the failure
+# reason (CI run #45566473219: MD44-46 skipped — root cause invisible with a
+# silent probe; tmpfs upper is a known candidate: tmpfs lacks user.* xattr
+# support before 6.13, and userxattr copy-up needs them).
 OVL_STATE="$WORK/ovlstate"
 OVL_PORT=$(( 17900 + RANDOM % 90 ))
 OVL_API="http://127.0.0.1:$OVL_PORT"
 OVL_SUPPORTED=0
 DPID5=""
-ovl_probe() {
-    [[ -d "$REPO/rootfs/bin" ]] || return 125
-    command -v unshare >/dev/null 2>&1 || return 125
-    mkdir -p "$WORK/ovlupper" "$WORK/ovlwork" "$WORK/ovlmnt" || return 125
+ovl_probe() { # <upper-base>  — mounts overlay with upper/work under $1
+    local ub="$1"
+    [[ -d "$REPO/rootfs/bin" ]] || { echo "ovl-probe: no rootfs/bin"; return 125; }
+    command -v unshare >/dev/null 2>&1 || { echo "ovl-probe: no unshare"; return 125; }
+    mkdir -p "$ub/ovlupper" "$ub/ovlwork" "$ub/ovlmnt" || return 125
     unshare -Ur sh -c \
-        "mount -t overlay overlay -o lowerdir=$REPO/rootfs,upperdir=$WORK/ovlupper,workdir=$WORK/ovlwork,userxattr $WORK/ovlmnt && ls $WORK/ovlmnt/bin >/dev/null && umount $WORK/ovlmnt" \
-        >/dev/null 2>&1
+        "mount -t overlay overlay -o lowerdir=$REPO/rootfs,upperdir=$ub/ovlupper,workdir=$ub/ovlwork,userxattr $ub/ovlmnt && ls $ub/ovlmnt/bin >/dev/null && umount $ub/ovlmnt" \
+        2>&1
 }
-if ovl_probe; then OVL_SUPPORTED=1; fi
+ovl_probe "$WORK" >/tmp/ovlprobe.$$.log 2>&1 && OVL_SUPPORTED=1 \
+    || echo "ovl-probe: unsupported on this host — MD44-46 SKIP ($(cat /tmp/ovlprobe.$$.log 2>/dev/null | tail -1))"
+rm -f /tmp/ovlprobe.$$.log
+if [[ "$OVL_SUPPORTED" != 1 ]]; then
+    # Fallback: /tmp may be tmpfs WITHOUT user.* xattr support (< 6.13) —
+    # retry with upper/work on the HOME filesystem (same fs as the repo
+    # checkout on CI). If this works, the overlay daemon gets a state dir
+    # there too (upper/work must share upper's fs with the daemon layout).
+    if mkdir -p "$HOME/.minictd-ovl-test" && ovl_probe "$HOME/.minictd-ovl-test" >/dev/null 2>&1; then
+        OVL_SUPPORTED=1
+        OVL_STATE="$HOME/.minictd-ovl-test/state"
+        echo "ovl-probe: /tmp fallback OK — overlay state dir moved to $OVL_STATE"
+    fi
+fi
 
 ovapi() {
     local m="$1" p="$2" body="${3:-}" code
