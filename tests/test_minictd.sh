@@ -1019,11 +1019,30 @@ ovl_probe() { # <upper-base>  — mounts overlay with upper/work under $1
         "mount -t overlay overlay -o lowerdir=$REPO/rootfs,upperdir=$ub/ovlupper,workdir=$ub/ovlwork,userxattr $ub/ovlmnt && ls $ub/ovlmnt/bin >/dev/null && umount $ub/ovlmnt" \
         2>&1
 }
+# Diagnostic bisect — runs ONLY when the primary probe failed. One line per
+# variant: separates a generic userns-mount gate (tmpfs baseline) from an
+# overlay-specific one, and identifies which option combination the runner
+# kernel accepts (BI5 mirrors the shim's future explicit-flag posture).
+ovl_bisect() {
+    local d="$WORK/ovlbi"
+    mkdir -p "$d/ext" || return 0
+    unshare -Ur sh -c "
+        mkdir -p $d/ext/u $d/ext/w $d/ext/m $d/tfs || exit 1
+        mount -t tmpfs tmpfs $d/tfs 2>/dev/null && echo 'BI1 tmpfs-in-userns: OK' || echo 'BI1 tmpfs-in-userns: FAIL(EPERM-class)'
+        mkdir -p $d/tfs/l $d/tfs/u $d/tfs/w $d/tfs/m $d/tfs/m2 2>/dev/null && echo bisect-marker > $d/tfs/l/f
+        mount -t overlay overlay -o lowerdir=$d/tfs/l,upperdir=$d/tfs/u,workdir=$d/tfs/w,userxattr $d/tfs/m 2>/dev/null && echo 'BI2 overlay-all-tmpfs-userxattr: OK' || echo 'BI2 overlay-all-tmpfs-userxattr: FAIL'
+        mount -t overlay overlay -o lowerdir=$REPO/rootfs,upperdir=$d/tfs/u,workdir=$d/tfs/w,userxattr $d/tfs/m2 2>/dev/null && echo 'BI3 lower-ext-upper-tmpfs-userxattr: OK' || echo 'BI3 lower-ext-upper-tmpfs-userxattr: FAIL'
+        mount -t overlay overlay -o lowerdir=$REPO/rootfs,upperdir=$d/ext/u,workdir=$d/ext/w $d/ext/m 2>/dev/null && echo 'BI4 overlay-ext-nouserxattr: OK' || echo 'BI4 overlay-ext-nouserxattr: FAIL'
+        mount -t overlay overlay -o lowerdir=$REPO/rootfs,upperdir=$d/ext/u,workdir=$d/ext/w,userxattr,index=off,redirect_dir=off,metacopy=off $d/ext/m 2>/dev/null && echo 'BI5 overlay-ext-userxattr-flags-off: OK' || echo 'BI5 overlay-ext-userxattr-flags-off: FAIL'
+        umount $d/tfs 2>/dev/null
+    " 2>&1
+}
 ovl_probe "$WORK" >/tmp/ovlprobe.$$.log 2>&1 && OVL_SUPPORTED=1 \
     || { echo "ovl-probe: unsupported on this host — MD44-46 SKIP. full output:"
          sed 's/^/    /' /tmp/ovlprobe.$$.log 2>/dev/null
          echo "    fs: $(stat -f -c %T "$REPO/rootfs" 2>/dev/null) lower | $(stat -f -c %T "$WORK" 2>/dev/null) work | kernel: $(uname -r)"
          echo "    apparmor userns: $(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || echo n/a)"
+         ovl_bisect 2>&1 | sed 's/^/    /'
        }
 rm -f /tmp/ovlprobe.$$.log
 if [[ "$OVL_SUPPORTED" != 1 ]]; then
