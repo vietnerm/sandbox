@@ -56,6 +56,11 @@ type Store struct {
 	// TraefikDomain is the Host() rule suffix for generated routes
 	// (s-<name>.<domain>). Empty falls back to "localhost".
 	TraefikDomain string
+	// PastaBin is the pasta binary (passt project; tools/fetch-pasta.sh
+	// pinned build). Needed only when an instance declares pasta_ports
+	// (GĐ2 mục 4, issue #165, D67); empty falls back to beside-binary
+	// then PATH resolution, all fail-closed at spawn time.
+	PastaBin string
 	// cg is the lazily-resolved cgroup manager (CG1). Guarded by cgMu
 	// because Run/Start can run concurrently for different instances.
 	cg   *cgroupManager
@@ -116,6 +121,12 @@ type InstanceState struct {
 	// refuses (empty archive — the mount lives only in the shim's mount
 	// ns) and spawnProxies resolves relay sockets in upper, not rootfs.
 	Overlay bool `json:"overlay,omitempty"`
+	// PastaPID/PastaTicks record the host-side pasta attach (GĐ2 mục 4,
+	// issue #165, D67) — Stop/Remove/heal kill it explicitly because
+	// pasta holds HOST-side listening sockets for its forwards; ticks
+	// guard against pid reuse (same scheme as PID/StartTicks).
+	PastaPID   int    `json:"pasta_pid,omitempty"`
+	PastaTicks uint64 `json:"pasta_ticks,omitempty"`
 }
 
 // nameRe mirrors docker's name charset: alphanumeric first char, then
@@ -274,6 +285,11 @@ func (s *Store) pidAlive(pid int, startTicks uint64) bool {
 // exit, host reboot). Returns the (possibly healed) state.
 func (s *Store) alive(st *InstanceState) *InstanceState {
 	if st.State == StateRunning && !s.pidAlive(st.PID, st.StartTicks) {
+		// D67 (issue #165): the payload died outside a query — reap the
+		// pasta attach with it. pasta pins the netns and keeps holding its
+		// host forward binds; the next Start after this heal would
+		// otherwise bind-fail EADDRINUSE on a stale attach.
+		s.stopPasta(st)
 		st.State = StateStopped
 		st.PID = 0
 		st.StartTicks = 0

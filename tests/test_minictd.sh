@@ -83,6 +83,20 @@
 #         seccomp_profile=busybox -> probe readlink EPERM + tcp OK in exec
 #   MD42  control: no profile -> readlink works in exec (blocklist default)
 #   MD43  template carries seccomp_profile (template:<name> -> EPERM in exec)
+#   MD44  D66 overlay: boot+exec via upper, base unchanged, thin-provision
+#   MD45  D66 overlay: Stop -> Start keeps upper changes
+#   MD46  D66 overlay: snapshot/save-template refuse, remove cleans
+#   MD47  GĐ2 mục 4 port-forward pasta config-side (issue #165, D67): Run
+#         with pasta_ports -> daemon attaches pasta (D37 mechanics), host
+#         curl -> httpd in the netns via the CONFIG-declared forward
+#         (FPORT != 8080, so pasta's default auto-forward cannot explain
+#         it); resolver baked pre-spawn (D42); spec carries pasta_ports
+#   MD48  D67 pasta lifecycle: stop -> attach killed + host port freed
+#         (bind probe); start -> fresh attach, forward back
+#   MD49  D67 crash-heal: payload killed outside a query -> heal reaps
+#         pasta (no stale host bind, start works again); invalid
+#         pasta_ports (reserved host port / garbage entry) -> 4xx +
+#         dir wiped (R4), fail-closed
 #
 # Exit code: 0 if all expected results hold, 1 otherwise.
 set -u
@@ -159,7 +173,7 @@ cleanup() {
     # probe block) — clean it too, plus any daemon left on it.
     pkill -TERM -f -- ".minictd-ovl-test" 2>/dev/null || true
     rm -rf "$HOME/.minictd-ovl-test" 2>/dev/null || true
-    for n in md-a md-b md-c md-auto md-t md-f md-oci md-oci-bad md-oci-h md-oci-r md-oci-a md-rl md-s6a md-s6b md-tpl-src md-tpl-dst md-snap-src md-snap-dst md-sec md-sec2 md-sec-dst; do
+    for n in md-a md-b md-c md-auto md-t md-f md-oci md-oci-bad md-oci-h md-oci-r md-oci-a md-rl md-s6a md-s6b md-tpl-src md-tpl-dst md-snap-src md-snap-dst md-sec md-sec2 md-sec-dst md-pasta md-pasta-bad1 md-pasta-bad2; do
         curl -s -m 5 -X POST -H "Authorization: Bearer $TOKEN" \
             "$API/v1/sandboxes/$n/remove" >/dev/null 2>&1 || true
     done
@@ -174,6 +188,10 @@ cleanup() {
     # the same class; its state dir is per-run unique (mktemp -d).
     pkill -TERM -f -- "$S4_DIR" 2>/dev/null || true
     pkill -TERM -f -- "$OVL_STATE" 2>/dev/null || true
+    # D67 (MD47-49): pasta children of the main daemon survive DPID
+    # (Setsid) — kill by the repo-unique binary path (same role as the
+    # ocireg pkill above).
+    pkill -TERM -f -- "tools/bin/pasta --foreground" 2>/dev/null || true
     # Catch-all (issue #91 dev session, measured leak): when this script's
     # stdout is a short-lived pipe consumer (grep/tail) the shell can die
     # by SIGPIPE BEFORE the EXIT trap runs — daemon2 (MD21) then outlives
@@ -241,6 +259,7 @@ mkdir -p "$WORK/bindsrc" && echo "bind-marker" > "$WORK/bindsrc/hello"
 LEAKME="leak-$$" MINICTD_TOKEN="$TOKEN" "$MINICTD" \
     --listen "127.0.0.1:$API_PORT" --state-dir "$STATE" \
     --minict-bin "$MINICT" --minict-exec-bin "$MEXEC" \
+    --pasta-bin "$REPO/tools/bin/pasta" \
     --base-rootfs "$REPO/rootfs" --webproxy "$REPO/tools/webproxy.py" \
     --traefik-dir "$TRAEFIK_DIR" \
     > "$WORK/daemon.log" 2>&1 &
@@ -1156,6 +1175,115 @@ md46() {
 run_case MD44 "D66 overlay: boot+exec via upper, base unchanged, thin-provision" skip md44
 run_case MD45 "D66 overlay: Stop -> Start keeps upper changes" skip md45
 run_case MD46 "D66 overlay: snapshot/save-template refuse, remove cleans" skip md46
+
+# ---------- GĐ2 mục 4: port-forward qua pasta config-side (issue #165, D67) ----------
+# Env-gated (D34): pasta needs /dev/net/tun — the dev container has NONE
+# (measured 2026-11-25), GitHub ubuntu-24.04 runners have it. The pinned
+# binary comes from tools/fetch-pasta.sh (same role crane has for the A2
+# cases; `make test` fetches it in the pasta suite when run in order, but
+# test-minictd also runs standalone in CI -> fetch here, idempotent).
+PASTA_OK=0
+PFPORT=$(( 18800 + RANDOM % 100 ))
+if [[ -c /dev/net/tun ]]; then
+    bash "$REPO/tools/fetch-pasta.sh" >/dev/null 2>&1 || true
+    [[ -x "$REPO/tools/bin/pasta" ]] && PASTA_OK=1
+fi
+[[ "$PASTA_OK" == 1 ]] || echo "pasta gate: no /dev/net/tun or pinned binary — MD47-49 SKIP (env-blocked, D34)"
+
+# FPORT != 8080 on purpose: pasta's DEFAULT auto-forwarding (passt.1:
+# ports bound in the namespace forwarded back on the SAME host port)
+# cannot explain a hit on $PFPORT — only the config-declared forward can.
+RUN_P=$(cat <<EOF
+{"name":"md-pasta","image":"base",
+ "pasta_ports":["$PFPORT:8080"],
+ "cmd":["/bin/sh","-c","mkdir -p /www && echo pasta-ok > /www/index.html; httpd -f -p 8080 -h /www"]}
+EOF
+)
+pasta_wait_fwd() { # polls the declared forward until it answers
+    local _ok=0
+    for _ in $(seq 1 20); do
+        curl -s -m 2 "http://127.0.0.1:$PFPORT/" 2>/dev/null | grep -q pasta-ok && { _ok=1; break; }
+        sleep 0.5
+    done
+    [[ "$_ok" == 1 ]] || { echo "curl $PFPORT failed (attach/forward)"; tail -5 "$STATE/md-pasta/pasta.log" 2>/dev/null; return 1; }
+}
+port_no_listener() { # pasta holds LISTENING sockets for its forwards (0.0.0.0
+    # default bind, passt.1) — a dead attach means NO listener on the port.
+    # A plain bind() probe is WRONG here: curl connections from the previous
+    # forward leave TIME_WAIT 4-tuples (local port == $PFPORT) for ~60s
+    # after pasta dies — bind fails EADDRINUSE while the listener is long
+    # gone (measured on runner CI run 45582995043, MD48/49 FAIL). pasta
+    # itself sets SO_REUSEADDR on every listening socket (passt tcp.c
+    # tcp_sock_init + util.c sock_l4), so re-attach after stop works inside
+    # the TIME_WAIT window — what must be asserted is listener-gone, not
+    # bindable.
+    # NOTE the ':' before the port: ss prints "0.0.0.0:<port>" — a space
+    # before the number never occurs (a space-anchored grep would be a
+    # false negative and make the probe vacuous).
+    [[ -n "$(ss -tln 2>/dev/null | grep -E "[^0-9]$PFPORT[[:space:]]" || true)" ]] \
+        && { echo "listener still present on $PFPORT"; ss -tln | grep "$PFPORT" || true; return 1; }
+    return 0
+}
+md47() {
+    [[ "$PASTA_OK" == 1 ]] || return 125
+    api POST /v1/run "$RUN_P" >/dev/null || { echo "run: $(cat "$WORK/resp")"; return 1; }
+    sleep 0.5
+    api GET /v1/sandboxes/md-pasta >/dev/null && [[ "$(jget 'd["State"]["Status"]')" == running ]] || return 1
+    # pasta recorded + alive (state pasta_pid via pasta-pid file, log exists)
+    [[ -f "$STATE/md-pasta/pasta-pid" ]] || { echo "no pasta-pid file"; return 1; }
+    local pp; pp=$(cat "$STATE/md-pasta/pasta-pid")
+    kill -0 "$pp" 2>/dev/null || { echo "pasta pid $pp dead"; tail -5 "$STATE/md-pasta/pasta.log"; return 1; }
+    [[ -f "$STATE/md-pasta/pasta.log" ]] || return 1
+    # host curl -> instance httpd through the CONFIG-declared forward
+    pasta_wait_fwd || return 1
+    # D42: resolver baked PRE-spawn into the private rootfs (legacy path)
+    grep -q '^nameserver ' "$STATE/md-pasta/rootfs/etc/resolv.conf" || { echo "resolver missing"; return 1; }
+    # spec carries pasta_ports (save-template ride guarantee)
+    grep -q 'pasta_ports' "$STATE/md-pasta/spec.json" || { echo "spec.json missing pasta_ports"; return 1; }
+}
+run_case MD47 "D67 pasta config-side forward: host curl -> httpd in netns" skip md47
+
+md48() {
+    [[ "$PASTA_OK" == 1 ]] || return 125
+    api POST /v1/sandboxes/md-pasta/stop '{"timeout_sec":1}' >/dev/null || return 1
+    sleep 0.5
+    [[ -f "$STATE/md-pasta/pasta-pid" ]] && { echo "pasta-pid survived stop"; return 1; } || true
+    # pasta attach killed -> listening socket gone (listener-gone probe)
+    port_no_listener || return 1
+    api POST /v1/sandboxes/md-pasta/start >/dev/null || { echo "start: $(cat "$WORK/resp")"; return 1; }
+    sleep 0.5
+    [[ -f "$STATE/md-pasta/pasta-pid" ]] || { echo "no fresh pasta-pid after start"; return 1; }
+    pasta_wait_fwd || return 1
+}
+run_case MD48 "D67 pasta lifecycle: stop frees host port, start re-attaches" skip md48
+
+md49() {
+    [[ "$PASTA_OK" == 1 ]] || return 125
+    # (a) payload dies outside a query -> heal reaps the pasta attach
+    local shim; shim=$(python3 -c "import json;print(json.load(open('$STATE/md-pasta/state.json')).get('pid', 0))")
+    [[ "$shim" -gt 0 ]] || { echo "md-pasta not running at MD49 entry (state pid=$shim) — upstream case left it stopped"; return 1; }
+    kill -9 "$shim" 2>/dev/null || { echo "cannot kill payload $shim"; return 1; }
+    sleep 0.3
+    api GET /v1/sandboxes/md-pasta >/dev/null || return 1
+    [[ "$(jget 'd["State"]["Status"]')" == exited ]] || { echo "not healed: $(jget 'd["State"]["Status"]')"; return 1; }
+    [[ -f "$STATE/md-pasta/pasta-pid" ]] && { echo "pasta survived payload death"; return 1; } || true
+    sleep 0.5
+    port_no_listener || { echo "listener not released after crash-heal"; return 1; }
+    # (b) Start again — fresh attach, forward works (no stale-port bind fail)
+    api POST /v1/sandboxes/md-pasta/start >/dev/null || { echo "start after heal: $(cat "$WORK/resp")"; return 1; }
+    pasta_wait_fwd || return 1
+    # (c) fail-closed: reserved host port + garbage entry -> 4xx, dir wiped
+    local c1 c2
+    c1=$(curl -s -m 10 -o "$WORK/resp" -w '%{http_code}' -X POST -H "Authorization: Bearer $TOKEN" \
+        -d "{\"name\":\"md-pasta-bad1\",\"image\":\"base\",\"pasta_ports\":[\"80:80\"]}" "$API/v1/run")
+    [[ "$c1" != 2* ]] || { echo "reserved host port accepted (want 4xx)"; return 1; }
+    [[ ! -d "$STATE/md-pasta-bad1" ]] || { echo "bad1 dir survived"; return 1; }
+    c2=$(curl -s -m 10 -o "$WORK/resp" -w '%{http_code}' -X POST -H "Authorization: Bearer $TOKEN" \
+        -d '{"name":"md-pasta-bad2","image":"base","pasta_ports":["tcp/abc:def"]}' "$API/v1/run")
+    [[ "$c2" != 2* ]] || { echo "garbage entry accepted (want 4xx)"; return 1; }
+    [[ ! -d "$STATE/md-pasta-bad2" ]] || { echo "bad2 dir survived"; return 1; }
+}
+run_case MD49 "D67 pasta crash-heal reaps attach; invalid pasta_ports fail-closed" skip md49
 
 echo "=== summary: PASS=$PASS SKIP=$SKIPPED FAIL=$FAIL ==="
 if [[ $FAIL -ne 0 ]]; then

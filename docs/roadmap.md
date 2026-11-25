@@ -457,6 +457,25 @@
      khác (đã đo dev 5.10); arm64 số syscall; backup:<name> không carry spec
      (snapshot chỉ tar rootfs — D57 residual).
 4. Port-forward theo instance qua pasta, khai báo trong config instance.
+   → **Xong phần config-side 2026-11-25 Phiên 32 (#165, D67)**:
+   `contract.RunSpec.PastaPorts` (`pasta_ports`, omitempty — D59 pattern;
+   grammar `[tcp|udp/]<host>:<ns>`, số đơn cap 16, validate fail-closed
+   host-side 1024..65535 + không trùng proto/host-bind); daemon attach
+   pasta out-of-band sau payload sống (`internal/minict/pasta.go` —
+   `--foreground --userns /proc/<pid>/ns/user --netns /proc/<pid>/ns/net
+   --config-net [--dns-forward GW] -t/-u`, readiness default route trong
+   `/proc/<shim>/net/route` + alive-check, D37/D42 parity); shim C KHÔNG
+   đổi (pasta host-side như webproxy — không đụng MD0); resolver D42
+   nướng TRƯỚC spawn (legacy `rootfs/etc`, overlay `upper/etc` — không bao
+   giờ lower zero-copy); fail-closed toàn đường (thiếu bin/tun → Run 4xx +
+   R4 wipe, Start → instance STOPPED `KilledBy=pasta-fail`); lifecycle kill
+   ở Stop/Remove/alive-heal (`PastaPID`+`PastaTicks` chống pid-reuse —
+   pasta giữ listening socket host-side); S6 collision check cho host bind;
+   flag `--pasta-bin` (beside-binary → PATH). Tests: 8 Go unit (argv pin +
+   17 nhóm sai + GW hex LE) + MD47–49 env-gated `/dev/net/tun` (forward
+   FPORT≠8080 tách auto-default, stop/start lifecycle, crash-heal reap +
+   fail-closed). Residual: range/address-prefix grammar, CLI sandbox run
+   chưa expose pasta_ports, --pasta-bin PATH không pin (suite luôn pinned).
 5. Quota CPU/RAM/pid qua cgroups v2 delegation; disk quota dạng cảnh báo.
    → **Xong phần core 2026-11-20 phiên 13 (#4, D48)**: cgroups v2 islands
    enforcement (memory.max/cpu.max/cpu.weight/pids.max + shim migration +
