@@ -1207,8 +1207,22 @@ pasta_wait_fwd() { # polls the declared forward until it answers
     done
     [[ "$_ok" == 1 ]] || { echo "curl $PFPORT failed (attach/forward)"; tail -5 "$STATE/md-pasta/pasta.log" 2>/dev/null; return 1; }
 }
-port_free() { # host bind probe — pasta holds listening sockets; dead attach = bindable
-    python3 -c "import socket; s=socket.socket(); s.bind(('0.0.0.0',$PFPORT)); s.close()" "$@"
+port_no_listener() { # pasta holds LISTENING sockets for its forwards (0.0.0.0
+    # default bind, passt.1) — a dead attach means NO listener on the port.
+    # A plain bind() probe is WRONG here: curl connections from the previous
+    # forward leave TIME_WAIT 4-tuples (local port == $PFPORT) for ~60s
+    # after pasta dies — bind fails EADDRINUSE while the listener is long
+    # gone (measured on runner CI run 45582995043, MD48/49 FAIL). pasta
+    # itself sets SO_REUSEADDR on every listening socket (passt tcp.c
+    # tcp_sock_init + util.c sock_l4), so re-attach after stop works inside
+    # the TIME_WAIT window — what must be asserted is listener-gone, not
+    # bindable.
+    # NOTE the ':' before the port: ss prints "0.0.0.0:<port>" — a space
+    # before the number never occurs (a space-anchored grep would be a
+    # false negative and make the probe vacuous).
+    [[ -n "$(ss -tln 2>/dev/null | grep -E "[^0-9]$PFPORT[[:space:]]" || true)" ]] \
+        && { echo "listener still present on $PFPORT"; ss -tln | grep "$PFPORT" || true; return 1; }
+    return 0
 }
 md47() {
     [[ "$PASTA_OK" == 1 ]] || return 125
@@ -1234,8 +1248,8 @@ md48() {
     api POST /v1/sandboxes/md-pasta/stop '{"timeout_sec":1}' >/dev/null || return 1
     sleep 0.5
     [[ -f "$STATE/md-pasta/pasta-pid" ]] && { echo "pasta-pid survived stop"; return 1; } || true
-    # pasta attach killed -> host port released (bind probe succeeds)
-    port_free || { echo "host port $PFPORT still bound after stop"; return 1; }
+    # pasta attach killed -> listening socket gone (listener-gone probe)
+    port_no_listener || return 1
     api POST /v1/sandboxes/md-pasta/start >/dev/null || { echo "start: $(cat "$WORK/resp")"; return 1; }
     sleep 0.5
     [[ -f "$STATE/md-pasta/pasta-pid" ]] || { echo "no fresh pasta-pid after start"; return 1; }
@@ -1246,14 +1260,15 @@ run_case MD48 "D67 pasta lifecycle: stop frees host port, start re-attaches" ski
 md49() {
     [[ "$PASTA_OK" == 1 ]] || return 125
     # (a) payload dies outside a query -> heal reaps the pasta attach
-    local shim; shim=$(python3 -c "import json;print(json.load(open('$STATE/md-pasta/state.json'))['pid'])")
+    local shim; shim=$(python3 -c "import json;print(json.load(open('$STATE/md-pasta/state.json')).get('pid', 0))")
+    [[ "$shim" -gt 0 ]] || { echo "md-pasta not running at MD49 entry (state pid=$shim) — upstream case left it stopped"; return 1; }
     kill -9 "$shim" 2>/dev/null || { echo "cannot kill payload $shim"; return 1; }
     sleep 0.3
     api GET /v1/sandboxes/md-pasta >/dev/null || return 1
     [[ "$(jget 'd["State"]["Status"]')" == exited ]] || { echo "not healed: $(jget 'd["State"]["Status"]')"; return 1; }
     [[ -f "$STATE/md-pasta/pasta-pid" ]] && { echo "pasta survived payload death"; return 1; } || true
     sleep 0.5
-    port_free || { echo "port not freed after crash-heal"; return 1; }
+    port_no_listener || { echo "listener not released after crash-heal"; return 1; }
     # (b) Start again — fresh attach, forward works (no stale-port bind fail)
     api POST /v1/sandboxes/md-pasta/start >/dev/null || { echo "start after heal: $(cat "$WORK/resp")"; return 1; }
     pasta_wait_fwd || return 1
