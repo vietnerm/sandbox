@@ -9,9 +9,13 @@ package minict
 
 import (
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 func TestParsePastaPortsValid(t *testing.T) {
@@ -214,5 +218,59 @@ func TestPastaFwdString(t *testing.T) {
 	}
 	if got := pastaFwdList([]pastaFwd{{Proto: pastaTCP, Host: 18080, NS: 8080}, f}); got != "tcp/18080->8080, udp/15353->53" {
 		t.Errorf("pastaFwdList = %q", got)
+	}
+}
+
+// TestStopPastaKills drives stopPasta with a REAL dummy process (no pasta,
+// no /dev/net/tun needed): the recorded pid must die, the pasta-pid file
+// must be removed, and the state fields must be cleared. This is the
+// mutant catcher for M-stop-pasta on hosts where MD48 is env-blocked
+// (D34) — pasta holds host listening sockets, so a stop that fails to
+// kill would leak the forward binds.
+func TestStopPastaKills(t *testing.T) {
+	dir := t.TempDir()
+	s := &Store{Root: dir}
+	cmd := exec.Command("/bin/sh", "-c", "sleep 30")
+	if err := cmd.Start(); err != nil {
+		t.Skipf("no /bin/sh: %v", err)
+	}
+	go cmd.Wait() // reap — a zombie would fool a plain kill(pid,0) liveness check
+	pid := cmd.Process.Pid
+	var ticks uint64
+	if _, ticks, _ = procStat(pid); ticks == 0 {
+		ticks = 0 // reuse guard off — pid from our own Start, no reuse risk
+	}
+	_ = os.MkdirAll(filepath.Join(dir, "x"), 0o755)
+	_ = os.WriteFile(filepath.Join(dir, "x", "pasta-pid"), []byte("1\n"), 0o644)
+	st := &InstanceState{Name: "x", PastaPID: pid, PastaTicks: ticks}
+	s.stopPasta(st)
+	if st.PastaPID != 0 || st.PastaTicks != 0 {
+		t.Errorf("stopPasta must clear state fields, got pid=%d ticks=%d", st.PastaPID, st.PastaTicks)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "x", "pasta-pid")); !os.IsNotExist(err) {
+		t.Errorf("pasta-pid file must be removed")
+	}
+	// the dummy process must actually die (TERM, 200ms grace, then KILL);
+	// pidAlive is zombie-aware — a plain kill(pid,0) liveness check is not
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if !s.pidAlive(pid, ticks) {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if s.pidAlive(pid, ticks) {
+		_ = syscall.Kill(pid, syscall.SIGKILL)
+		t.Errorf("stopPasta left pid %d alive", pid)
+	}
+}
+
+// TestStopPastaNoopForZero: zero/unknown pid is a no-op, not a kill of pid 0.
+func TestStopPastaNoopForZero(t *testing.T) {
+	s := &Store{Root: t.TempDir()}
+	st := &InstanceState{Name: "y"}
+	s.stopPasta(st) // must not panic / not signal anything
+	if st.PastaPID != 0 {
+		t.Errorf("no-op stop must keep zero fields")
 	}
 }
