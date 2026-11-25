@@ -1109,11 +1109,14 @@ md44() {
     # disk assertion (mutant M-ovl-copy catcher): instance dir << base rootfs
     local ibase iinst
     ibase=$(du -sk "$REPO/rootfs" | cut -f1)
-    iinst=$(du -sk "$OVL_STATE/md-ovl" | cut -f1)
+    # du hits the kernel-owned inner work/work dir (0700, created by the
+    # overlay mount itself — unreadable by the suite user); silenced, the
+    # size estimate stays valid (upper+rootfs are what we assert on)
+    iinst=$(du -sk "$OVL_STATE/md-ovl" 2>/dev/null | cut -f1)
     [[ "$iinst" -lt $(( ibase / 2 )) ]] || { echo "instance ${iinst}KB vs base ${ibase}KB — thin-provision broken"; return 1; }
     # spec + state carry the overlay posture
     grep -q '^overlay lower=' "$OVL_STATE/md-ovl/spec.minict" || { echo "spec.minict missing overlay directive"; return 1; }
-    grep -q '"overlay":true' "$OVL_STATE/md-ovl/state.json" || { echo "state.json overlay flag missing"; return 1; }
+    grep -q '"overlay":[[:space:]]*true' "$OVL_STATE/md-ovl/state.json" || { echo "state.json overlay flag missing"; return 1; }
 }
 
 md45() {
