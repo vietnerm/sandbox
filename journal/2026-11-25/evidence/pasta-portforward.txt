@@ -1,0 +1,59 @@
+### D67 evidence — pasta port-forward config-side (issue #165) — 2026-11-25
+### host: 5.10.134-013.15.kangaroo.al8.x86_64 (dev container — NO /dev/net/tun, D34)
+
+### Go unit (minictd/internal/minict)
+$ go test ./internal/minict/ -run 'TestParsePastaPorts|TestPasta|TestHostDefaultGW|TestBakeResolver' -v
+=== RUN   TestParsePastaPortsValid
+--- PASS: TestParsePastaPortsValid (0.00s)
+=== RUN   TestParsePastaPortsInvalid   (17 invalid groups + 1 proto-distinct valid)
+--- PASS: TestParsePastaPortsInvalid (0.00s)
+=== RUN   TestPastaArgs                (argv pinned: --userns/--netns/--config-net/--dns-forward/-t/-u)
+--- PASS: TestPastaArgs (0.00s)
+=== RUN   TestHostDefaultGW            (hex LE parse + fail-soft empty)
+--- PASS: TestHostDefaultGW (0.00s)
+=== RUN   TestPastaResolverDir         (legacy rootfs/etc vs overlay upper/etc)
+--- PASS: TestPastaResolverDir (0.00s)
+=== RUN   TestBakeResolver
+--- PASS: TestBakeResolver (0.00s)
+=== RUN   TestPastaFwdString
+--- PASS: TestPastaFwdString (0.00s)
+PASS
+$ go test ./... (whole module)
+ok  github.com/vietnerm/sandbox/minictd/cmd/minictd
+ok  github.com/vietnerm/sandbox/minictd/internal/minict
+ok  github.com/vietnerm/sandbox/minictd/internal/server
+$ go vet ./... ; gofmt -l . -> clean
+
+### e2e — make test-minictd (dev: pasta env-blocked, correct SKIP posture)
+MD47  D67 pasta config-side forward: host curl -> httpd in netns   SKIP
+      (env-blocked: see case)
+MD48  D67 pasta lifecycle: stop frees host port, start re-attaches SKIP
+      (env-blocked: see case)
+MD49  D67 pasta crash-heal reaps attach; invalid pasta_ports fail-closed SKIP
+      (env-blocked: see case)
+=== summary: PASS=43 SKIP=7 FAIL=0 ===
+(7 SKIP = 4 overlay D66 kernel<5.11 + 3 pasta D67 no-tun; runner CI chạy thật)
+
+### make test (10 suites)
+=== run-suites summary: 10 suites, failed: none ===
+
+### make test-web
+=== summary: PASS=9 FAIL=0 ===
+
+### perf (make perf-check, N=20)
+cold_start_ms  :     2.04  (threshold 100)
+rss_kb         :     1196  (threshold 10240)
+disk_base_mb   :     2.05  (threshold 20)
+perf-check: PASS
+(instance KHÔNG khai báo pasta_ports: đường cũ không đổi — pasta spawn
+ chỉ xảy ra khi config declare; attach latency ghi riêng vào note)
+
+### CVE check (tools/cve-check.py --kernel 5.10.134-013.15.kangaroo.al8.x86_64)
+19 entries — 5 kernel(5.10) knowns + 1 runc + 5 watchlist kernel + 5 busybox
+httpd + 2 apk-tools + 1 apktool(false-positive tracked) — GIỐNG HỆT Phiên 31,
+0 CVE mới ngoài watchlist, 0 CVE passt/pasta trên watchlist.
+File: journal/2026-11-25/cve/pasta-portforward.md + .json
+
+### host baseline
+sha256 /etc/passwd /etc/shadow(unreadable) /bin/bash /usr/bin/sudo
+trước/sau phiên: UNCHANGED (diff rỗng)

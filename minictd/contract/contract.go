@@ -84,6 +84,26 @@ type RunSpec struct {
 	// rides spec.json, so save-template carries it to template:<name>
 	// runs automatically. Trusted workloads only (manifest §3).
 	SeccompProfile string `json:"seccomp_profile,omitempty"` // --seccomp-profile
+
+	// PastaPorts declares per-instance host→namespace port forwards
+	// served by pasta (passt project) attached to the sandbox netns by
+	// the daemon (GĐ2 mục 4, issue #165, D67). Entry grammar — "tcp"
+	// is the default protocol:
+	//
+	//	"8080:80"       forward host TCP 8080 -> sandbox port 80
+	//	"tcp/5353:53"   explicit protocol
+	//	"udp/53:53"     UDP
+	//
+	// Entries are validated fail-closed host-side (host port
+	// 1024..65535 — pasta is rootless and cannot bind below; namespace
+	// port 1..65535; no duplicate proto+host bind; ≤ 16 entries; no
+	// ranges in v1). pasta is spawned OUT-OF-BAND by the daemon after
+	// the payload is up (D37 mechanics: --userns/--netns via
+	// /proc/<pid>/ns/*; the C shim is unaware of it, same host-side
+	// posture as webproxy.py). Empty keeps the loopback-only netns
+	// default (D17). It rides spec.json, so save-template carries the
+	// forwards to template:<name> runs automatically.
+	PastaPorts []string `json:"pasta_ports,omitempty"` // host:ns port forwards via pasta
 }
 
 // LabelMinictWebports is the reserved label key a control plane sets to ask

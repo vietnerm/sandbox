@@ -49,9 +49,16 @@ func (s *Store) Run(ctx context.Context, spec contract.RunSpec) (string, error) 
 	// Any failure from here on leaves a half-built dir without state.json:
 	// the next Run with the same name would `cp -a` INTO the stale rootfs/
 	// and ListByNamePrefix would report a ghost. Wipe it (R4, 2026-11-18).
+	// D67: a pasta attach spawned on the rollback path dies with the
+	// instance (Setsid pasta would otherwise pin a dead netns and keep
+	// holding its host forward binds).
 	ok := false
+	pastaProcPid := 0
 	defer func() {
 		if !ok {
+			if pastaProcPid > 0 {
+				s.killBestEffort(pastaProcPid, 200*time.Millisecond)
+			}
 			_ = os.RemoveAll(dir)
 		}
 	}()
@@ -72,6 +79,23 @@ func (s *Store) Run(ctx context.Context, spec contract.RunSpec) (string, error) 
 	for _, p := range ports {
 		if holder, ok := held[p]; ok {
 			return "", fmt.Errorf("%w: port %d held by instance %s", ErrPortInUse, p, holder)
+		}
+	}
+	// D67 (issue #165): pasta forwards validated fail-closed BEFORE any
+	// state/dir churn (clear 4xx instead of a pasta-side death later),
+	// and cross-instance host-bind collisions detected up front (S6
+	// posture carried over to pasta forwards).
+	fwds, err := parsePastaPorts(spec.PastaPorts)
+	if err != nil {
+		return "", err
+	}
+	pastaHeld, err := s.pastaPortsHeldBy(spec.Name)
+	if err != nil {
+		return "", err
+	}
+	for _, f := range fwds {
+		if holder, ok := pastaHeld[f.key()]; ok {
+			return "", fmt.Errorf("%w: pasta host port %s held by instance %s", ErrPortInUse, f.key(), holder)
 		}
 	}
 	// CG1/S2: resolve the cgroup manager once so renderSpec can note the
@@ -119,6 +143,16 @@ func (s *Store) Run(ctx context.Context, spec contract.RunSpec) (string, error) 
 		return "", err
 	}
 
+	// D67: D42 resolver baked PRE-spawn (no mount race; upper/etc for
+	// overlay — lower may be a shared zero-copy source). Fail-soft: a
+	// note, not an error; any pasta failure below fails the whole Run so
+	// no dead resolver survives.
+	var gw string
+	if len(fwds) > 0 {
+		gw = hostDefaultGW("/proc/net/route")
+		notes = append(notes, s.bakeResolver(dir, ovl != nil, gw)...)
+	}
+
 	// CG1/S2: create the cgroup and set the limits BEFORE the payload
 	// spawns; when enforced, spawnPayload uses the migrate-before-exec
 	// launcher so the shim and its payload are born inside the cgroup.
@@ -130,6 +164,24 @@ func (s *Store) Run(ctx context.Context, spec contract.RunSpec) (string, error) 
 	}
 	proxyPIDs, proxyNotes := s.spawnProxies(spec.Name, dir, ports, 2500*time.Millisecond, ovl != nil)
 	notes = append(notes, proxyNotes...)
+
+	// D67 (issue #165): attach pasta AFTER the payload is alive, BEFORE
+	// the state is saved. Failure = hard error: the R4 rollback kills
+	// pasta (pastaProcPid) and wipes the dir — no silent loopback-only
+	// instance pretending to have ports (D34), no dead resolver.
+	var pastaPID int
+	var pastaTicks uint64
+	var pastaMs int64
+	if len(fwds) > 0 {
+		pastaPID, pastaMs, err = s.spawnPasta(spec.Name, dir, pid, fwds, gw)
+		if err != nil {
+			return "", err
+		}
+		_, pastaTicks, _ = procStat(pastaPID)
+		pastaProcPid = pastaPID
+		notes = append(notes, fmt.Sprintf("pasta attach: %s (pid %d, attach %dms)",
+			pastaFwdList(fwds), pastaPID, pastaMs))
+	}
 
 	now := time.Now().UTC()
 	st := &InstanceState{
@@ -144,6 +196,8 @@ func (s *Store) Run(ctx context.Context, spec contract.RunSpec) (string, error) 
 		ExecMode:   execMode(s),
 		RootfsSrc:  spec.Image,
 		Overlay:    ovl != nil,
+		PastaPID:   pastaPID,
+		PastaTicks: pastaTicks,
 		Notes:      notes,
 		CgroupPath: s.cgroupInstancePath(spec.Name),
 	}
@@ -262,6 +316,9 @@ func (s *Store) Remove(ctx context.Context, name string) error {
 	for _, pp := range st.ProxyPIDs {
 		s.killBestEffort(pp, 200*time.Millisecond)
 	}
+	// D67 (issue #165): end the pasta attach with the instance (host
+	// forward binds die with it).
+	s.stopPasta(st)
 	// CG1/S2: reclaim the instance cgroup with the instance itself.
 	s.cgroupCleanup(st.CgroupPath)
 	if err := os.RemoveAll(s.dir(name)); err != nil {
@@ -441,6 +498,31 @@ func (s *Store) Start(ctx context.Context, name string) error {
 			return fmt.Errorf("%w: port %d held by instance %s", ErrPortInUse, p, holder)
 		}
 	}
+	// D67 (issue #165): pasta forwards validated + collision-checked on
+	// re-Start too — another instance may have taken the host bind while
+	// this one was stopped (S6 posture carried over).
+	fwds, err := parsePastaPorts(spec.PastaPorts)
+	if err != nil {
+		return fmt.Errorf("start %s: %w", name, err)
+	}
+	pastaHeld, err := s.pastaPortsHeldBy(name)
+	if err != nil {
+		return err
+	}
+	for _, f := range fwds {
+		if holder, ok := pastaHeld[f.key()]; ok {
+			return fmt.Errorf("%w: pasta host port %s held by instance %s", ErrPortInUse, f.key(), holder)
+		}
+	}
+
+	// D67: D42 resolver baked PRE-spawn (Run parity; upper/etc for
+	// overlay). Fail-soft notes only.
+	var gw string
+	var pastaNotes []string
+	if len(fwds) > 0 {
+		gw = hostDefaultGW("/proc/net/route")
+		pastaNotes = append(pastaNotes, s.bakeResolver(s.dir(name), st.Overlay, gw)...)
+	}
 
 	// CG1/S2: same prepare-before-spawn contract as Run.
 	cgDir, cgNotes := s.cgroupPrepare(name, spec)
@@ -450,15 +532,45 @@ func (s *Store) Start(ctx context.Context, name string) error {
 	}
 	proxyPIDs, proxyNotes := s.spawnProxies(name, s.dir(name), st.Ports, 2500*time.Millisecond, st.Overlay)
 
+	// D67 (issue #165): re-attach pasta on Start (Stop/reaper killed the
+	// old one). Fail-closed (D34): a pasta attach failure kills the
+	// payload we just spawned and leaves the instance STOPPED — no
+	// silent pasta-less instance pretending to have ports; spec+dir
+	// survive so a fixed host can Start again.
+	var pastaPID int
+	var pastaTicks uint64
+	if len(fwds) > 0 {
+		ppid, pms, perr := s.spawnPasta(name, s.dir(name), pid, fwds, gw)
+		if perr != nil {
+			s.killBestEffort(pid, 500*time.Millisecond)
+			s.cgroupCleanup(cgDir)
+			st.State = StateStopped
+			st.Exited = true
+			st.ExitCode = 0
+			st.KilledBy = "pasta-fail"
+			if serr := s.saveState(name, st); serr != nil {
+				return fmt.Errorf("start %s: pasta attach failed AND state save failed: %v / %v", name, perr, serr)
+			}
+			return fmt.Errorf("start %s: pasta attach failed (instance stopped): %w", name, perr)
+		}
+		pastaPID = ppid
+		_, pastaTicks, _ = procStat(ppid)
+		pastaNotes = append(pastaNotes, fmt.Sprintf("pasta attach: %s (pid %d, attach %dms)",
+			pastaFwdList(fwds), pastaPID, pms))
+	}
+
 	st.State = StateRunning
 	st.PID = pid
 	st.StartTicks = ticks
 	st.ProxyPIDs = proxyPIDs
+	st.PastaPID = pastaPID
+	st.PastaTicks = pastaTicks
 	st.StartedAt = time.Now().UTC()
 	st.Exited = false
 	st.ExitCode = 0
 	st.KilledBy = ""
 	st.Notes = append(st.Notes, proxyNotes...)
+	st.Notes = append(st.Notes, pastaNotes...)
 	st.Notes = append(st.Notes, cgNotes...)
 	st.CgroupPath = s.cgroupInstancePath(name)
 	if err := s.saveState(name, st); err != nil {
@@ -502,6 +614,10 @@ func (s *Store) Stop(ctx context.Context, name string, timeoutSec int) error {
 	for _, pp := range st.ProxyPIDs {
 		s.killBestEffort(pp, 200*time.Millisecond)
 	}
+	// D67 (issue #165): pasta holds HOST-side listening sockets for its
+	// forwards — Stop must end the attach too, or the next Start (or
+	// another instance) would bind-fail on the same host port.
+	s.stopPasta(st)
 	// Best-effort wait so a promptly-exiting payload is reaped before we
 	// flip the state (the spawn-time reaper goroutine covers stragglers).
 	deadline := time.Now().Add(2 * time.Second)

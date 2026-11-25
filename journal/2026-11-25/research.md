@@ -53,3 +53,27 @@ https://docs.kernel.org/filesystems/overlayfs.html
    không đổi (overlay mount là mount point hợp lệ; old-<pid> ghi vào upper).
 3. Snapshot trên instance overlay: từ chối rõ ràng (host-side rootfs là
    mountpoint rỗng — tar sẽ ra archive rỗng); merge whiteout-aware residual.
+
+## Phiên 32 — pasta port-forward config-side (issue #165, D67)
+
+- **passt.1 (passt.top/builds/latest/web/passt.1.html)**: `-t/-u spec`
+  grammar `none | [addr[%if]/]ports` — entry `first[-last][:toaddr]`;
+  pasta **bind forwards host-side trên mọi interface mặc định** (addr
+  prefix = tùy chọn); mặc định pasta là `-t auto -u auto` (forward các port
+  đang bind trong ns về cùng host port, poll /proc/net/tcp* mỗi giây);
+  `--config-net` copy addr/route từ host vào tap; `--dns-forward ADDR` map
+  DNS flows (UDP/TCP :53/:853) từ ns về resolver host; `--map-gw` mặc định
+  dịch gw → host loopback.
+  → Áp dụng: v1 grammar `[tcp|udp/]<host>:<ns>` đủ dùng; FPORT≠8080 trong
+  test để tách biệt với auto-forward; --dns-forward = GW (D42).
+- **Podman pasta networking (docs.podman.io podman-pod.unit.5 +
+  docs.oracle.com/en/learn/ol-podman-pasta-networking)**: Podman truyền
+  `pasta:--map-gw` / `pasta:-t,auto,-u,auto,-T,auto,-U,auto` hoặc explicit
+  `-t 8080-8080:80-80 --dns-forward 169.254.0.1 -u none -T none -U none
+  --no-map-gw`; `ss -tulpn` thấy pasta LISTEN 0.0.0.0:8080 host-side →
+  mỗi container một process pasta riêng, host port là listening socket
+  thật → lifecycle phải kill pasta khi instance chết (khác webproxy chỉ
+  relay). Trade-off Podman: hằng số option set; minict chọn declare-only
+  (auto giữ mặc định).
+- **Đo dev (đã có từ D34/D37)**: `/dev/net/tun` không có trên dev container
+  (5.10.134) → MD47–49 env-gated SKIP trên dev, runner thật ở CI.

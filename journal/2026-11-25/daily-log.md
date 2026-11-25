@@ -93,3 +93,59 @@
 - Sau đó: mục 7 observability (log JSON + /metrics Prometheus text, stdlib-only),
   mục 1 residual systemd-real (lingering), residual D66 (idmapped mounts,
   overlay-aware snapshot, zstd).
+
+## Phiên 32 — Orchestrator (ZAI, §11) — issue #165
+
+### Pha A — Sync + SBG plan
+- Pull main `a7a05f2` (ledger Phiên 31 #164). Remote chỉ `main` (2 nhánh
+  Phiên 31 đã DELETE_MERGED), 0 PR mở → Pha D. Halt-check: CI main xanh,
+  không p0 security, host baseline unchanged. Plan: journal branch/plan.md.
+
+### Triage + chọn issue
+- 9 issue mở (đã label; #8 CVE p2 tracking; không p0/p1 chen ngang).
+- Tạo **#165** `feat(minictd): port-forward qua pasta khai báo trong config
+  instance (GĐ2 mục 4)` (p1, area:minictd+netns, type:feature) — owner-
+  directed (chuỗi tính năng lớn còn: mục 4 → mục 7 → systemd-real).
+
+### Research (journal/2026-11-25/research.md mục Phiên 32)
+- passt.1: `-t first[-last][:toaddr]`, pasta bind forwards host-side mọi
+  interface mặc định, default `-t auto -u auto` (same-port ns→host).
+- Podman/Oracle pasta docs: option-set per container, `ss` thấy pasta
+  LISTEN 0.0.0.0:port → pasta giữ host listening socket → lifecycle phải
+  kill attach khi instance chết.
+
+### Development (`feat/165-pasta-portforward-config`, D67)
+- contract: `RunSpec.PastaPorts` (`pasta_ports` omitempty — D59 pattern).
+- Go daemon `internal/minict/pasta.go` (mới): parse fail-closed
+  (`[tcp|udp/]<host>:<ns>`, 1024..65535 host, không trùng, cap 16),
+  `pastaArgs` (D37/D42 argv pin), `hostDefaultGW` (hex LE /proc/net/route,
+  stdlib-only), `bakeResolver` (TRƯỚC spawn: legacy `rootfs/etc`, overlay
+  `upper/etc` — không đụng lower zero-copy), `spawnPasta` (tun check +
+  netns check + readiness default-route + alive-check, fail-closed),
+  `stopPasta` (pid+ticks guard), `pastaPortsHeldBy` (S6 carry-over).
+- runtime: Run (validate → 4xx; R4 rollback kill pasta; attach sau payload;
+  state PastaPID/PastaTicks) · Start (re-validate + collision; pasta-fail →
+  kill payload + STOPPED `KilledBy=pasta-fail`) · Stop/Remove/alive-heal
+  (kill attach — host listening socket phải được giải phóng).
+- main.go: flag `--pasta-bin` (beside-binary → PATH, resolution lazy).
+- Shim C KHÔNG đổi (pasta out-of-band như webproxy — MD0 parity intact).
+- Tests: 8 Go unit (argv pin chính xác, 17 nhóm sai, GW hex LE, resolver
+  split, spawn fail-closed) + MD47–49 env-gated `/dev/net/tun`.
+
+### CVE Check
+- Kernel: `5.10.134-013.15.kangaroo.al8.x86_64`
+- 19 entries — 0 mới ngoài watchlist, 0 CVE passt/pasta (giống Phiên 31)
+- Ảnh hưởng sandbox: không — pasta host-side, payload vẫn D11 blocklist
+- File: journal/2026-11-25/cve/pasta-portforward.md + .json
+
+### Validation "không bị nhiễm"
+- `make test` (10 suites): 0 FAIL (dev: 43 PASS + 7 SKIP — 4 overlay D66 +
+  3 pasta D67 env-blocked)
+- `make test-minictd`: PASS=43 SKIP=7 FAIL=0; `make test-web`: 9/9 PASS
+- Host baseline: unchanged (diff rỗng trước/sau)
+- Perf: cold_start=2.04 ms | rss=1196 kB | disk=2.05 MB — PASS, đường cũ
+  không đổi (pasta chỉ spawn khi config declare; attach latency ghi note)
+- Bằng chứng: journal/2026-11-25/evidence/pasta-portforward.txt
+
+### PR
+- #<pr> — ready — CI: <xanh/đỏ> — merge: <có/không>

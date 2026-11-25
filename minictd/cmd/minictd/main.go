@@ -35,6 +35,7 @@ func main() {
 		stateDir   = flag.String("state-dir", "", "instances root (default ~/.local/state/minictd)")
 		minictBin  = flag.String("minict-bin", "minict", "path to the patched minict runtime binary")
 		execBin    = flag.String("minict-exec-bin", "", "path to minict-exec (default: ./minict-exec beside this binary, then PATH)")
+		pastaBin   = flag.String("pasta-bin", "", "path to the pasta binary (passt project; pinned build via tools/fetch-pasta.sh; default: ./pasta beside this binary, then PATH). Only needed when an instance declares pasta_ports — then missing binary = fail-closed (D34)")
 		webproxy   = flag.String("webproxy", "", "path to tools/webproxy.py (host side of the unix-socket bridge)")
 		python     = flag.String("python", "python3", "interpreter for webproxy.py")
 		baseRootfs = flag.String("base-rootfs", "", "base rootfs dir backing Image \"base\" (sandbox/rootfs from mkrootfs.sh)")
@@ -94,11 +95,23 @@ func main() {
 			}
 		}
 	}
+	// D67 (issue #165): pasta binary discovery mirrors MinictExecBin —
+	// beside this binary, then PATH (resolution happens at spawn time and
+	// is fail-closed when pasta_ports is declared).
+	if *pastaBin == "" {
+		if exe, err := os.Executable(); err == nil {
+			cand := filepath.Join(filepath.Dir(exe), "pasta")
+			if _, err := os.Stat(cand); err == nil {
+				*pastaBin = cand
+			}
+		}
+	}
 
 	store := &minict.Store{
 		Root:           *stateDir,
 		MinictBin:      *minictBin,
 		MinictExecBin:  *execBin,
+		PastaBin:       *pastaBin,
 		WebProxyPy:     *webproxy,
 		Python:         *python,
 		BaseRootfs:     *baseRootfs,

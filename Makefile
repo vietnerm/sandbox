@@ -65,7 +65,7 @@ test-web: build rootfs
 test-cg: build minictd rootfs
 	bash tests/test_cg.sh
 
-# minictd: go unit tests (issue #50 regression + #91 reconcile) + e2e (23 cases): real daemon -> patched minict -> minict-exec
+# minictd: go unit tests (issue #50 regression + #91 reconcile) + e2e (50 cases MD0-MD49): real daemon -> patched minict -> minict-exec
 test-minictd: build rootfs minictd
 	cd minictd && $(or $(GO),go) test -count=1 ./...
 	bash tests/test_minictd.sh
@@ -126,7 +126,7 @@ help:
 	@echo "make test-escape-alpine - isolation suite re-run on alpine rootfs (29 cases)"
 	@echo "make test-web     - web service suite (6 cases)"
 	@echo "make minictd      - build minictd daemon + minict-exec (needs Go >= 1.23)"
-	@echo "make test-minictd - minictd e2e suite (47 cases MD0-MD46: 44 legacy + 3 overlay D66, env-gated)"
+	@echo "make test-minictd - minictd e2e suite (50 cases MD0-MD49: 44 legacy + 3 overlay D66 + 3 pasta config-side D67, env-gated)"
 	@echo "make test-seccomp - seccomp blocklist suite (20 cases)"
 	@echo "make test-netns   - netns isolation suite (7 cases)"
 	@echo "make test-alpine  - alpine rootfs suite (8 cases)"
