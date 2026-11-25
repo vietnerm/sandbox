@@ -429,9 +429,15 @@
 3. Storage: overlayfs rootless + idmapped mounts (thay private copy 2 MB/instance);
    snapshot/backup/restore (overlay layer + tar.zst).
    → **Snapshot/restore xong 2026-11-23 Phiên 22 (#130, D57)**: `snapshot` API + `backup:<name>`
-   image form; tar.gz trusted (gzip stdlib, zstd deferred); MD40 e2e. Residual: overlayfs
-   rootless + idmapped mounts (env-gated kernel 5.10 dev, cần ≥5.11; CI ubuntu-24.04 OK);
-   zstd compression (gzip tạm); overlay layer (hiện full tar.gz, không thin-provision).
+   image form; tar.gz trusted (gzip stdlib, zstd deferred); MD40 e2e.
+   → **Overlayfs rootless xong 2026-11-25 Phiên 31 (#162, D66 qua PR #163 squash
+   `17f5a97`)**: env-gated `MINICT_OVERLAY=1`; zero-copy cho base/dir/template (lower
+   chỉ thẳng nguồn), tar/oci/backup unpack `<dir>/lower`; mount overlay trong userns
+   shim (`userxattr`, kernel ≥ 5.11) fail-closed; twin validation Go/C; MD44–46 e2e
+   PASS trên runner kernel 7.0; Go unit 9 + mutant M-ovl-copy/render/shim bị bắt.
+   Residual: idmapped mounts (kernel ≥ 5.12, overlayfs idmap ≥ 5.19); overlay-aware
+   snapshot/SaveTemplate (merge whiteout-aware lower+upper — hiện refuse D66);
+   zstd compression (gzip tạm).
 3a. **Seccomp allowlist theo template — XONG 2026-11-23 Phiên 24 (#139, D59)**:
    - `minictd/internal/minict/profiles/<name>.allow` (go:embed): 4 profile ĐO THẬT
      bằng `tools/syscall-probe.c` (ptrace, `--after-exec 2` loại pha setup sandbox)
