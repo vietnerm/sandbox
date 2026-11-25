@@ -8,6 +8,7 @@ package minict
 // (env-gated on /dev/net/tun, D34).
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -272,5 +273,45 @@ func TestStopPastaNoopForZero(t *testing.T) {
 	s.stopPasta(st) // must not panic / not signal anything
 	if st.PastaPID != 0 {
 		t.Errorf("no-op stop must keep zero fields")
+	}
+}
+
+// TestWaitNsDistinct exercises the D67 unshare-race guard with REAL
+// namespace processes: self is never distinct (control), an unshare -Urn
+// process is distinct immediately after exec, and a dead process errors.
+func TestWaitNsDistinct(t *testing.T) {
+	selfU, err := os.Readlink("/proc/self/ns/user")
+	if err != nil {
+		t.Skipf("no /proc/self/ns/user: %v", err)
+	}
+	// control: the test process itself — never distinct (the old bug made
+	// pasta attach while the shim still pointed here → setns EINVAL)
+	if err := waitNsDistinct(selfU, "net:[does-not-match]", os.Getpid(), 100*time.Millisecond); err == nil {
+		t.Fatal("self ns must never count as distinct")
+	}
+	// real unshare: userns + netns (mount ns not needed here)
+	if _, err := exec.LookPath("unshare"); err != nil {
+		t.Skip("no unshare binary")
+	}
+	cmd := exec.Command("unshare", "-Urn", "sleep", "30")
+	if err := cmd.Start(); err != nil {
+		t.Skipf("unshare blocked on this host: %v", err)
+	}
+	go cmd.Wait()
+	if err := waitNsDistinct(selfU, "net:[does-not-match]", cmd.Process.Pid, 3*time.Second); err != nil {
+		t.Errorf("unshared process must be distinct quickly: %v", err)
+	}
+	// dead process: Readlink ENOENT → the helper must report it, not spin
+	cmd.Process.Kill()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Readlink(fmt.Sprintf("/proc/%d/ns/user", cmd.Process.Pid)); err != nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	err = waitNsDistinct(selfU, "net:[does-not-match]", cmd.Process.Pid, 300*time.Millisecond)
+	if err == nil || !strings.Contains(err.Error(), "gone") {
+		t.Errorf("dead process must yield the gone-error, got %v", err)
 	}
 }

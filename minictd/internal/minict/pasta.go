@@ -55,6 +55,7 @@ const (
 
 	pastaReadyTimeout = 5 * time.Second // D37 readiness window
 	pastaAliveDelay   = 300 * time.Millisecond
+	pastaNsWait       = 2 * time.Second // shim unshare window (D67 fix)
 )
 
 // pastaProto is the transport protocol of one forward.
@@ -270,8 +271,19 @@ func (s *Store) spawnPasta(name, dir string, shimPID int, fwds []pastaFwd, gw st
 	if err != nil {
 		return 0, 0, err
 	}
-	if _, err := os.Stat(fmt.Sprintf("/proc/%d/ns/net", shimPID)); err != nil {
-		return 0, 0, fmt.Errorf("pasta attach: /proc/%d/ns/net gone (payload died?)", shimPID)
+	// The shim must have COMPLETED its unshare() before pasta spawns:
+	// /proc/<pid>/ns/* exists from fork time but still points at the INIT
+	// namespaces until unshare runs. Attaching then makes pasta setns into
+	// the INIT userns — EINVAL ("reentering own/ancestor namespace",
+	// user_namespaces(7)) — and the readiness loop would false-positive on
+	// the init route table (observed on a loaded runner, CI run
+	// 45587261541: "Couldn't enter user namespace … Invalid argument" after
+	// an instant routeOK; MD47's "attach 0ms" note was the same artifact).
+	// Readlink (not stat): a dead payload gives ENOENT here.
+	selfU, _ := os.Readlink("/proc/self/ns/user")
+	selfN, _ := os.Readlink("/proc/self/ns/net")
+	if err := waitNsDistinct(selfU, selfN, shimPID, pastaNsWait); err != nil {
+		return 0, 0, fmt.Errorf("pasta attach: %w", err)
 	}
 	tun, terr := os.Stat("/dev/net/tun")
 	if terr != nil || tun.Mode()&(os.ModeDevice|os.ModeCharDevice) != (os.ModeDevice|os.ModeCharDevice) {
@@ -347,6 +359,27 @@ func pastaLogTail(dir string) string {
 		t = t[len(t)-1024:]
 	}
 	return strings.TrimSpace(t)
+}
+
+// waitNsDistinct waits until /proc/<shimPID>'s user AND net namespaces
+// differ from the daemon's own (i.e. the shim has executed unshare). Pure
+// link-target comparison — no /proc/net scraping, no uid assumptions.
+func waitNsDistinct(selfUser, selfNet string, shimPID int, d time.Duration) error {
+	deadline := time.Now().Add(d)
+	for {
+		u, err1 := os.Readlink(fmt.Sprintf("/proc/%d/ns/user", shimPID))
+		n, err2 := os.Readlink(fmt.Sprintf("/proc/%d/ns/net", shimPID))
+		if err1 == nil && err2 == nil && u != selfUser && n != selfNet {
+			return nil
+		}
+		if err1 != nil || err2 != nil {
+			return fmt.Errorf("/proc/%d/ns gone (payload died before unshare?)", shimPID)
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("shim namespaces still == daemon's after %s (unshare not started?)", d)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 // stopPasta kills a recorded pasta attach (pid reuse guarded by the
