@@ -35,4 +35,9 @@
   còn lại của chuỗi: observability mục 7, systemd-real — phiên sau).
 - Nhánh dự kiến: `feat/<issue>-pasta-portforward-config`.
 - Hết phiên: SBG apply (gộp PR + DELETE_MERGED), ledger qua PR `chore(branches)`.
-
+## Kết quả thực thi (MODE=apply, cuối Phiên 32)
+- MERGE: PR #166 squash `d7cb8a3` (--match-head-commit 04f51db) — G1–G8 PASS,
+  SCR PASS + SIA PASS cùng SHA (run 45590685583), label audit:pass.
+- DELETE_MERGED: `feat/165-pasta-portforward-config` (đã xoá remote).
+- DROP: rỗng. KEEP: rỗng.
+- Xác minh cuối: API branches → chỉ `main`; #165 auto-close.
