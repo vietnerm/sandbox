@@ -162,11 +162,14 @@ cleanup() {
     [[ -n "$DPID" ]] && kill "$DPID" 2>/dev/null
     [[ -n "$DPID3" ]] && kill "$DPID3" 2>/dev/null
     [[ -n "$DPID4" ]] && kill "$DPID4" 2>/dev/null
+    [[ -n "$DPID5" ]] && kill "$DPID5" 2>/dev/null
     # DPID3/DPID4 are set inside the run_case command-substitution subshell
     # (MD35/MD36) and never reach this scope (measured leak: daemon3/daemon4
     # outlived the run — same class as RPID, Phiên 16). Kill by the per-run
-    # unique argv paths instead.
+    # unique argv paths instead. DPID5 (D66 overlay daemon, MD44-46) is in
+    # the same class; its state dir is per-run unique (mktemp -d).
     pkill -TERM -f -- "$S4_DIR" 2>/dev/null || true
+    pkill -TERM -f -- "$OVL_STATE" 2>/dev/null || true
     # Catch-all (issue #91 dev session, measured leak): when this script's
     # stdout is a short-lived pipe consumer (grep/tail) the shell can die
     # by SIGPIPE BEFORE the EXIT trap runs — daemon2 (MD21) then outlives
@@ -990,12 +993,131 @@ run_case MD41 "allowlist+exec parity: readlink EPERM, tcp OK (D59)" pass md41
 run_case MD42 "control: no profile -> readlink works in exec" pass md42
 run_case MD43 "template:md-tpl-sec carries seccomp_profile (EPERM)" pass md43
 
+# ---------- GĐ2 mục 3 residual: overlayfs rootfs (issue #162, D66) ----------
+# Env-gated (MINICT_OVERLAY=1 on a SEPARATE daemon — the main daemon keeps
+# the legacy copy path so every MD case above exercises the default mode).
+# The unprivileged overlay mount needs kernel >= 5.11 (measured: 5.10 EPERM);
+# the probe below mounts the SAME layer pair the cases use (lower=$REPO/
+# rootfs, upper/work under $WORK) in a userns — unsupported -> SKIP (rc=125).
+OVL_STATE="$WORK/ovlstate"
+OVL_PORT=$(( 17900 + RANDOM % 90 ))
+OVL_API="http://127.0.0.1:$OVL_PORT"
+OVL_SUPPORTED=0
+DPID5=""
+ovl_probe() {
+    [[ -d "$REPO/rootfs/bin" ]] || return 125
+    command -v unshare >/dev/null 2>&1 || return 125
+    mkdir -p "$WORK/ovlupper" "$WORK/ovlwork" "$WORK/ovlmnt" || return 125
+    unshare -Ur sh -c \
+        "mount -t overlay overlay -o lowerdir=$REPO/rootfs,upperdir=$WORK/ovlupper,workdir=$WORK/ovlwork,userxattr $WORK/ovlmnt && ls $WORK/ovlmnt/bin >/dev/null && umount $WORK/ovlmnt" \
+        >/dev/null 2>&1
+}
+if ovl_probe; then OVL_SUPPORTED=1; fi
+
+ovapi() {
+    local m="$1" p="$2" body="${3:-}" code
+    if [[ -n "$body" ]]; then
+        code=$(curl -s -m 20 -o "$WORK/resp" -w '%{http_code}' -X "$m" \
+            -H "Authorization: Bearer $TOKEN" -d "$body" "$OVL_API$p")
+    else
+        code=$(curl -s -m 20 -o "$WORK/resp" -w '%{http_code}' -X "$m" \
+            -H "Authorization: Bearer $TOKEN" "$OVL_API$p")
+    fi
+    echo "$code" > "$WORK/code"
+    cat "$WORK/resp"
+    [[ "$code" == 2* ]]
+}
+ovjget() { python3 -I -c "import json,sys; d=json.load(open(sys.argv[1])); print($1)" "$WORK/resp"; }
+ovxv2() { ovapi POST "/v1/sandboxes/$1/execv2" "$2" >/dev/null; }
+
+ovl_daemon_start() {
+    mkdir -p "$OVL_STATE"
+    MINICT_OVERLAY=1 MINICTD_TOKEN="$TOKEN" "$MINICTD" \
+        --listen "127.0.0.1:$OVL_PORT" --state-dir "$OVL_STATE" \
+        --minict-bin "$MINICT" --minict-exec-bin "$MEXEC" \
+        --base-rootfs "$REPO/rootfs" \
+        > "$WORK/daemon5.log" 2>&1 &
+    DPID5=$!
+    for _ in $(seq 1 50); do
+        curl -s -m 1 -H "Authorization: Bearer $TOKEN" "$OVL_API/healthz" >/dev/null 2>&1 && return 0
+        sleep 0.1
+    done
+    return 1
+}
+
+md44() {
+    [[ "$OVL_SUPPORTED" == 1 ]] || return 125
+    ovl_daemon_start || return 1
+    local h0 h1
+    h0=$(find "$REPO/rootfs" -type f -print0 | sort -z | xargs -0 sha256sum 2>/dev/null | sha256sum | cut -d' ' -f1)
+    ovapi POST /v1/run '{"name":"md-ovl","image":"base","cmd":["/bin/sh","-c","echo ovl-marker > /marker.txt; sleep 600"]}' >/dev/null || return 1
+    sleep 0.5
+    ovapi GET /v1/sandboxes/md-ovl >/dev/null && [[ "$(ovjget 'd["State"]["Status"]')" == running ]] || return 1
+    # marker written through the overlay upper is visible via exec
+    ovxv2 md-ovl '{"cmd":["/bin/cat","/marker.txt"],"timeout_s":5}' || return 1
+    [[ "$(ovjget 'd["stdout"].strip()')" == ovl-marker ]] || { echo "overlay marker: $(ovjget 'd["stdout"].strip()')"; return 1; }
+    # base rootfs untouched (shared lower is read-only via copy-up)
+    h1=$(find "$REPO/rootfs" -type f -print0 | sort -z | xargs -0 sha256sum 2>/dev/null | sha256sum | cut -d' ' -f1)
+    [[ "$h0" == "$h1" ]] || { echo "base rootfs changed under overlay mode"; return 1; }
+    # thin-provision: mountpoint empty, no unpacked lower for base image
+    [[ -d "$OVL_STATE/md-ovl/upper" && -d "$OVL_STATE/md-ovl/work" ]] || return 1
+    [[ -z "$(ls -A "$OVL_STATE/md-ovl/rootfs" 2>/dev/null)" ]] || { echo "rootfs mountpoint not empty"; return 1; }
+    [[ ! -d "$OVL_STATE/md-ovl/lower" ]] || { echo "base image unpacked into lower (private copy leak)"; return 1; }
+    # disk assertion (mutant M-ovl-copy catcher): instance dir << base rootfs
+    local ibase iinst
+    ibase=$(du -sk "$REPO/rootfs" | cut -f1)
+    iinst=$(du -sk "$OVL_STATE/md-ovl" | cut -f1)
+    [[ "$iinst" -lt $(( ibase / 2 )) ]] || { echo "instance ${iinst}KB vs base ${ibase}KB — thin-provision broken"; return 1; }
+    # spec + state carry the overlay posture
+    grep -q '^overlay lower=' "$OVL_STATE/md-ovl/spec.minict" || { echo "spec.minict missing overlay directive"; return 1; }
+    grep -q '"overlay":true' "$OVL_STATE/md-ovl/state.json" || { echo "state.json overlay flag missing"; return 1; }
+}
+
+md45() {
+    [[ "$OVL_SUPPORTED" == 1 ]] || return 125
+    # Stop -> Start keeps changes: .mspec persists on disk (directive
+    # survives), upper holds the payload's writes (parity with MD16)
+    ovapi POST /v1/sandboxes/md-ovl/stop '{"timeout_sec":1}' >/dev/null || return 1
+    ovapi POST /v1/sandboxes/md-ovl/start >/dev/null || return 1
+    sleep 0.5
+    ovxv2 md-ovl '{"cmd":["/bin/cat","/marker.txt"],"timeout_s":5}' || return 1
+    [[ "$(ovjget 'd["stdout"].strip()')" == ovl-marker ]] || { echo "start lost overlay marker"; return 1; }
+}
+
+md46() {
+    [[ "$OVL_SUPPORTED" == 1 ]] || return 125
+    ovapi POST /v1/sandboxes/md-ovl/stop '{"timeout_sec":1}' >/dev/null || return 1
+    # snapshot on overlay -> clear refusal (host-side rootfs is an empty
+    # mountpoint; an archive would silently lose data — D66)
+    local code
+    code=$(curl -s -m 10 -o "$WORK/resp" -w '%{http_code}' -X POST \
+        -H "Authorization: Bearer $TOKEN" \
+        -d '{"backup":"md-ovl-snap"}' \
+        "$OVL_API/v1/sandboxes/md-ovl/snapshot")
+    [[ "$code" != 2* ]] || { echo "snapshot must refuse on overlay instances"; return 1; }
+    [[ ! -f "$OVL_STATE/_backups/md-ovl-snap.tar.gz" ]] || return 1
+    # save-template refusal too (empty template would boot nothing)
+    code=$(curl -s -m 10 -o "$WORK/resp" -w '%{http_code}' -X POST \
+        -H "Authorization: Bearer $TOKEN" \
+        -d '{"template":"md-ovl-tpl"}' \
+        "$OVL_API/v1/sandboxes/md-ovl/save-template")
+    [[ "$code" != 2* ]] || { echo "save-template must refuse on overlay instances"; return 1; }
+    # Remove cleans the instance dir and NEVER the shared base lower
+    ovapi POST /v1/sandboxes/md-ovl/remove >/dev/null || return 1
+    [[ ! -d "$OVL_STATE/md-ovl" ]] || { echo "overlay instance dir survived remove"; return 1; }
+    [[ -d "$REPO/rootfs/bin" ]] || { echo "base rootfs damaged by remove"; return 1; }
+}
+run_case MD44 "D66 overlay: boot+exec via upper, base unchanged, thin-provision" skip md44
+run_case MD45 "D66 overlay: Stop -> Start keeps upper changes" skip md45
+run_case MD46 "D66 overlay: snapshot/save-template refuse, remove cleans" skip md46
+
 echo "=== summary: PASS=$PASS SKIP=$SKIPPED FAIL=$FAIL ==="
 if [[ $FAIL -ne 0 ]]; then
     echo "--- daemon log (tail) ---"; tail -20 "$WORK/daemon.log" 2>/dev/null
     echo "--- daemon2 log (tail) ---"; tail -20 "$WORK/daemon2.log" 2>/dev/null
     echo "--- daemon3 log (tail) ---"; tail -20 "$WORK/daemon3.log" 2>/dev/null
     echo "--- daemon4 log (tail) ---"; tail -20 "$WORK/daemon4.log" 2>/dev/null
+    echo "--- daemon5 log (tail) ---"; tail -20 "$WORK/daemon5.log" 2>/dev/null
     echo "--- install log (tail) ---"; tail -10 "$WORK/install.log" 2>/dev/null
     echo "--- ocireg log (tail) ---"; tail -10 "$WORK/ocireg.log" 2>/dev/null
 fi

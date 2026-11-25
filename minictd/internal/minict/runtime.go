@@ -92,7 +92,19 @@ func (s *Store) Run(ctx context.Context, spec contract.RunSpec) (string, error) 
 		}
 	}
 	cgAvail := s.cgroupManager().Avail
-	lines, notes, err := renderSpec(&spec, ports, cgAvail)
+	// D66 (issue #162): overlayfs rootfs when MINICT_OVERLAY=1. Resolved
+	// BEFORE renderSpec (the directive must be in the .mspec the payload
+	// reads) and BEFORE prepareRootfs (which prepares the same layout —
+	// both derive from dir/image deterministically). A resolve error is a
+	// hard 4xx/5xx: a half-materialized overlay instance would boot nothing.
+	var ovl *overlayConfig
+	if overlayEnabled() {
+		ovl, err = s.overlayFor(dir, spec.Image)
+		if err != nil {
+			return "", err
+		}
+	}
+	lines, notes, err := renderSpec(&spec, ports, cgAvail, ovl)
 	if err != nil {
 		return "", err
 	}
@@ -103,7 +115,7 @@ func (s *Store) Run(ctx context.Context, spec contract.RunSpec) (string, error) 
 		return "", err
 	}
 
-	if err := s.prepareRootfs(ctx, dir, spec.Image); err != nil {
+	if err := s.prepareRootfs(ctx, dir, spec.Image, ovl); err != nil {
 		return "", err
 	}
 
@@ -116,7 +128,7 @@ func (s *Store) Run(ctx context.Context, spec contract.RunSpec) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	proxyPIDs, proxyNotes := s.spawnProxies(spec.Name, dir, ports, 2500*time.Millisecond)
+	proxyPIDs, proxyNotes := s.spawnProxies(spec.Name, dir, ports, 2500*time.Millisecond, ovl != nil)
 	notes = append(notes, proxyNotes...)
 
 	now := time.Now().UTC()
@@ -131,6 +143,7 @@ func (s *Store) Run(ctx context.Context, spec contract.RunSpec) (string, error) 
 		StartedAt:  now,
 		ExecMode:   execMode(s),
 		RootfsSrc:  spec.Image,
+		Overlay:    ovl != nil,
 		Notes:      notes,
 		CgroupPath: s.cgroupInstancePath(spec.Name),
 	}
@@ -284,6 +297,16 @@ func (s *Store) SaveTemplate(ctx context.Context, name, templateName string) err
 	if st.State != StateStopped {
 		return fmt.Errorf("%w: save-template requires instance %s stopped (state %s)", ErrInstanceRunning, name, st.State)
 	}
+	if st.Overlay {
+		// D66 (issue #162): host-side rootfs is an EMPTY MOUNTPOINT —
+		// the overlay mount lives only inside the shim's mount ns. A
+		// template built from it would be an empty rootfs that boots
+		// nothing: refuse loudly instead of losing data silently.
+		// Merging lower+upper (whiteout-aware) into a plain tree is
+		// the residual overlay-aware template work. Checked BEFORE the
+		// rootfs stat: the refusal is about the design, not the dir.
+		return fmt.Errorf("save-template %s: overlay instances not supported yet (D66 residual — rootfs is an overlay mountpoint, host-side copy would be empty)", name)
+	}
 	srcRootfs := filepath.Join(s.dir(name), "rootfs")
 	if _, err := os.Stat(srcRootfs); err != nil {
 		return fmt.Errorf("save-template %s: rootfs missing: %w", name, err)
@@ -330,6 +353,15 @@ func (s *Store) Snapshot(ctx context.Context, name, backupName string) error {
 	st = s.alive(st)
 	if st.State != StateStopped {
 		return fmt.Errorf("%w: snapshot requires instance %s stopped (state %s)", ErrInstanceRunning, name, st.State)
+	}
+	if st.Overlay {
+		// D66 (issue #162): host-side rootfs is an EMPTY MOUNTPOINT (the
+		// overlay mount lives only inside the shim's mount ns) — tarGzTree
+		// would produce an EMPTY archive presented as a valid backup:
+		// silent data loss. Refuse loudly; the whiteout-aware
+		// lower+upper merge is the residual overlay-aware snapshot work
+		// (D57 already notes full-tar vs thin-provision).
+		return fmt.Errorf("snapshot %s: overlay instances not supported yet (D66 residual — rootfs is an overlay mountpoint, archive would be empty)", name)
 	}
 	srcRootfs := filepath.Join(s.dir(name), "rootfs")
 	if _, err := os.Stat(srcRootfs); err != nil {
@@ -416,7 +448,7 @@ func (s *Store) Start(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
-	proxyPIDs, proxyNotes := s.spawnProxies(name, s.dir(name), st.Ports, 2500*time.Millisecond)
+	proxyPIDs, proxyNotes := s.spawnProxies(name, s.dir(name), st.Ports, 2500*time.Millisecond, st.Overlay)
 
 	st.State = StateRunning
 	st.PID = pid

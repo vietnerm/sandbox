@@ -126,7 +126,7 @@ help:
 	@echo "make test-escape-alpine - isolation suite re-run on alpine rootfs (29 cases)"
 	@echo "make test-web     - web service suite (6 cases)"
 	@echo "make minictd      - build minictd daemon + minict-exec (needs Go >= 1.23)"
-	@echo "make test-minictd - minictd e2e suite (36 cases MD0-MD36)"
+	@echo "make test-minictd - minictd e2e suite (47 cases MD0-MD46: 44 legacy + 3 overlay D66, env-gated)"
 	@echo "make test-seccomp - seccomp blocklist suite (20 cases)"
 	@echo "make test-netns   - netns isolation suite (7 cases)"
 	@echo "make test-alpine  - alpine rootfs suite (8 cases)"

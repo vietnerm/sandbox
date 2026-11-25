@@ -10,8 +10,8 @@ import (
 	"strings"
 )
 
-// prepareRootfs materializes <dir>/rootfs from the RunSpec.Image. Accepted
-// image forms (NO MAGIC DEFAULTS — anything else is a hard error):
+// prepareRootfs materializes the instance rootfs from the RunSpec.Image.
+// Accepted image forms (NO MAGIC DEFAULTS — anything else is a hard error):
 //
 //	base        -> copy --base-rootfs (sandbox/rootfs from mkrootfs.sh)
 //	dir:<path>  -> cp -a <path> (host dir, absolute)
@@ -25,10 +25,20 @@ import (
 // The OCI path needs the `crane` binary in PATH (P2 in the integration
 // plan); everything else only needs cp. Untrusted content (oci: refs and
 // operator-provided tars) NEVER goes through host tar again.
-func (s *Store) prepareRootfs(ctx context.Context, dir, image string) error {
-	dst := filepath.Join(dir, "rootfs")
+//
+// D66 (issue #162): ovl != nil switches to the overlayfs layout — rootfs
+// stays an EMPTY MOUNTPOINT, upper/work are created, and the materialization
+// target moves to <dir>/lower (archive forms) or is skipped entirely
+// (base/dir/template: ovl.Lower points AT the source, zero copy).
+func (s *Store) prepareRootfs(ctx context.Context, dir, image string, ovl *overlayConfig) error {
+	dst := ovl.unpackTarget(dir)
 	// Caller guarantees dst does not exist (Run wipes the dir first; Start
 	// never calls prepareRootfs).
+	if ovl != nil {
+		if err := prepareOverlayDirs(dir); err != nil {
+			return err
+		}
+	}
 
 	var kind, arg string
 	switch {
@@ -69,10 +79,16 @@ func (s *Store) prepareRootfs(ctx context.Context, dir, image string) error {
 		if _, err := os.Stat(s.BaseRootfs); err != nil {
 			return fmt.Errorf("--base-rootfs %q: %w", s.BaseRootfs, err)
 		}
+		if ovl != nil {
+			return nil // D66: lower IS the base rootfs — zero copy
+		}
 		return copyTree(ctx, s.BaseRootfs, dst)
 	case "dir":
 		if !filepath.IsAbs(arg) {
 			return fmt.Errorf("image dir: path must be absolute, got %q", arg)
+		}
+		if ovl != nil {
+			return nil // D66: lower IS the host dir — zero copy
 		}
 		return copyTree(ctx, arg, dst)
 	case "tar":
@@ -106,6 +122,9 @@ func (s *Store) prepareRootfs(ctx context.Context, dir, image string) error {
 		src := filepath.Join(s.templatesDir(), arg, "rootfs")
 		if _, err := os.Stat(src); err != nil {
 			return fmt.Errorf("image template:%s: not found (save-template first): %w", arg, err)
+		}
+		if ovl != nil {
+			return nil // D66: lower IS the template tree — zero copy
 		}
 		return copyTree(ctx, src, dst)
 	case "backup":

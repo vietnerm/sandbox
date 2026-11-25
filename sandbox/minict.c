@@ -42,6 +42,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <stdarg.h>
 #include <linux/audit.h>
 #include <linux/capability.h>
 #include <linux/filter.h>
@@ -298,6 +299,27 @@ static struct spec_rlimit g_spec_rlimit[SPEC_MAX_ENTRIES];
 static int g_spec_rlimit_n;
 static int g_spec_readonly;  /* "readonly" directive -> Landlock ro-root (GĐ2 mục 6, #149) */
 
+/* ---------- overlay rootfs (GĐ2 mục 3 residual, issue #162, D66) ----------
+ * When the daemon runs with MINICT_OVERLAY=1 it renders
+ *   overlay lower=<abs> upper=<abs> work=<abs>
+ * and <dir>/rootfs stays an EMPTY MOUNTPOINT (no private copy: the 2 MB
+ * per-instance cost goes away). The shim mounts overlayfs AT rootfs
+ * (inside its userns, CAP_SYS_ADMIN there) after unshare, then pivot_root
+ * proceeds unchanged: an overlay mount is a mount point, and the
+ * old-<pid> put_old dir is created through the overlay (lands in upper).
+ * Kernel >= 5.11 mounts overlayfs unprivileged (in a userns) with
+ * "userxattr" (user.overlay.* xattrs — trusted.* is unavailable below
+ * init userns). FAIL-CLOSED: mount failure dies with a clear message —
+ * no silent fallback to bind, which would quietly break the no-copy
+ * commitment (D66 rationale 4). */
+struct spec_overlay {
+        int set;
+        char lower[512];        /* shared read-only source (base rootfs) */
+        char upper[512];        /* per-instance writable layer (0700) */
+        char work[512];         /* overlayfs scratch, same fs as upper */
+};
+static struct spec_overlay g_overlay;
+
 /* ---------- seccomp allowlist (GĐ2 mục 3a, issue #139, D59) ----------
  * Populated host-side BEFORE unshare/setns by spec_seccomp_allow() /
  * record_seccomp() from MINICT_SPEC / MINICT_SECCOMP_ALLOW directives.
@@ -511,9 +533,17 @@ static void load_web_relay_env(void)
  * binary (forward compatible by design).
  */
 
-static void spec_die(int lineno, const char *what)
+/* varargs since D66: overlay directive diagnostics carry paths/keys
+ * (spec_overlay); all existing callers pass literals — unchanged behavior */
+static void spec_die(int lineno, const char *what, ...)
 {
-        fprintf(stderr, "minict-spec: line %d: %s\n", lineno, what);
+        va_list ap;
+
+        fprintf(stderr, "minict-spec: line %d: ", lineno);
+        va_start(ap, what);
+        vfprintf(stderr, what, ap);
+        va_end(ap);
+        fputc('\n', stderr);
         exit(125);
 }
 
@@ -803,6 +833,73 @@ static void spec_seccomp_allow(char *arg, int lineno)
                 spec_die(lineno, "seccomp_allow: empty directive");
 }
 
+/* overlay lower=<abs> upper=<abs> work=<abs> (D66). Fail-closed parse —
+ * the daemon validates the same rules (renderSpec), but the C parser is
+ * the second gate: a hand-crafted spec must not mount garbage. Rules:
+ * absolute paths, no ".." component, 512B cap (spec_overlay field size),
+ * upper != work (kernel requires distinct dirs), lower must not be an
+ * ancestor of upper/work (copy-up through a shared ancestor would
+ * deadlock/lower-writes). work must be on the same fs as upper (kernel
+ * rule) — the daemon guarantees it by layout (<dir>/upper, <dir>/work). */
+static void spec_overlay_path(char *dst, size_t cap, const char *val,
+                              const char *what, int lineno)
+{
+        if (val[0] != '/')
+                spec_die(lineno, "overlay: %s must be an absolute path", what);
+        if (strlen(val) >= cap)
+                spec_die(lineno, "overlay: %s path too long (cap %zu)", what, cap);
+        if (strstr(val, "..") )
+                /* conservative: any .. substring is refused — the daemon
+                 * renderer rejects them too, honest paths never carry one */
+                spec_die(lineno, "overlay: %s must not contain '..'", what);
+        strcpy(dst, val);
+}
+
+static void spec_overlay(char *arg, int lineno)
+{
+        char *tok, *eq;
+
+        if (g_overlay.set)
+                spec_die(lineno, "overlay: duplicate directive");
+        for (tok = strtok(arg, " "); tok; tok = strtok(NULL, " ")) {
+                eq = strchr(tok, '=');
+                if (!eq)
+                        spec_die(lineno, "overlay: need lower= upper= work= paths");
+                *eq = '\0';
+                if (!strcmp(tok, "lower"))
+                        spec_overlay_path(g_overlay.lower,
+                                          sizeof(g_overlay.lower), eq + 1,
+                                          "lower", lineno);
+                else if (!strcmp(tok, "upper"))
+                        spec_overlay_path(g_overlay.upper,
+                                          sizeof(g_overlay.upper), eq + 1,
+                                          "upper", lineno);
+                else if (!strcmp(tok, "work"))
+                        spec_overlay_path(g_overlay.work,
+                                          sizeof(g_overlay.work), eq + 1,
+                                          "work", lineno);
+                else
+                        spec_die(lineno, "overlay: unknown key '%s'", tok);
+        }
+        if (!g_overlay.lower[0] || !g_overlay.upper[0] || !g_overlay.work[0])
+                spec_die(lineno, "overlay: need lower=, upper= and work=");
+        if (!strcmp(g_overlay.upper, g_overlay.work))
+                spec_die(lineno, "overlay: upper == work (kernel refuses)");
+        {
+                /* lower must not be an ancestor of upper/work: with a shared
+                 * ancestor the overlay would copy up into its own lower
+                 * tree; the daemon refuses too — this is the fail-closed twin */
+                size_t ll = strlen(g_overlay.lower);
+                if (strncmp(g_overlay.lower, g_overlay.upper, ll) == 0 &&
+                    (g_overlay.upper[ll] == '/' || ll == 1))
+                        spec_die(lineno, "overlay: lower is an ancestor of upper");
+                if (strncmp(g_overlay.lower, g_overlay.work, ll) == 0 &&
+                    (g_overlay.work[ll] == '/' || ll == 1))
+                        spec_die(lineno, "overlay: lower is an ancestor of work");
+        }
+        g_overlay.set = 1;
+}
+
 /* one line, in-place (we own g_spec_text) */
 static void spec_parse_line(char *line, int lineno)
 {
@@ -846,6 +943,8 @@ static void spec_parse_line(char *line, int lineno)
                 g_spec_readonly = 1;
         else if (!strcmp(dir, "seccomp_allow"))
                 spec_seccomp_allow(arg, lineno);
+        else if (!strcmp(dir, "overlay"))
+                spec_overlay(arg, lineno);
         else
                 fprintf(stderr, "minict-spec: line %d: unknown directive "
                                 "'%s' — skipped\n", lineno, dir);
@@ -1857,6 +1956,14 @@ int main(int argc, char **argv)
         ruid = getuid();
         rgid = getgid();
 
+        load_web_relay_env();
+        /* MINICT_SPEC (D23): read+parse host-side BEFORE unshare — DAC
+         * against the real uid, and parse errors abort before any ns work.
+         * D66: parsed BEFORE the /bin/sh check too — with the overlay
+         * directive the mountpoint <dir>/rootfs is an EMPTY dir (no private
+         * copy), so the check must target the overlay LOWER instead. */
+        load_spec_file();
+
         /* rootfs sanity check (host-side, DAC-checked against real uid).
          * D46 (issue #88): require an executable /bin/sh instead of
          * /bin/busybox — Debian/glibc rootfs ship no busybox, and /bin/sh is
@@ -1865,8 +1972,12 @@ int main(int argc, char **argv)
          * symlink (alpine: /bin/sh -> /bin/busybox, ABSOLUTE target — valid
          * only INSIDE the rootfs, dangling on the host), so resolve it
          * relative to the rootfs root before the check — same rule as the
-         * wrapper's fail-closed check (D43). */
-        snprintf(path, sizeof(path), "%s/bin/sh", rootfs);
+         * wrapper's fail-closed check (D43).
+         * D66: in overlay mode the daemon validated lower already, but the
+         * shim re-checks against LOWER — the mountpoint rootfs is empty by
+         * design and a missing lower /bin/sh must die here, not at mount. */
+        const char *sh_root = g_overlay.set ? g_overlay.lower : rootfs;
+        snprintf(path, sizeof(path), "%s/bin/sh", sh_root);
         {
                 /* jbuf sized for the worst join: rootfs(511) + "/bin/"(5) +
                  * lpath(511) + NUL = 1028 — SCR R2 builds with -Werror and
@@ -1886,11 +1997,11 @@ int main(int argc, char **argv)
                                 break; /* regular file (or ELOOP): lstat below */
                         lpath[n] = '\0';
                         if (lpath[0] == '/')
-                                snprintf(jbuf, sizeof(jbuf), "%s%s", rootfs,
+                                snprintf(jbuf, sizeof(jbuf), "%s%s", sh_root,
                                          lpath);
                         else
                                 snprintf(jbuf, sizeof(jbuf), "%s/bin/%s",
-                                         rootfs, lpath);
+                                         sh_root, lpath);
                         if (strlen(jbuf) >= sizeof(path))
                                 break; /* too long: lstat fails below */
                         memcpy(path, jbuf, strlen(jbuf) + 1);
@@ -1899,7 +2010,7 @@ int main(int argc, char **argv)
                         fprintf(stderr,
                                 "minict: /bin/sh symlink chain too deep in %s"
                                 " (cap 8 — loop or abuse?)\n",
-                                rootfs);
+                                sh_root);
                         return 125;
                 }
         }
@@ -1909,18 +2020,13 @@ int main(int argc, char **argv)
                 fprintf(stderr,
                         "minict: no executable /bin/sh in %s (build a rootfs "
                         "with mkrootfs.sh or pass a usable --rootfs)\n",
-                        rootfs);
+                        sh_root);
                 return 125;
         }
 
         /* no new privileges before anything else; inherited across fork/exec */
         if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) < 0)
                 die("PR_SET_NO_NEW_PRIVS");
-
-        load_web_relay_env();
-        /* MINICT_SPEC (D23): read+parse host-side BEFORE unshare — DAC
-         * against the real uid, and parse errors abort before any ns work */
-        load_spec_file();
 
         /* one-shot namespace creation; netns ON by default (D17), fail-closed
          * — no silent fallback to the shared host network namespace */
@@ -1941,11 +2047,43 @@ int main(int argc, char **argv)
         if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL) < 0)
                 die("mount(/ MS_REC|MS_PRIVATE)");
 
-        /* rootfs must be a mount point for pivot_root: bind it onto itself */
-        if (mount(rootfs, rootfs, NULL, MS_BIND | MS_REC, NULL) < 0)
-                die("bind rootfs onto itself");
-        if (mount(NULL, rootfs, NULL, MS_REC | MS_PRIVATE, NULL) < 0)
-                die("rootfs MS_REC|MS_PRIVATE");
+        /* D66: overlay rootfs — mount overlayfs AT the mountpoint instead of
+         * bind-mounting a private copy. kernel >= 5.11 mounts unprivileged
+         * in a userns with userxattr; workdir must share upper's fs (the
+         * daemon guarantees by layout). FAIL-CLOSED: a failed mount dies
+         * (no silent bind fallback — that would quietly break the no-copy
+         * commitment). The EPERM/EINVAL case prints a kernel hint so the
+         * operator knows the gate needs >= 5.11. */
+        if (g_overlay.set) {
+                char ovopts[1600]; /* 512*3 + option words — no truncation */
+
+                snprintf(ovopts, sizeof(ovopts),
+                         "lowerdir=%s,upperdir=%s,workdir=%s,userxattr",
+                         g_overlay.lower, g_overlay.upper, g_overlay.work);
+                if (mount("overlay", rootfs, "overlay", 0, ovopts) < 0) {
+                        fprintf(stderr,
+                                "minict: overlay mount failed (%s): "
+                                "lower=%s upper=%s work=%s — kernel needs "
+                                ">= 5.11 for unprivileged overlayfs (env "
+                                "gate MINICT_OVERLAY); refusing to boot "
+                                "half-copied\n",
+                                strerror(errno), g_overlay.lower,
+                                g_overlay.upper, g_overlay.work);
+                        _exit(125);
+                }
+                /* the overlay mount is already private-by-inheritance from
+                 * the MS_REC|MS_PRIVATE of / above; keep the explicit mark
+                 * for parity with the bind path (no propagation surprises) */
+                if (mount(NULL, rootfs, NULL, MS_PRIVATE, NULL) < 0)
+                        die("overlay rootfs MS_PRIVATE");
+        } else {
+                /* rootfs must be a mount point for pivot_root: bind it onto
+                 * itself (legacy private-copy path — MINICT_OVERLAY unset) */
+                if (mount(rootfs, rootfs, NULL, MS_BIND | MS_REC, NULL) < 0)
+                        die("bind rootfs onto itself");
+                if (mount(NULL, rootfs, NULL, MS_REC | MS_PRIVATE, NULL) < 0)
+                        die("rootfs MS_REC|MS_PRIVATE");
+        }
 
         setup_dev_binds(rootfs);
 

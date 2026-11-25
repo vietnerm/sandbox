@@ -110,6 +110,12 @@ type InstanceState struct {
 	// fallback). Persisted so Stop/Remove/heal can clean it up even
 	// across a daemon restart.
 	CgroupPath string `json:"cgroup_path,omitempty"`
+	// Overlay records that this instance runs on the overlayfs rootfs
+	// (GĐ2 mục 3 residual, issue #162, D66): rootfs is an EMPTY
+	// MOUNTPOINT host-side, the real tree is upper over lower. Snapshot
+	// refuses (empty archive — the mount lives only in the shim's mount
+	// ns) and spawnProxies resolves relay sockets in upper, not rootfs.
+	Overlay bool `json:"overlay,omitempty"`
 }
 
 // nameRe mirrors docker's name charset: alphanumeric first char, then
@@ -413,7 +419,10 @@ func parseDockerSize(s string) (int64, error) {
 // cgAvail tells whether cgroups v2 enforcement is possible (CG1/S2,
 // issue #4): when true the resource-limit notes record the cgroup mapping
 // applied after spawn; when false they keep the pre-CG1 fallback wording.
-func renderSpec(spec *contract.RunSpec, ports []int, cgAvail bool) (lines, notes []string, err error) {
+//
+// ovl != nil emits the overlayfs directive (D66, issue #162) and re-validates
+// the paths (the C parser re-checks too — twin gates, never trust one side).
+func renderSpec(spec *contract.RunSpec, ports []int, cgAvail bool, ovl *overlayConfig) (lines, notes []string, err error) {
 	addNote := func(f string, a ...any) { notes = append(notes, fmt.Sprintf(f, a...)) }
 
 	// --- hostname ---
@@ -567,6 +576,15 @@ func renderSpec(spec *contract.RunSpec, ports []int, cgAvail bool) (lines, notes
 		lines = append(lines, fmt.Sprintf("webport %d /.minict-proxy-%d.sock", p, p))
 	}
 
+	// --- D66 (issue #162): overlayfs rootfs, env-gated MINICT_OVERLAY=1 ---
+	if ovl != nil {
+		if err := validateOverlay(ovl); err != nil {
+			return nil, nil, err
+		}
+		lines = append(lines, ovl.specLine())
+		addNote("overlayfs rootfs (D66): lower=%s (shared, read-only via copy-up) upper=%s — no private copy", ovl.Lower, ovl.Upper)
+	}
+
 	// --- documented gaps: recorded as notes, never enforced ---
 	if spec.Network != "" {
 		addNote("Network=%q ignored: minict netns is loopback-only (D17) — no external network either way", spec.Network)
@@ -686,7 +704,7 @@ exec "$@"`
 
 // spawnProxies starts one host-side webproxy.py per port and waits until
 // the bridge answers (same 2.5s probe loop as minict.sh web).
-func (s *Store) spawnProxies(name string, dir string, ports []int, wait time.Duration) (map[int]int, []string) {
+func (s *Store) spawnProxies(name string, dir string, ports []int, wait time.Duration, overlay bool) (map[int]int, []string) {
 	var notes []string
 	pids := make(map[int]int)
 	if len(ports) == 0 {
@@ -697,6 +715,14 @@ func (s *Store) spawnProxies(name string, dir string, ports []int, wait time.Dur
 		return pids, notes
 	}
 	rootfs := filepath.Join(dir, "rootfs")
+	if overlay {
+		// D66 (issue #162): the shim's relay socket is created INSIDE the
+		// sandbox after pivot — with an overlay rootfs it copy-ups into
+		// UPPER, not the empty mountpoint host-side webproxy would find
+		// under rootfs/. Same symlink-proof openat semantics, different
+		// host directory.
+		rootfs = filepath.Join(dir, "upper")
+	}
 	for _, p := range ports {
 		// S1 (issue #41, D31): pass --root/--sock so webproxy resolves the
 		// relay socket symlink-proof (openat O_NOFOLLOW chain + connect via
