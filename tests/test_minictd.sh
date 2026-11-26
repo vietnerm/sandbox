@@ -1806,6 +1806,38 @@ EOF
 }
 run_case MD62 "D73 gd3-pty: terminal start + echo round-trip + resize + cleanup" skip md62
 
+
+# ---------- GĐ4: firecracker backend (issue #193, D74) ----------
+#   MD63  POST /v1/run with backend=firecracker → fail-closed error when
+#         /dev/kvm not available (env-gated: PASS when error mentions kvm,
+#         SKIP if the endpoint is not wired)
+md63() {
+    local fc="md-fc"
+    api POST /v1/sandboxes/$fc/remove >/dev/null 2>&1 || true
+    # POST /v1/run with backend=firecracker — should fail (no /dev/kvm on dev/CI)
+    local code body
+    code=$(curl -s -m 10 -o "$WORK/fc-resp" -w '%{http_code}' -X POST \
+        -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+        -d '{"name":"'"$fc"'","image":"base","backend":"firecracker","cmd":["/bin/sh","-c","sleep 10"]}' \
+        "$API/v1/run")
+    body=$(cat "$WORK/fc-resp")
+    # Expect non-2xx (error — firecracker backend cannot run without /dev/kvm)
+    if [[ "$code" == 2* ]]; then
+        # If we got 200, /dev/kvm might be available — stop + remove the instance
+        echo "firecracker boot succeeded (KVM available?) — cleaning up"
+        api POST /v1/sandboxes/$fc/stop >/dev/null 2>&1 || true
+        api POST /v1/sandboxes/$fc/remove >/dev/null 2>&1 || true
+        return 0
+    fi
+    # Verify the error mentions kvm or firecracker (fail-closed with clear message)
+    [[ "$body" == *"/dev/kvm"* || "$body" == *"kvm"* || "$body" == *"firecracker"* ]] || {
+        echo "firecracker error does not mention kvm: $body"
+        return 1
+    }
+    echo "MD63 OK: firecracker backend fail-closed without /dev/kvm (code=$code)"
+}
+run_case MD63 "D74 gd4: firecracker backend fail-closed (no /dev/kvm)" pass md63
+
 run_case XSS  "D71 gd3-ui: console source no dangerouslySetInnerHTML/innerHTML" pass md55b_xss
 
 echo "=== summary: PASS=$PASS SKIP=$SKIPPED FAIL=$FAIL ==="

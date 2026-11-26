@@ -51,6 +51,11 @@ func (s *Store) Run(ctx context.Context, spec contract.RunSpec) (string, error) 
 	if spec.Image == "" {
 		return "", fmt.Errorf("minict.Run: spec.Image is required")
 	}
+	// GĐ4 (issue #193): branch on backend. "firecracker" → microVM path
+	// (returns ErrNoKVM without /dev/kvm — env-gated). Default = "minict".
+	if spec.Backend == "firecracker" || (spec.Backend == "" && s.Backend == "firecracker") {
+		return s.runFirecracker(ctx, spec, start)
+	}
 	if err := os.MkdirAll(s.Root, 0755); err != nil {
 		return "", err
 	}
