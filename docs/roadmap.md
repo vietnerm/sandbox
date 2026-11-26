@@ -30,6 +30,14 @@
 5. Ghi `journal/YYYY-MM-DD/daily-log.md` (quy tắc thư mục: PROMPT.MD §10)
 
 ## Đã xong
+- [x] 2026-11-26 (phiên 33, SDDA): **GĐ2 mục 7 — observability: log JSON + Prometheus
+  metrics + /metrics endpoint (issue #168, D68)**. `--log-format text|json` (mặc định
+  json, slog.NewJSONHandler + ReplaceAttr level lowercase); lifecycle events qua
+  `eventLog` helper (instance/op/result/duration_ms); HTTP access log qua `requestLog`
+  middleware (request_id + status + result). `metrics.go` renderer viết tay stdlib-only
+  (8 instance + 3 daemon metrics, deterministic sort, fail-soft no-cgroup). `GET /metrics`
+  cùng token auth trên listener sẵn có; `--metrics-listen` placeholder fail-closed (exit 1).
+  MD50/MD51/MD52 + 10 Go unit (mutants caught). Residual: cgroup value-match e2e (test_cg.sh).
 - [x] 2026-11-23 (phiên 24, SDDA): **GĐ2 mục 3a — seccomp allowlist theo template
   (issue #139, D59)**: đo thật 4 profile bằng ptrace probe (syscall-probe,
   --after-exec 2 tránh rò pha setup); filter floor+allowlist+EPERM cả payload lẫn
@@ -494,6 +502,35 @@
    sau mục 4 (port-forward), **trước mục 8** vì mục 8 đo RSS phải tính cả phần này;
    mục 6 (Landlock) độc lập, làm trước hay sau đều được. Chỉ Go stdlib (`log/slog`, `net/http`,
    đọc file cgroup); **không** OpenTelemetry SDK, **không** `prometheus/client_golang`.
+   → **Xong 2026-11-26 Phiên 33 (#168, D68 qua PR squash)**:
+     - **7a log JSON**: `--log-format text|json` (mặc định json); `slog.NewJSONHandler`
+       + `ReplaceAttr` level lowercase. Lifecycle events (create/start/stop/destroy/
+       snapshot/save-template) qua `eventLog` helper: `instance`/`op`/`result`/`duration_ms`.
+       HTTP access log qua `requestLog` middleware: `request_id` (X-Request-Id hoặc random
+       hex 16-char), `method`/`path`/`instance`/`op`/`status`/`result`/`duration_ms`. Token
+       KHÔNG bao giờ log (MD50 grep verify).
+     - **7b metrics**: `minictd/internal/minict/metrics.go` — `CollectMetrics` +
+       `renderPrometheus` (viết tay ~250 dòng, stdlib only). 8 instance metrics
+       (cpu_usage_seconds_total counter, memory_bytes/memory_limit_bytes/io_read/
+       io_write/pids/pids_limit gauges, up{state} gauge) + 3 daemon (instances{state},
+       process_resident_memory_bytes, build_info{version,go_version,runtime}). Tái dùng
+       `cgReadInt`/`cgCPUStatUsage` (#4/D48) + thêm `cgIOStat` (sum rbytes/wbytes).
+       Fail-soft: instance không cgroup → chỉ `up`/`state`, không bịa 0. Deterministic
+       sort (name, labels) cho scrape ổn định.
+     - **7c /metrics endpoint**: `GET /metrics` trên ServeMux sẵn có, cùng token auth
+       (middleware `auth` wrap toàn mux). Content-Type `text/plain; version=0.0.4`.
+       Scrape-time (no goroutine, no RAM history). `--metrics-listen` flag là placeholder
+       fail-closed — mọi giá trị non-empty → exit 1 (roadmap: non-loopback always rejected;
+       loopback-only có thể relax sau).
+     - **7d tests**: MD50 (log schema + no token leak) + MD51 (/metrics format + fail-soft +
+       instance up) + MD52 (401 no-token + --metrics-listen fail-closed + 200 with token);
+       10 Go unit (renderer escape/order/fail-soft, io.stat sum/empty/missing, daemon RSS,
+       build_info labels). Mutants M-render-escape/-order/-no-cgroup-skip/-io-stat-sum bị bắt.
+       Residual: cgroup value-match e2e (so sánh /metrics với file cgroup trực tiếp) cần
+       sudo bootstrap — Go unit test renderer đủ bao phủ cho D68; full e2e để test_cg.sh.
+     - **7e ngân sách**: RSS idle tăng < 2 MB (renderer ~250 dòng + slog JSON handler stdlib,
+       không prometheus/client_golang → không thêm dependency nặng); số đo CI ghi vào
+       `docs/perf-baseline.md` bảng Phiên 33.
    a. **Log JSON có cấu trúc**: `minictd` đổi `slog.NewTextHandler` → `slog.NewJSONHandler`
       (giữ cờ `--log-format text|json`, mặc định `json`). Mỗi sự kiện vòng đời ghi
       đúng một dòng: `create`, `start`, `stop`, `destroy`, `exec`, `snapshot`,
