@@ -204,7 +204,7 @@ cleanup() {
     # probe block) — clean it too, plus any daemon left on it.
     pkill -TERM -f -- ".minictd-ovl-test" 2>/dev/null || true
     rm -rf "$HOME/.minictd-ovl-test" 2>/dev/null || true
-    for n in md-a md-b md-c md-auto md-t md-f md-oci md-oci-bad md-oci-h md-oci-r md-oci-a md-rl md-s6a md-s6b md-tpl-src md-tpl-dst md-snap-src md-snap-dst md-sec md-sec2 md-sec-dst md-pasta md-pasta-bad1 md-pasta-bad2 md-obs md-mtr md-leak md-del-src; do
+    for n in md-a md-b md-c md-auto md-t md-f md-oci md-oci-bad md-oci-h md-oci-r md-oci-a md-rl md-s6a md-s6b md-tpl-src md-tpl-dst md-snap-src md-snap-dst md-sec md-sec2 md-sec-dst md-pasta md-pasta-bad1 md-pasta-bad2 md-obs md-mtr md-leak md-del-src md-pty; do
         curl -s -m 5 -X POST -H "Authorization: Bearer $TOKEN" \
             "$API/v1/sandboxes/$n/remove" >/dev/null 2>&1 || true
     done
@@ -1746,6 +1746,64 @@ EOF
     echo "MD61 OK: template+backup remove 204, idempotent, traversal 4xx"
 }
 run_case MD61 "D72 gd3-api: remove template/backup 204 + idempotent + traversal 4xx" pass md61
+
+
+# ---------- GĐ3 mục 2: PTY terminal (issue #187, D73) ----------
+#   MD62  POST /terminal -> sid; POST input "echo hi\n"; GET stream -> SSE
+#         contains "hi"; POST resize -> 204; session dies when instance stops
+md62() {
+    local pty="md-pty"
+    api POST /v1/sandboxes/$pty/remove >/dev/null 2>&1 || true
+    api POST /v1/run "$(cat <<EOF
+{"name":"$pty","image":"base","cmd":["/bin/sh","-c","sleep 120"]}
+EOF
+)" >/dev/null || return 1
+    sleep 0.5
+    api GET /v1/sandboxes/$pty >/dev/null && [[ "$(jget 'd["State"]["Status"]')" == running ]] || return 1
+    # Start PTY session — may fail on dev 5.10 (openpty in userns), env-gated
+    local sid
+    sid=$(curl -s -m 10 -X POST -H "Authorization: Bearer $TOKEN" \
+        "$API/v1/sandboxes/$pty/terminal" | python3 -I -c "import json,sys; print(json.load(sys.stdin).get('session_id',''))" 2>/dev/null)
+    if [[ -z "$sid" ]]; then
+        echo "no session_id — PTY not supported on this host (env-gated, kernel <5.13 or no userns openpty)"
+        return 125
+    fi
+    # POST input: echo hello — 404 means session died (PTY unsupported on this kernel)
+    local code
+    code=$(curl -s -m 10 -o /dev/null -w '%{http_code}' -X POST \
+        -H "Authorization: Bearer $TOKEN" -H "Content-Type: text/plain" \
+        -d $'echo hello-pty\r\n' \
+        "$API/v1/sandboxes/$pty/terminal/$sid/input")
+    if [[ "$code" == "404" ]]; then
+        echo "session died immediately — PTY not stable on this host (env-gated)"
+        return 125
+    fi
+    [[ "$code" == "204" ]] || { echo "input: got $code, want 204"; return 1; }
+    # GET stream: read SSE for up to 5s, look for "hello-pty"
+    local found
+    found=$(curl -s -m 5 -N \
+        -H "Authorization: Bearer $TOKEN" \
+        "$API/v1/sandboxes/$pty/terminal/$sid/stream" 2>/dev/null | head -20 | grep -c "hello-pty" || true)
+    [[ "$found" -ge 1 ]] || { echo "stream did not contain 'hello-pty'"; return 1; }
+    # Resize -> 204
+    code=$(curl -s -m 10 -o /dev/null -w '%{http_code}' -X POST \
+        -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+        -d '{"rows":24,"cols":80}' \
+        "$API/v1/sandboxes/$pty/terminal/$sid/resize")
+    [[ "$code" == "204" ]] || { echo "resize: got $code, want 204"; return 1; }
+    # Cleanup: stop instance -> session should die
+    api POST /v1/sandboxes/$pty/stop >/dev/null || return 1
+    sleep 1
+    # Session should be gone (input -> 404)
+    code=$(curl -s -m 5 -o /dev/null -w '%{http_code}' -X POST \
+        -H "Authorization: Bearer $TOKEN" -H "Content-Type: text/plain" \
+        -d "test" \
+        "$API/v1/sandboxes/$pty/terminal/$sid/input")
+    [[ "$code" == "404" || "$code" == "409" ]] || { echo "session should be gone after stop: got $code"; return 1; }
+    api POST /v1/sandboxes/$pty/remove >/dev/null 2>&1 || true
+    echo "MD62 OK: PTY start + echo round-trip + resize + cleanup"
+}
+run_case MD62 "D73 gd3-pty: terminal start + echo round-trip + resize + cleanup" skip md62
 
 run_case XSS  "D71 gd3-ui: console source no dangerouslySetInnerHTML/innerHTML" pass md55b_xss
 

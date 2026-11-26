@@ -34,11 +34,12 @@ type Server struct {
 	store *minict.Store
 	token string
 	log   *slog.Logger
-	uiDir string // GĐ3 static console root (SetUIDir); "" = UI off
+	uiDir string           // GĐ3 static console root (SetUIDir); "" = UI off
+	term  *terminalManager // GĐ3 mục 2 PTY sessions
 }
 
 func New(store *minict.Store, token string, log *slog.Logger) *Server {
-	return &Server{store: store, token: token, log: log}
+	return &Server{store: store, token: token, log: log, term: newTerminalManager(store.MinictExecBin)}
 }
 
 // Handler builds the route table (Go 1.22+ method+path patterns).
@@ -65,6 +66,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/subnets", s.handleSubnets)
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("GET /metrics", s.handleMetrics) // GĐ2 mục 7c (issue #168): same token auth as /v1/*
+	// GĐ3 mục 2 (issue #187): PTY terminal sessions
+	mux.HandleFunc("POST /v1/sandboxes/{name}/terminal", s.handleTerminalStart)
+	mux.HandleFunc("GET /v1/sandboxes/{name}/terminal/{sid}/stream", s.handleTerminalStream)
+	mux.HandleFunc("POST /v1/sandboxes/{name}/terminal/{sid}/input", s.handleTerminalInput)
+	mux.HandleFunc("POST /v1/sandboxes/{name}/terminal/{sid}/resize", s.handleTerminalResize)
 	// GĐ3 mục 1: read-only artifact lists for the console (#128/#130 residual)
 	mux.HandleFunc("GET /v1/templates", s.handleListTemplates)
 	mux.HandleFunc("GET /v1/backups", s.handleListBackups)
@@ -630,4 +636,62 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(body)
+}
+
+// --- GĐ3 mục 2: PTY terminal handlers (issue #187) ---
+
+func (s *Server) handleTerminalStart(w http.ResponseWriter, r *http.Request) {
+	name := nameOf(r)
+	pid, envf, err := s.store.PrepareTerminal(name)
+	if err != nil {
+		mapErr(w, err)
+		return
+	}
+	sid, err := s.term.Start(name, pid, envf, "/")
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"session_id": sid})
+}
+
+func (s *Server) handleTerminalStream(w http.ResponseWriter, r *http.Request) {
+	sid := r.PathValue("sid")
+	if err := s.term.Stream(sid, w); err != nil {
+		writeErr(w, http.StatusNotFound, err.Error())
+	}
+}
+
+func (s *Server) handleTerminalInput(w http.ResponseWriter, r *http.Request) {
+	sid := r.PathValue("sid")
+	body, err := io.ReadAll(io.LimitReader(r.Body, 64<<10))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad body")
+		return
+	}
+	if err := s.term.Input(sid, body); err != nil {
+		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleTerminalResize(w http.ResponseWriter, r *http.Request) {
+	sid := r.PathValue("sid")
+	var req struct {
+		Rows int `json:"rows"`
+		Cols int `json:"cols"`
+	}
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	if req.Rows <= 0 || req.Cols <= 0 || req.Rows > 1000 || req.Cols > 1000 {
+		writeErr(w, http.StatusBadRequest, "rows/cols out of range")
+		return
+	}
+	if err := s.term.Resize(sid, req.Rows, req.Cols); err != nil {
+		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
