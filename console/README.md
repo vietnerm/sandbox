@@ -1,5 +1,9 @@
 # minictd console (GĐ3)
 
+> **Trạng thái (Track M M1, 2026-11-26):** `sẵn sàng` — CSP/traversal/auth e2e
+> xanh CI (MD55-60+XSS). Terminal PTY `thử nghiệm` (MD62 env-gated). Biểu đồ
+> IO/Network `sẵn sàng` (#185).
+
 Web UI cho `minictd`, dựng từ template Next.js owner giao ngày 2026-11-26
 (owner chốt phương án "xuất tĩnh, minictd phục vụ").
 

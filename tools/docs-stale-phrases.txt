@@ -3,3 +3,4 @@
 bị môi trường nuốt
 host seccomp chặn mount proc
 Không /proc trong sandbox
+Chưa có overlayfs rootless

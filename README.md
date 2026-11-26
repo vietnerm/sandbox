@@ -25,6 +25,35 @@ guy hiểm + clone ns-flags + AF_ALG + AF_NETLINK; `MINICT_NO_SECCOMP=1` để t
 do A/B), PDEATHSIG + pidns teardown.
 Isolated dirs: tmpfs /tmp; /dev = bind 4 node (null/zero/urandom/random).
 
+## Trạng thái tính năng
+
+Nhãn theo Track M M1 (manifest §9, D74): `sẵn sàng` = e2e xanh trên CI; `thử nghiệm` = env-gated SKIP/residual; `kế hoạch` = chưa code.
+
+| Tính năng | Trạng thái | Ghi chú |
+|---|---|---|
+| minict runtime (userns+pidns+mountns+netns+seccomp+capdrop) | sẵn sàng | isolation 37 + seccomp 25 + netns 7 PASS CI |
+| Signal lifecycle (SIGTERM/SIGINT via pidns shim) | sẵn sàng | D19, SIG_STRESS PASS CI |
+| Web trong sandbox (busybox httpd via unix-socket bridge) | sẵn sàng | WEB1-9 PASS CI |
+| minictd daemon + REST API + token auth | sẵn sàng | MD0-MD54 PASS CI |
+| CLI `sandbox` (run/start/stop/remove/inspect/logs/stats) | sẵn sàng | MD20 PASS CI |
+| exec vào instance (minict-exec setns) | sẵn sàng | MD5-MD13 PASS CI |
+| Template (save-template + `template:` image) | sẵn sàng | MD39 PASS CI |
+| Snapshot/restore (`backup:` image, tar.gz trusted) | sẵn sàng | MD40 PASS CI |
+| Seccomp allowlist theo template | sẵn sàng | MD41-43 PASS CI (4 profile đo sẵn) |
+| Overlayfs rootless (zero-copy rootfs) | sẵn sàng | MD44-46 PASS CI kernel 7.x |
+| Landlock LSM (ro-root + fail-closed) | sẵn sàng | LL1-3 PASS CI kernel 7.x |
+| Port-forward pasta config-side | thử nghiệm | MD47-49 env-gated /dev/net/tun |
+| cgroups v2 quota (memory/cpu/pids) | thử nghiệm | CG0-5 cần sudo bootstrap CI |
+| PTY terminal (vi/top/REPL) | thử nghiệm | MD62 env-gated openpty userns |
+| systemd `--user` unit | thử nghiệm | MD22 chỉ verify cú pháp |
+| Observability (/metrics + log JSON) | sẵn sàng | MD50-52 PASS CI |
+| Web console (Next.js xuất tĩnh) | sẵn sàng | MD55-60+XSS PASS CI |
+| API xoá template/backup + Inspect HostConfig | sẵn sàng | MD61 PASS CI |
+| Firecracker microVM (GĐ4) | kế hoạch | scaffolding only, cần /dev/kvm |
+| `stack.yaml` (Track M M2) | kế hoạch | thiết kế sau |
+| Registry template tĩnh (Track M M3) | kế hoạch | thiết kế sau |
+| Cluster nhiều VPS (Track M M4) | kế hoạch | chờ owner duyệt |
+
 ## Control plane `minictd` (GĐ2)
 
 Daemon rootless (Go stdlib) quản lý nhiều instance qua HTTP API + token:
@@ -111,7 +140,7 @@ Mỗi dòng là một câu và một link tới bằng chứng; chi tiết nằm
 - Single-uid mapping: mọi file trong instance thuộc "root", gói cần `chown` sang uid khác phải cài lúc build hoặc bỏ script ([alpine-rootfs](journal/2026-11-17/decisions/alpine-rootfs.md), [web-stack](journal/2026-11-20/decisions/web-stack.md)).
 - Seccomp allowlist theo template là **opt-in** (4 profile đo sẵn: busybox/alpine/alpine-nginx/debian; instance không đặt `seccomp_profile` → blocklist D11 vẫn mặc định); workload mới phải đo lại profile bằng `tools/seccomp-profile-gen.sh` trước ([seccomp-allowlist](journal/2026-11-23/decisions/seccomp-allowlist.md), [seccomp](journal/2026-11-17/decisions/seccomp.md)).
 - `/proc` trong pidns chỉ mount được khi host không chặn mount; nếu bị chặn, sandbox chạy tiếp không có `/proc` (warn-only) ([proc-pidns](journal/2026-11-19/decisions/proc-pidns.md)).
-- Chưa có overlayfs rootless: mỗi instance là một bản sao rootfs riêng ([roadmap GĐ2 mục 3](docs/roadmap.md)).
+- Overlayfs rootless env-gated (kernel ≥5.11; máy dev 5.10 SKIP, CI kernel 7.x PASS): mỗi instance mặc định copy rootfs; `MINICT_OVERLAY=1` bật zero-copy ([roadmap GĐ2 mục 3](docs/roadmap.md), [overlay D66](journal/2026-11-26/decisions/observability.md)).
 - `minict.sh exec` tạo bộ namespace mới trên cùng rootfs; exec vào instance đang chạy (setns) chỉ có qua `minictd` ([minictd](journal/2026-11-18/decisions/minictd.md)).
 - Quota cgroups v2 cần cgroup delegation cho user; không có thì `minictd` fail-soft về rlimit ([cgroups-v2](journal/2026-11-20/decisions/cgroups-v2.md)).
 - systemd `--user` unit mới được kiểm cú pháp, chưa chạy thật dưới user manager có lingering ([daemon-service](journal/2026-11-20/decisions/daemon-service.md)).
