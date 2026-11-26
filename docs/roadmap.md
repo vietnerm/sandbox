@@ -658,6 +658,7 @@
 ## Giai đoạn 4 — Backend microVM Firecracker (HIỆN TẠI — owner mở 2026-11-26)
 
 > GĐ3 DoD đạt (Phiên 37). Owner chỉ thị mở GĐ4 2026-11-26.
+> Mục 1–2 cần host có KVM; khi chưa có, SDDA làm Track M (bên dưới).
 
 0. **KIỂM TRA TRƯỚC:** `/dev/kvm` trên runner GitHub (workflow probe `ls -l /dev/kvm`)
    và máy đích. Có → mở kế hoạch chi tiết; không có → research-only, ghi rõ.
@@ -697,15 +698,57 @@
    kiện tiên quyết (pasta, cgroup delegation, quyền /dev/kvm); control plane chạy dưới user đó.
 2. Health + update tối thiểu; tài liệu từ máy trắng. (Chi tiết khi GĐ4 xong.)
 
-## Hướng xa (chưa thuộc giai đoạn nào)
+## Track M — Mở rộng ngoài core (manifest §9, D74, từ 2026-11-26)
 
-- **Cluster nhiều VPS** (mong muốn của owner 2026-11-17: cài lên nhiều VPS rồi gom
-  về quản lý chung như Proxmox). Manifest §4 hiện vẫn ghi "không cluster nhiều
-  node", nên **chưa được viết code**; cần owner sửa manifest trước. Khi mở, observability
-  nối tiếp từ GĐ2 mục 7: hoặc một collector ngoài (Prometheus/VictoriaMetrics/Grafana
-  Agent) scrape `/metrics` của từng node qua đường hầm có xác thực, hoặc thêm OTLP
-  exporter tuỳ chọn trong `minictd` (tắt mặc định, không tính vào ngân sách 30 MB
-  khi tắt). Log JSON của mục 7a đi theo cùng đường.
+> Không phải giai đoạn mới. SDDA lấy mục thấp nhất chưa xong ở đây **chỉ khi** mọi
+> mục còn lại của giai đoạn hiện tại bị chặn (môi trường hoặc chờ owner); hiện GĐ4
+> đang research-only vì thiếu `/dev/kvm`, nên Track M là việc kế tiếp. Mọi mục ở đây
+> là lớp client/công cụ/file tĩnh: **không** thêm phụ thuộc, tiến trình nền hay
+> parse YAML vào `minict`/`minictd`. Mỗi PR ghi câu trả lời hai phép thử manifest §3.
+
+1. **M1 — Nhãn trạng thái tài liệu.** Gắn nhãn `sẵn sàng` / `thử nghiệm` / `kế hoạch`
+   (định nghĩa manifest §3) cho từng tính năng trong `README.md`, `minictd/README.md`
+   và tài liệu console. `sẵn sàng` chỉ khi có e2e xanh trên CI; env-gated SKIP trên CI
+   hoặc còn residual → `thử nghiệm`. Thêm câu cũ mơ hồ vào `tools/docs-stale-phrases.txt`
+   nếu cần (`make check-docs`).
+2. **M2 — `stack.yaml` + `sandbox stack up|down|ps`.**
+   a. Thiết kế trước (decision file): schema tối giản chỉ gồm trường `minictd` đã hỗ
+      trợ (image/`template:`, cmd, env, `pasta_ports`, cpus/memory/pids, mount thư mục,
+      `depends_on` + `ready` kiểu HTTP/TCP/lệnh exec, timeout). Trường lạ → lỗi, không
+      bỏ qua im lặng. Không tương thích docker-compose (manifest §4).
+   b. Parser + CLI ở lớp client (Go, tránh thư viện YAML nặng; cân nhắc tập con YAML
+      hoặc JSON nếu thư viện làm phình binary, ghi số đo). Daemon không đổi.
+   c. Test: MD e2e một stack 2 instance (web + db) có phụ thuộc + chờ sẵn sàng; down
+      dọn sạch (không rò process/mount/netns).
+3. **M3 — Registry template tĩnh.**
+   a. Định dạng: `index.json` (name, version, sha256, size, created) + `<name>-<ver>.tar.zst`.
+   b. `sandbox template push <name> --out DIR`: sinh file tĩnh từ template local.
+      `sandbox template pull URL/name[:ver]`: chỉ HTTPS (HTTP thường chỉ khi
+      `--insecure` cho localhost), kiểm sha256 **trước** khi giải nén, giải nén an toàn
+      (không path traversal/symlink ra ngoài, dùng lại kiểm tra của backup restore).
+   c. Test: pull từ web server tĩnh local; sha256 sai → fail-closed, không để lại file;
+      tar độc (`../`, symlink) bị chặn.
+   d. Ghi chú: kéo image OCI chuẩn đã có ở lớp client qua `crane` (D51), giữ nguyên
+      hướng đó, không đưa logic OCI vào runtime.
+4. **M4 — Lớp cluster nhiều VPS** (mục tiêu owner 2026-11-17).
+   a. **Chỉ tài liệu thiết kế, chờ owner duyệt trước khi code**: công cụ riêng (tên
+      đề xuất), danh sách node + token, kết nối node qua SSH tunnel/WireGuard (`minictd`
+      vẫn bind 127.0.0.1), API tổng hợp danh sách/stats nhiều node, deploy `stack.yaml`
+      lên node chỉ định. Không etcd/Raft/DB, không HA, không migration.
+   b. Observability nhiều node: collector ngoài (Prometheus/VictoriaMetrics) scrape
+      `/metrics` từng node qua đường hầm có xác thực; hoặc OTLP exporter tuỳ chọn trong
+      `minictd` (tắt mặc định, không tính vào ngân sách 30 MB khi tắt).
+   c. Tuỳ chọn sau khi a được duyệt: phân quyền 3 vai owner/editor/viewer + audit log
+      ở lớp cluster, không chạm core.
+5. **M5 — Ví dụ triển khai VPS** trong `examples/`: Ansible playbook cài `minictd`
+   (systemd `--user` + lingering) và GitHub Action gọi API qua SSH tunnel để deploy
+   `stack.yaml`. Không viết nền tảng deploy riêng.
+
+## Hướng xa (chưa thuộc giai đoạn nào, chưa duyệt)
+
+- **arm64**: port `minict` (seccomp filter theo arch, syscall số khác) — cần runner arm64.
+- **Runtime cho K3s/K8s (CRI shim)**: ngược non-goal manifest §4 "không Kubernetes API";
+  chỉ cân nhắc nếu owner sửa manifest.
 
 ## Parked thật (lý do thiết kế, KHÔNG phải môi trường)
 - ~~seccomp allowlist mode~~ — **bỏ khỏi parked 2026-11-23**: chuyển thành GĐ2 mục 3a (#29).

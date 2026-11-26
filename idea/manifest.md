@@ -51,17 +51,41 @@ khuyến nghị tối thiểu 2 GB RAM chỉ cho OS + dịch vụ quản lý):
   code của chính owner hoặc image đã kiểm. Mọi tài liệu, API và UI không được
   quảng cáo minict là ranh giới an toàn cho code lạ. Khi một việc bảo mật và một
   tính năng tranh nhau thứ tự trong cùng giai đoạn, việc bảo mật làm trước.
+- **Mặc định tối thiểu** (owner chốt 2026-11-26, D74): mọi tính năng nâng cao
+  phải **bật thủ công** (cờ, file cấu hình, công cụ riêng), không tự bật. Một thay
+  đổi làm tăng RAM/RSS mặc định của runtime hoặc daemon thêm ≥ 1 MB khi tính năng
+  đó **không** được dùng → xem lại thiết kế, ghi giải trình trong PR.
+- **Core nhỏ, phần còn lại là lớp ngoài** (D74). "Core" là `minict` (runtime C) +
+  `minictd` (daemon một máy) + console tĩnh. Trước khi thêm tính năng, trả lời
+  hai câu và ghi vào PR/issue:
+  1. *"Thêm cái này, minict/minictd còn nhẹ không?"* Không → làm thành tuỳ chọn
+     tắt mặc định, hoặc đưa ra lớp ngoài.
+  2. *"Bỏ cái này đi, core còn hữu dụng không?"* Còn → **không** đưa vào core; viết
+     thành công cụ riêng, lớp client gọi API, hoặc ví dụ trong `examples/` (§9).
+- **Không phát minh lại** (D74): không tự viết DB, đồng thuận phân tán, mạng
+  overlay, registry phức tạp hay nền tảng deploy. Tái dùng công cụ có sẵn (SSH,
+  rsync, web server tĩnh, Ansible, GitHub Actions, Prometheus...). Nếu một tính
+  năng cần etcd/Raft/DB server để chạy thì đó là dấu hiệu sai hướng.
+- **Trạng thái tính năng phải ghi rõ** (D74): README và tài liệu từng thành phần
+  gắn nhãn cho mỗi tính năng: **sẵn sàng** (có test e2e trên CI xanh), **thử
+  nghiệm** (chạy được nhưng thiếu test/env-gated/có residual đã biết), **kế hoạch**
+  (chưa có code). Không để trạng thái mơ hồ; nhãn đổi cùng PR làm đổi trạng thái.
 
 ## 4. Phạm vi KHÔNG làm (Non-goals)
 
 Lấy cảm hứng từ Proxmox về **trải nghiệm** (UI, template, snapshot, quota),
 không sao chép toàn bộ Proxmox:
 
-- Không cluster nhiều node, không HA, không live migration.
+- Không cluster **trong core** (D74 sửa 2026-11-26). Cluster nhiều VPS là mục tiêu
+  của owner, nhưng nằm ở **lớp riêng** gọi API `minictd` của từng máy (§9); `minict`
+  và `minictd` vẫn là phần mềm một máy, không biết gì về node khác. Không HA tự
+  động, không live migration, không đồng thuận phân tán (etcd/Raft) ở bất kỳ lớp nào.
 - Không Ceph/ZFS/LVM, không quản lý block device. Storage là thư mục của user.
 - Không bridge/VLAN/SDN, không IP LAN riêng cho từng instance. Mạng chỉ qua
   port-forward user-space (pasta/slirp4netns). Đây là cái giá của rootless tuyệt đối.
-- Không RBAC đa người dùng / đa tenant. Một user vận hành, xác thực bằng token.
+- Không RBAC đa người dùng / đa tenant **trong core**. `minictd` một user vận hành,
+  xác thực bằng token. Phân quyền nhiều người (nếu làm) chỉ nằm ở lớp cluster §9,
+  tuỳ chọn, tắt mặc định.
 - Không Kubernetes/Docker-compatible API.
 - Không Windows/macOS. Chỉ Linux đạt nền tảng mục tiêu (§5).
 - Không tự viết network proxy khi pasta/slirp4netns giải quyết được. Không tự
@@ -78,6 +102,11 @@ không sao chép toàn bộ Proxmox:
 | KVM | `/dev/kvm` đọc/ghi được bởi user (GĐ4) | Firecracker cần, không cần root |
 | User-space networking | `pasta` hoặc `slirp4netns` có sẵn | mạng rootless |
 | User | uid ≥ 1000, không sudo | nguyên tắc rootless |
+
+**Không yêu cầu kernel đặc biệt** (D74): chạy trên kernel ≥ 6.1 LTS mà distro phổ
+biến (Debian, Ubuntu, Alpine, Fedora) cung cấp. Không patch kernel riêng, không
+module ngoài cây, không cờ boot đặc biệt. Tính năng cần thứ đó → tuỳ chọn có kiểm
+tra lúc chạy và báo rõ khi thiếu, không phải yêu cầu bắt buộc.
 
 **Điều kiện tiên quyết một lần của máy** (do người quản trị máy làm, nằm ngoài
 nền tảng, giống việc cài kernel): cài `pasta`/`slirp4netns`, bật cgroup
@@ -109,8 +138,9 @@ mặc định: single-uid mapping. Mọi file thuộc "root" trong instance, cá
 | Web UI | UI single-user, bind localhost + token | — | 3 |
 | Console (noVNC/xterm.js) | web terminal qua `exec` | — | 3 |
 | Biểu đồ tài nguyên | thống kê cgroup theo instance | — | 3 |
-| Cluster / HA / migration | **không làm** | — | — |
-| RBAC nhiều user | **không làm** | — | — |
+| Cluster nhiều node | lớp cluster riêng gọi API `minictd` từng VPS (§9) | không HA, không migration | mở rộng |
+| HA / live migration | **không làm** | — | — |
+| RBAC nhiều user | chỉ ở lớp cluster, tuỳ chọn (§9) | core vẫn một user + token | mở rộng |
 
 ## 7. Năm giai đoạn (What) và tiêu chí xong từng giai đoạn
 
@@ -223,3 +253,40 @@ có sẵn sớm), cập nhật manifest + roadmap **trước** khi code. Mỗi i
 - 2026-11-26: GĐ3 DoD đạt (Phiên 37); owner chỉ thị mở **GĐ4**. Precondition check
   (Phiên 38 #191): no /dev/kvm on dev + CI standard runner → GĐ4 research-only cho
   đến khi có KVM-capable host.
+- 2026-11-26 (D74): owner duyệt đưa góp ý review ngoài vào hướng dự án: nguyên tắc
+  "mặc định tối thiểu / core nhỏ / không phát minh lại / nhãn trạng thái" (§3), kernel
+  distro không patch (§5), và **track Mở rộng** §9 (stack.yaml, registry template
+  tĩnh, lớp cluster nhiều VPS). Non-goal "không cluster" §4 đổi thành "không cluster
+  trong core".
+
+## 9. Track Mở rộng — lớp ngoài core (từ 2026-11-26, D74)
+
+Các việc dưới đây **không** phải giai đoạn mới và **không** vào core. Mỗi việc là
+lớp client/công cụ riêng gọi API `minictd` đã có, hoặc chỉ là quy ước file tĩnh.
+Core không được thêm phụ thuộc hay tiến trình nền vì chúng. Thứ tự chi tiết ở
+`docs/roadmap.md` mục "Track M".
+
+**Khi nào làm:** khi mọi mục còn lại của giai đoạn hiện tại bị chặn (môi trường,
+vd. GĐ4 thiếu `/dev/kvm`, hoặc chờ owner), SDDA được lấy mục thấp nhất chưa xong
+của Track M. Việc bảo mật (§3) vẫn chen trước.
+
+1. **Nhãn trạng thái tài liệu** (§3): README + `minictd/README.md` + console docs.
+2. **`stack.yaml`**: định dạng nhiều instance tối giản kiểu compose, **chỉ** gồm cái
+   `minictd` làm được (image/template, cmd, env, port pasta, quota, mount thư mục,
+   phụ thuộc khởi động + chờ sẵn sàng). CLI `sandbox stack up|down|ps` đọc file và
+   gọi API; daemon không parse YAML. File đẩy lên Git để cả nhóm chạy giống nhau.
+3. **Registry template tĩnh**: registry = một thư mục trên web server tĩnh bất kỳ
+   (HTTPS), chứa `index.json` + `tar.zst` + sha256. `sandbox template pull` tải qua
+   HTTPS và **kiểm sha256 trước khi giải nén** (fail-closed); `push` chỉ sinh file
+   tĩnh để người dùng tự upload (rsync/scp). Không backend, không DB, tự host trong
+   5 phút. Template kéo về vẫn là workload **tin cậy** theo §3.
+4. **Lớp cluster nhiều VPS** (mục tiêu owner, như Proxmox): công cụ riêng giữ danh
+   sách node + token, gọi API `minictd` từng VPS. `minictd` vẫn chỉ bind 127.0.0.1;
+   lớp cluster tới node qua SSH tunnel hoặc WireGuard do người dùng dựng, không mở
+   port API ra Internet. Không etcd/Raft, không HA, không migration; state nằm ở
+   từng node, cluster chỉ là "nhiều tab" có tổng hợp. Tuỳ chọn về sau: phân quyền 3
+   vai (owner/editor/viewer) + audit log (ai/lúc nào/lệnh gì). **Phải có tài liệu
+   thiết kế được owner duyệt trước khi viết code.**
+5. **Triển khai lên VPS không phải nền tảng riêng**: cung cấp API ổn định + ví dụ
+   Ansible playbook / GitHub Action trong `examples/`; người dùng chọn công cụ.
+

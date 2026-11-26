@@ -328,10 +328,12 @@ Nếu tất cả xanh → ghi "DAY PASS" vào cuối daily-log. Nếu có đỏ 
    (giai đoạn hiện tại + thứ tự mục nằm ngay mục "Giai đoạn N" của file đó; hướng
    tổng thể 5 giai đoạn xem `idea/manifest.md` §7).
 
-**Giai đoạn hiện tại: GĐ3 — Web UI + console** (owner mở 2026-11-26, PR #176; manifest §8).
-GĐ2 đã đạt DoD theo roadmap (Phiên 34). Việc GĐ3 làm theo thứ tự mục trong
-`docs/roadmap.md` "Giai đoạn 3"; mục nào ghi "chờ owner duyệt" thì bỏ qua sang mục kế
-tiếp, không tự coi là đã được duyệt. Trước khi mở code GĐ4 phải dừng và hỏi owner.
+**Giai đoạn hiện tại: GĐ4 — Backend microVM Firecracker** (owner mở 2026-11-26; manifest §8).
+GĐ4 đang research-only vì chưa có host `/dev/kvm` (#191): mục code GĐ4 bị chặn môi
+trường, nên việc kế tiếp lấy theo **Track M** trong `docs/roadmap.md` (manifest §9, D74),
+mục thấp nhất chưa xong. Mục nào ghi "chờ owner duyệt" thì chỉ làm phần tài liệu/thiết
+kế, không code, không tự coi là đã được duyệt. Mỗi PR thêm tính năng ghi câu trả lời
+hai phép thử "còn nhẹ không / bỏ đi core còn hữu dụng không" (manifest §3).
 
 Khi roadmap trống hoặc không khả thi (mọi mục bị chặn môi trường/owner), mở issue
 `type:chore` `area:docs` đề xuất cập nhật `docs/roadmap.md` — không tự chế việc mới
