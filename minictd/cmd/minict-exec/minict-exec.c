@@ -60,6 +60,10 @@
 #include <sys/resource.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <pty.h>
+#include <sys/select.h>
+#include <sys/ioctl.h>
+#include <termios.h>
 
 static void die(const char *ctx)
 {
@@ -636,6 +640,8 @@ static void enter_instance_ns(pid_t pid)
 /* ---------- signal forwarding to the cmd child (minict fwd_sig) ---------- */
 
 static volatile sig_atomic_t g_child_pid = 0;
+static int g_pty = 0;       /* --pty: allocate a PTY for the exec child */
+static int g_control_fd = -1; /* --control-fd N: read resize (rows+cols) */
 
 /* async-signal-safe forwarder (kill(2) is AS-safe per signal-safety(7)) */
 static void fwd_to_child(int sig)
@@ -682,6 +688,187 @@ static void usage(void)
                 "--env-file <file> [--no-seccomp] -- cmd [args...]\n");
 }
 
+/*
+ * run_pty — PTY pump for --pty mode (GĐ3 mục 2, issue #187).
+ *
+ * Called after the setns chain + chdir + NO_NEW_PRIVS, INSTEAD of the plain
+ * fork/waitpid. Opens a PTY (openpty), forks the child with the slave as
+ * 0/1/2 (so the exec'd command sees a terminal), then the parent pumps:
+ *   master fd -> stdout (fd 1, the daemon reads this for SSE)
+ *   stdin (fd 0, the daemon writes POST input here) -> master fd
+ *   control_fd (4-byte rows+cols) -> ioctl(master, TIOCSWINSZ)
+ *
+ * The child setup (PDEATHSIG, harden_fds, rlimits, capdrop, seccomp, env) is
+ * shared with the plain path via a fork_pty_child() helper. When the master
+ * read returns 0 (child exited) or stdin closes (daemon disconnect), the pump
+ * drains and waitpid reaps the child.
+ */
+static void fork_pty_child(char **cmd, int master, int slave,
+                           sigset_t *old_mask);
+
+static int run_pty(char **cmd, int control_fd)
+{
+        int master, slave;
+        if (openpty(&master, &slave, NULL, NULL, NULL) < 0)
+                die("openpty");
+
+        sigset_t fwd, old;
+        sigemptyset(&fwd);
+        sigaddset(&fwd, SIGTERM);
+        sigaddset(&fwd, SIGINT);
+        if (sigprocmask(SIG_BLOCK, &fwd, &old) < 0)
+                die("sigprocmask(SIG_BLOCK)");
+
+        signal(SIGTERM, fwd_to_child);
+        signal(SIGINT, fwd_to_child);
+
+        pid_t child = fork();
+        if (child < 0)
+                die("fork");
+        if (child == 0) {
+                fork_pty_child(cmd, master, slave, &old);
+                /* not reached */
+        }
+
+        close(slave); /* parent does not need the slave */
+        g_child_pid = child;
+        if (sigprocmask(SIG_SETMASK, &old, NULL) < 0)
+                die("sigprocmask(SIG_SETMASK)");
+        drop_all_caps(); /* supervisor posture */
+
+        /* pump loop: select on master + stdin + control_fd */
+        int alive = 1;
+        while (alive) {
+                fd_set rfds;
+                FD_ZERO(&rfds);
+                FD_SET(master, &rfds);
+                FD_SET(0, &rfds);
+                if (control_fd >= 0)
+                        FD_SET(control_fd, &rfds);
+                int maxfd = master;
+                if (0 > maxfd) maxfd = 0;
+                if (control_fd > maxfd) maxfd = control_fd;
+
+                int n = select(maxfd + 1, &rfds, NULL, NULL, NULL);
+                if (n < 0) {
+                        if (errno == EINTR) continue;
+                        break;
+                }
+
+                /* master -> stdout (daemon SSE) */
+                if (FD_ISSET(master, &rfds)) {
+                        char buf[4096];
+                        ssize_t r = read(master, buf, sizeof(buf));
+                        if (r <= 0) {
+                                alive = 0; /* child exited or PTY closed */
+                        } else {
+                                ssize_t w = 0;
+                                while (w < r) {
+                                        ssize_t k = write(1, buf + w, r - w);
+                                        if (k < 0) { if (errno == EINTR) continue; alive = 0; break; }
+                                        w += k;
+                                }
+                        }
+                }
+
+                /* stdin (daemon POST input) -> master */
+                if (alive && FD_ISSET(0, &rfds)) {
+                        char buf[4096];
+                        ssize_t r = read(0, buf, sizeof(buf));
+                        if (r <= 0) {
+                                /* stdin closed — stop reading it but keep
+                                 * pumping master->stdout until child exits */
+                                shutdown(0, SHUT_RD);
+                        } else {
+                                ssize_t w = 0;
+                                while (w < r) {
+                                        ssize_t k = write(master, buf + w, r - w);
+                                        if (k < 0) { if (errno == EINTR) continue; break; }
+                                        w += k;
+                                }
+                        }
+                }
+
+                /* control_fd -> resize (4 bytes: rows_lo, rows_hi, cols_lo, cols_hi) */
+                if (control_fd >= 0 && FD_ISSET(control_fd, &rfds)) {
+                        unsigned char buf[4];
+                        ssize_t r = read(control_fd, buf, 4);
+                        if (r == 4) {
+                                unsigned short rows = buf[0] | (buf[1] << 8);
+                                unsigned short cols = buf[2] | (buf[3] << 8);
+                                struct winsize ws;
+                                memset(&ws, 0, sizeof(ws));
+                                ws.ws_row = rows;
+                                ws.ws_col = cols;
+                                ioctl(master, TIOCSWINSZ, &ws);
+                        } else if (r <= 0) {
+                                control_fd = -1; /* control closed, keep pumping */
+                        }
+                }
+        }
+
+        /* reap child */
+        int status;
+        while (waitpid(child, &status, 0) < 0) {
+                if (errno != EINTR)
+                        die("waitpid");
+        }
+        if (WIFEXITED(status))
+                return WEXITSTATUS(status);
+        if (WIFSIGNALED(status))
+                return 128 + WTERMSIG(status);
+        return 1;
+}
+
+/*
+ * fork_pty_child — the child side of run_pty. dup2's the slave as 0/1/2,
+ * closes the master, then runs the same setup as the plain exec path
+ * (PDEATHSIG, harden_fds, rlimits, capdrop, seccomp, env, execvp).
+ * Never returns.
+ */
+static void fork_pty_child(char **cmd, int master, int slave,
+                           sigset_t *old_mask)
+{
+        if (prctl(PR_SET_PDEATHSIG, SIGKILL) < 0)
+                die("PDEATHSIG");
+        if (sigprocmask(SIG_SETMASK, old_mask, NULL) < 0)
+                _exit(126);
+
+        /* dup2 slave as stdio, close master (child must not hold it) */
+        if (dup2(slave, 0) < 0 || dup2(slave, 1) < 0 || dup2(slave, 2) < 0)
+                _exit(126);
+        if (slave > 2)
+                close(slave);
+        close(master);
+
+        harden_exec_fds();
+        apply_spec_rlimits();
+        drop_all_caps();
+        install_seccomp();
+
+        if (clearenv() != 0)
+                _exit(126);
+        setenv("PATH", "/bin:/sbin:/usr/bin", 1);
+        setenv("HOME", "/", 1);
+        setenv("MINICT", "1", 1);
+        setenv("TERM", "xterm-256color", 1);
+        {
+                int e;
+                for (e = 0; e < g_envkv_n; e++) {
+                        char *eq = strchr(g_envkv[e], '=');
+                        *eq = '\0';
+                        setenv(g_envkv[e], eq + 1, 1);
+                        *eq = '=';
+                }
+        }
+
+        execvp(cmd[0], cmd);
+        fprintf(stderr, "minict-exec: exec %s: %s\n", cmd[0],
+                strerror(errno));
+        _exit(127);
+}
+
+
 int main(int argc, char **argv)
 {
         const char *cwd = NULL;
@@ -710,6 +897,17 @@ int main(int argc, char **argv)
                         envfile = argv[++i];
                 } else if (!strcmp(argv[i], "--no-seccomp")) {
                         g_no_seccomp = 1;
+                } else if (!strcmp(argv[i], "--pty")) {
+                        g_pty = 1;
+                } else if (!strcmp(argv[i], "--control-fd") && i + 1 < argc) {
+                        char *end = NULL;
+                        errno = 0;
+                        g_control_fd = (int)strtol(argv[++i], &end, 10);
+                        if (errno == ERANGE || !end || *end != '\0' ||
+                            g_control_fd < 0) {
+                                fprintf(stderr, "minict-exec: bad --control-fd '%s'\n", argv[i]);
+                                return 125;
+                        }
                 } else if (!strcmp(argv[i], "--selftest-seccomp")) {
                         selftest = 1;
                 } else if (!strcmp(argv[i], "--")) {
@@ -752,6 +950,11 @@ int main(int argc, char **argv)
 
         if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) < 0)
                 die("PR_SET_NO_NEW_PRIVS");
+
+        /* --pty: PTY pump path (GĐ3 mục 2, issue #187). run_pty does its
+         * own fork + signal block + waitpid, so we return here. */
+        if (g_pty)
+                return run_pty(cmd, g_control_fd);
 
         /* block TERM/INT around the fork so a racing signal is QUEUED and
          * forwarded once g_child_pid is set (minict.c fork-window pattern;

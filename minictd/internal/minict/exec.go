@@ -358,6 +358,65 @@ func orEmpty(in []byte) []byte {
 	return in
 }
 
+// PrepareTerminal creates the exec env-file for a PTY terminal session
+// (GĐ3 mục 2, issue #187) and returns the target pid + env-file path.
+// The caller (server terminalManager) starts `minict-exec --pty --env-file
+// <path> --pid <pid> -- /bin/sh` with the returned values. Same env-file
+// as ExecV2 setns mode (rlimits + seccomp + spec env).
+func (s *Store) PrepareTerminal(name string) (pid int, envFile string, err error) {
+	st, err := s.loadState(name)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, "", contract.ErrNotFound
+		}
+		return 0, "", err
+	}
+	st = s.alive(st)
+	if st.State != StateRunning {
+		return 0, "", fmt.Errorf("%w: instance %s (state %s)", ErrNotRunning, name, st.State)
+	}
+
+	target := st.PID
+	if s.MinictExecBin != "" {
+		if _, err := os.Stat(s.MinictExecBin); err == nil {
+			if kid := firstChild(st.PID); kid > 0 {
+				target = kid
+			}
+		}
+	}
+
+	spec, err := s.loadSpec(name)
+	if err != nil {
+		return 0, "", fmt.Errorf("terminal %s: missing spec.json: %w", name, err)
+	}
+	env, err := sanitizeEnv(spec.Env)
+	if err != nil {
+		return 0, "", err
+	}
+
+	execDir := filepath.Join(s.dir(name), "exec-env")
+	_ = os.MkdirAll(execDir, 0o700)
+	id := randHex(8)
+	envf := filepath.Join(execDir, id+".env")
+
+	rlimitLines, err := s.execRlimitLines(name)
+	if err != nil {
+		return 0, "", err
+	}
+	seccompLines, err := s.execSeccompLines(name)
+	if err != nil {
+		return 0, "", err
+	}
+	fileLines := make([]string, 0, len(env)+len(rlimitLines)+len(seccompLines))
+	fileLines = append(fileLines, env...)
+	fileLines = append(fileLines, rlimitLines...)
+	fileLines = append(fileLines, seccompLines...)
+	if err := os.WriteFile(envf, []byte(strings.Join(fileLines, "\n")+"\n"), 0o600); err != nil {
+		return 0, "", err
+	}
+	return target, envf, nil
+}
+
 // Exec is the legacy contract op: non-interactive, buffered, no timeout.
 func (s *Store) Exec(ctx context.Context, name string, cmd []string) (contract.ExecResult, error) {
 	res, err := s.ExecV2(ctx, name, contract.ExecV2Request{Cmd: cmd})
