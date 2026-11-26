@@ -15,11 +15,35 @@ import (
 	"github.com/vietnerm/sandbox/minictd/contract"
 )
 
+// eventLog emits a structured lifecycle event (GĐ2 mục 7a, issue #168,
+// D68). op = event name (create/start/stop/destroy/snapshot/save-template),
+// instance = sandbox name, result = ok|error, duration_ms since start.
+// Extra attrs (pid, image, ports, ...) are appended after the standard
+// fields. The slog JSON handler emits one line per call with time/level
+// automatically; request_id is added by the HTTP middleware (server.go)
+// on the access log, not here (runtime is also called from autostart /
+// reconcile which have no HTTP request context).
+func (s *Store) eventLog(op, instance, result string, start time.Time, extra ...any) {
+	args := []any{"instance", instance, "op", op, "result", result, "duration_ms", time.Since(start).Milliseconds()}
+	args = append(args, extra...)
+	s.Log.Info(op, args...)
+}
+
+// eventLogErr emits a lifecycle event with result=error and the error
+// message. Used on error return paths of lifecycle methods so MD41 can
+// parse both ok and error lines.
+func (s *Store) eventLogErr(op, instance string, start time.Time, err error, extra ...any) {
+	args := []any{"instance", instance, "op", op, "result", "error", "duration_ms", time.Since(start).Milliseconds(), "error", err.Error()}
+	args = append(args, extra...)
+	s.Log.Warn(op, args...)
+}
+
 // Run starts a sandbox detached and returns its handle. minictd contract
 // note: the returned ID IS the instance name (docker returns a 12-char
 // short ID; the control plane stores it but always addresses sandboxes by
 // name, so identity-by-name is lossless here).
 func (s *Store) Run(ctx context.Context, spec contract.RunSpec) (string, error) {
+	start := time.Now() // GĐ2 mục 7a: create event duration
 	if err := validName(spec.Name); err != nil {
 		return "", err
 	}
@@ -211,7 +235,7 @@ func (s *Store) Run(ctx context.Context, spec contract.RunSpec) (string, error) 
 	for _, n := range notes {
 		s.Log.Info("minictd note", "name", spec.Name, "note", n)
 	}
-	s.Log.Info("minictd run", "name", spec.Name, "pid", pid, "image", spec.Image, "ports", fmt.Sprint(ports))
+	s.eventLog("create", spec.Name, "ok", start, "pid", pid, "image", spec.Image, "ports", fmt.Sprint(ports))
 	return spec.Name, nil
 }
 
@@ -293,6 +317,7 @@ func (s *Store) Inspect(ctx context.Context, name string) (*contract.ContainerJS
 // grace, proxies killed, instance directory unlinked). Idempotent: a
 // missing instance returns nil (docker `rm -f` parity).
 func (s *Store) Remove(ctx context.Context, name string) error {
+	start := time.Now()
 	unlock, err := s.lock(ctx, name)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -326,7 +351,7 @@ func (s *Store) Remove(ctx context.Context, name string) error {
 	}
 	// G3 (issue #97): instance identity is gone — route must go too.
 	s.syncRouteFile(name, nil, nil)
-	s.Log.Info("minictd remove", "name", name)
+	s.eventLog("destroy", name, "ok", start)
 	return nil
 }
 
@@ -337,6 +362,7 @@ func (s *Store) Remove(ctx context.Context, name string) error {
 // (fail-closed → ErrInstanceRunning → 409). templateName shares the instance
 // name charset (validName).
 func (s *Store) SaveTemplate(ctx context.Context, name, templateName string) error {
+	start := time.Now()
 	if err := validName(name); err != nil {
 		return err
 	}
@@ -384,7 +410,7 @@ func (s *Store) SaveTemplate(ctx context.Context, name, templateName string) err
 	if err := copyTree(ctx, filepath.Join(s.dir(name), fSpec), specDst); err != nil {
 		return fmt.Errorf("save-template %s: copy spec: %w", name, err)
 	}
-	s.Log.Info("minictd save-template", "name", name, "template", templateName)
+	s.eventLog("save-template", name, "ok", start, "template", templateName)
 	return nil
 }
 
@@ -394,6 +420,7 @@ func (s *Store) SaveTemplate(ctx context.Context, name, templateName string) err
 // rootfs races payload writes). A subsequent Run with image "backup:<backupName>"
 // restores from it (extractGzTar, trusted path). backupName passes validName.
 func (s *Store) Snapshot(ctx context.Context, name, backupName string) error {
+	start := time.Now()
 	if err := validName(name); err != nil {
 		return err
 	}
@@ -441,7 +468,7 @@ func (s *Store) Snapshot(ctx context.Context, name, backupName string) error {
 	if err := f.Close(); err != nil {
 		return fmt.Errorf("snapshot %s: close: %w", name, err)
 	}
-	s.Log.Info("minictd snapshot", "name", name, "backup", backupName)
+	s.eventLog("snapshot", name, "ok", start, "backup", backupName)
 	return nil
 }
 
@@ -449,6 +476,7 @@ func (s *Store) Snapshot(ctx context.Context, name, backupName string) error {
 // (filesystem changes persist across stop/start — docker parity). A no-op
 // when already running (docker.Client.Start contract).
 func (s *Store) Start(ctx context.Context, name string) error {
+	start := time.Now()
 	unlock, err := s.lock(ctx, name)
 	if err != nil {
 		return err
@@ -578,7 +606,7 @@ func (s *Store) Start(ctx context.Context, name string) error {
 	}
 	// G3 (issue #97): route file back on (ports from the saved state).
 	s.syncRouteFile(name, st.Ports, parseLabels(spec.Labels))
-	s.Log.Info("minictd start", "name", name, "pid", pid)
+	s.eventLog("start", name, "ok", start, "pid", pid)
 	return nil
 }
 
@@ -586,6 +614,7 @@ func (s *Store) Start(ctx context.Context, name string) error {
 // and keeps the instance directory for a later Start. ErrNotFound on a
 // missing instance (docker.Client.Stop contract).
 func (s *Store) Stop(ctx context.Context, name string, timeoutSec int) error {
+	start := time.Now()
 	unlock, err := s.lock(ctx, name)
 	if err != nil {
 		return err
@@ -642,7 +671,7 @@ func (s *Store) Stop(ctx context.Context, name string, timeoutSec int) error {
 	}
 	// G3 (issue #97): instance is stopped — its route must go.
 	s.syncRouteFile(name, nil, nil)
-	s.Log.Info("minictd stop", "name", name, "timeout_sec", timeoutSec)
+	s.eventLog("stop", name, "ok", start, "timeout_sec", timeoutSec)
 	return nil
 }
 

@@ -47,6 +47,8 @@ func main() {
 		traefikDir = flag.String("traefik-dir", "", "directory for generated Traefik file-provider routes (G3, issue #97; one sandbox-<name>.yml per running instance; empty = feature off)")
 		tfDomain   = flag.String("traefik-domain", "localhost", "domain suffix for generated Traefik Host() rules (s-<name>.<domain>, G3)")
 		showVer    = flag.Bool("version", false, "print version and exit")
+		logFormat  = flag.String("log-format", "json", "log format: text or json (default json, GĐ2 mục 7, issue #168). JSON emits one structured line per lifecycle event with time/level/msg/instance/op/result/duration_ms/request_id")
+		metricsLn  = flag.String("metrics-listen", "", "NOT IMPLEMENTED: /metrics is served on the main --listen/--unix-socket with the same token. Any non-empty value is rejected fail-closed (exit 1) so a future loopback-only listener can be added without widening the attack surface today (GĐ2 mục 7c, issue #168)")
 	)
 	flag.Parse()
 
@@ -55,7 +57,41 @@ func main() {
 		return
 	}
 
-	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	// GĐ2 mục 7a (issue #168, D68): structured JSON logs by default;
+	// --log-format text keeps the legacy TextHandler for operator debugging.
+	// ReplaceAttr normalizes level to lowercase (info/warn/error) for stable
+	// log parsing; time is RFC3339Nano (slog default). The handler is shared
+	// by the daemon and the HTTP request logger (request_id injected via
+	// slog.With in server.go middleware).
+	handlerOpts := &slog.HandlerOptions{Level: slog.LevelInfo,
+		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+			if a.Key == slog.LevelKey && len(groups) == 0 {
+				lvl, ok := a.Value.Any().(slog.Level)
+				if ok {
+					a.Value = slog.StringValue(strings.ToLower(lvl.String()))
+				}
+			}
+			return a
+		},
+	}
+	var log *slog.Logger
+	switch strings.ToLower(*logFormat) {
+	case "text":
+		log = slog.New(slog.NewTextHandler(os.Stderr, handlerOpts))
+	case "json", "":
+		log = slog.New(slog.NewJSONHandler(os.Stderr, handlerOpts))
+	default:
+		fatal(nil, "invalid --log-format %q (want text|json)", *logFormat)
+	}
+
+	// GĐ2 mục 7c (issue #168, D68): --metrics-listen is a placeholder.
+	// /metrics is served on the main listener with the same token. Any
+	// non-empty value exits fail-closed so a future loopback-only listener
+	// can be added without widening the attack surface today. Non-loopback
+	// addresses are ALWAYS rejected (roadmap mục 7c).
+	if *metricsLn != "" {
+		fatal(log, "--metrics-listen is not implemented: /metrics is served on --listen/--unix-socket with the same token (got %q; a future loopback-only listener may relax this)", *metricsLn)
+	}
 
 	// R3 (2026-11-18): a token-less daemon on 127.0.0.1 lets ANY local
 	// user create sandboxes with arbitrary bind mounts as this uid, so
@@ -265,6 +301,10 @@ func main() {
 }
 
 func fatal(log *slog.Logger, f string, a ...any) {
-	log.Error(fmt.Sprintf(f, a...))
+	if log != nil {
+		log.Error(fmt.Sprintf(f, a...))
+	} else {
+		fmt.Fprintf(os.Stderr, "minictd: "+f+"\n", a...)
+	}
 	os.Exit(1)
 }

@@ -7,13 +7,16 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/vietnerm/sandbox/minictd/contract"
@@ -60,8 +63,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/info", s.handleInfo)
 	mux.HandleFunc("GET /v1/subnets", s.handleSubnets)
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
+	mux.HandleFunc("GET /metrics", s.handleMetrics) // GĐ2 mục 7c (issue #168): same token auth as /v1/*
 
-	return s.auth(s.logRequests(mux))
+	return s.auth(s.requestLog(mux))
 }
 
 func (s *Server) auth(next http.Handler) http.Handler {
@@ -85,13 +89,86 @@ func (s *Server) auth(next http.Handler) http.Handler {
 	})
 }
 
-func (s *Server) logRequests(next http.Handler) http.Handler {
+// statusRecorder wraps the ResponseWriter to capture the status code
+// for the access log (GĐ2 mục 7a, issue #168).
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+	wrote  bool
+}
+
+func (r *statusRecorder) WriteHeader(code int) {
+	if !r.wrote {
+		r.status = code
+		r.wrote = true
+	}
+	r.ResponseWriter.WriteHeader(code)
+}
+
+func (r *statusRecorder) Write(b []byte) (int, error) {
+	if !r.wrote {
+		r.status = http.StatusOK
+		r.wrote = true
+	}
+	return r.ResponseWriter.Write(b)
+}
+
+// requestLog is the HTTP access log middleware (GĐ2 mục 7a, issue #168,
+// D68). It generates/reads a request_id, captures the response status,
+// and emits one structured log line per request: msg="http", request_id,
+// method, path, instance (from path value when present), op (derived from
+// path), status, result (ok if <400 else error), duration_ms. The token
+// is NEVER logged (it lives only in the Authorization header which is not
+// read here).
+func (s *Server) requestLog(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		next.ServeHTTP(w, r)
-		s.log.Info("http", "method", r.Method, "path", r.URL.Path,
-			"dur_ms", time.Since(start).Milliseconds())
+		rid := requestID(r)
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rec, r)
+		result := "ok"
+		if rec.status >= 400 {
+			result = "error"
+		}
+		inst := nameOf(r) // empty for paths without {name}
+		s.log.Info("http",
+			"request_id", rid,
+			"method", r.Method,
+			"path", r.URL.Path,
+			"instance", inst,
+			"op", opOf(r),
+			"status", rec.status,
+			"result", result,
+			"duration_ms", time.Since(start).Milliseconds())
 	})
+}
+
+// requestID returns the X-Request-Id header if present, otherwise
+// generates a 16-char hex random ID. Used for log correlation (GĐ2 mục 7a).
+func requestID(r *http.Request) string {
+	if rid := r.Header.Get("X-Request-Id"); rid != "" {
+		return rid
+	}
+	b := make([]byte, 8)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// opOf derives a short op name from the request path for the access log.
+// Returns the last meaningful path segment (e.g. "start", "stop",
+// "destroy", "metrics", "run").
+func opOf(r *http.Request) string {
+	p := strings.Trim(r.URL.Path, "/")
+	parts := strings.Split(p, "/")
+	if len(parts) == 0 {
+		return r.URL.Path
+	}
+	last := parts[len(parts)-1]
+	// Map remove -> destroy to match the lifecycle event name.
+	if last == "remove" {
+		return "destroy"
+	}
+	return last
 }
 
 func writeErr(w http.ResponseWriter, code int, msg string) {
@@ -476,4 +553,16 @@ func (s *Server) handleSubnets(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "1"})
+}
+
+// handleMetrics serves the Prometheus text exposition format for
+// minictd observability (GĐ2 mục 7c, issue #168, D68). Same token auth
+// as /v1/* (enforced by the auth middleware wrapping the whole mux).
+// Scrape-time: reads cgroup files per instance, no goroutine, no RAM
+// history. Content-Type per Prometheus spec v0.0.4.
+func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	body := s.store.RenderMetrics()
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
 }

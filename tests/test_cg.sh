@@ -52,7 +52,7 @@ if [[ ! -x "$MINICTD" || ! -x "$MEXEC" ]]; then
         export PATH="$HOME/.local/go/bin:$PATH"
     fi
     echo "building minictd binaries for test_cg.sh (make minictd)"
-    make -C "$REPO" minictd >/dev/null 2>&1 || { echo "make minictd failed (Go missing?)"; exit 1; }
+    make -C "$REPO" minictd 2>&1 || { echo "make minictd failed (see output above)"; exit 1; }
 fi
 for b in "$MINICTD" "$MEXEC"; do
     [[ -x "$b" ]] || { echo "missing $b after make minictd"; exit 1; }
