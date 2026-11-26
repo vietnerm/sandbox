@@ -456,9 +456,19 @@ md21() {
     local old new st
     old=$(sb inspect md-auto | python3 -I -c "import json,sys; print(json.load(sys.stdin)['State']['Pid'])")
     [[ -n "$old" ]] || return 1
+    # issue #93: pid-reuse guard before kill — /proc/<old>/stat field 22
+    # (start ticks, parsed after the LAST ')' since comm may hold spaces)
+    # must match state.json start_ticks (same rule as Store.pidAlive).
+    local want have
+    want=$(python3 -I -c "import json,sys; print(json.load(open(sys.argv[1])).get('start_ticks',''))" "$STATE/md-auto/state.json") || return 1
+    have=$(python3 -I -c "import sys; r=open('/proc/%s/stat'%sys.argv[1]).read(); print(r[r.rindex(')')+2:].split()[19])" "$old") || return 1
+    [[ -n "$want" && "$want" == "$have" ]] || { echo "MD21: start_ticks mismatch pid=$old state=$want proc=$have (pid reuse?)"; return 1; }
     # reboot semantics: daemon dies first (payload is Setsid -> survives),
     # then the payload shim is killed — state.json still says running.
     kill "$DPID"; wait "$DPID" 2>/dev/null; DPID=""
+    # re-check right before kill (the daemon stop above is the window)
+    have=$(python3 -I -c "import sys; r=open('/proc/%s/stat'%sys.argv[1]).read(); print(r[r.rindex(')')+2:].split()[19])" "$old" 2>/dev/null) || return 1
+    [[ "$want" == "$have" ]] || { echo "MD21: pid $old reused before kill"; return 1; }
     kill "$old" 2>/dev/null
     sleep 0.6
     pgrep -f "$STATE/md-auto" >/dev/null 2>&1 && return 1

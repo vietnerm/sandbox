@@ -377,9 +377,17 @@ ab1_test() {
     t1=$(date +%s%N)
     ms=$(( (t1 - t0) / 1000000 ))
     echo "        pasta attach end-to-end (up --pasta incl. route wait): ${ms} ms (host-side, not cold_start)"
+    # issue #62: run_case swallows output on PASS — persist the number so the
+    # suite prints it on PASS too (absolute value lands in the CI log)
+    echo "$ms" > "$AB1_MS_FILE"
     [[ $ms -lt 30000 ]]
 }
+AB1_MS_FILE="$(mktemp)"
 run_case AB1 "with pasta: attach latency measured (host-side)" skip ab1_test
+if [[ -s "$AB1_MS_FILE" ]]; then
+    echo "AB1: $(cat "$AB1_MS_FILE") ms (pasta attach end-to-end, host-side; assert < 30000 ms)"
+fi
+rm -f "$AB1_MS_FILE"
 
 echo "=== summary: PASS=$PASS SKIP=$SKIP FAIL=$FAIL ==="
 echo "(SKIP = pasta env-blocked on this host: no /dev/net/tun — real run happens on CI runners, D34/D37)"
