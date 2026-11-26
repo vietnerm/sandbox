@@ -1,0 +1,28 @@
+=== test-minictd MD53/MD54 ===
+MD50  D68 obs: JSON log schema + lifecycle events + no token leak  PASS
+MD51  D68 obs: /metrics Prometheus format + fail-soft + instance up PASS
+MD52  D68 obs: /metrics 401 no-token + --metrics-listen fail-closed PASS
+MD53  D69 mục 8: destroy no-leak (process + mount + dir gone)    PASS
+MD54  D69 mục 8: daemon idle RSS <= 30 MB + /metrics cross-check PASS
+=== summary: PASS=48 SKIP=7 FAIL=0 ===
+
+=== test-web ===
+WEB9  resolver: ancestor symlink blocked, positive control     PASS
+WEB6  down closes port and leaves no processes                 PASS
+=== summary: PASS=9 FAIL=0 ===
+
+=== perf ===
+cold_start_ms  :     2.33  (threshold 100)
+rss_kb         :     1248  (threshold 10240)
+disk_base_mb   :     2.05  (threshold 20)
+perf-check: PASS
+
+=== host baseline ===
+21d5de2dc39f2ceb19e33f8cc124b311b57a48aea6d7703a9a98b93079d412bd  /etc/passwd
+223fe8564b60636bc738b6178d3ba9a50ef7d791266b0efae6363bb716e4c47f  /bin/bash
+a59f393bad5037644b89de64fe558ae6d5d1473c25c63022241e7c7019ad2f0c  /usr/bin/sudo
+
+=== go unit ===
+ok  	github.com/vietnerm/sandbox/minictd/cmd/minictd	0.009s
+ok  	github.com/vietnerm/sandbox/minictd/internal/minict	0.337s
+ok  	github.com/vietnerm/sandbox/minictd/internal/server	0.093s

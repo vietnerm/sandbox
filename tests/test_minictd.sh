@@ -106,6 +106,11 @@
 #         families declared; instance appears in up metric (GĐ2 mục 7b/c)
 #   MD52  D68 observability: /metrics 401 without token + --metrics-listen
 #         0.0.0.0 fail-closed (exit non-zero) + 200 with token (GĐ2 mục 7c)
+#   MD53  D69 mục 8: destroy no-leak — Run(webport) + Stop + Remove -> 0
+#         process leak (pgrep instance dir), 0 mount leak (mountinfo grep),
+#         instance dir gone (GĐ2 mục 8)
+#   MD54  D69 mục 8: daemon idle RSS <= 30 MB + /metrics cross-check with
+#         /proc/$DPID/status VmRSS (match within 64 KB; gate 31457280 bytes)
 #
 # Exit code: 0 if all expected results hold, 1 otherwise.
 set -u
@@ -182,7 +187,7 @@ cleanup() {
     # probe block) — clean it too, plus any daemon left on it.
     pkill -TERM -f -- ".minictd-ovl-test" 2>/dev/null || true
     rm -rf "$HOME/.minictd-ovl-test" 2>/dev/null || true
-    for n in md-a md-b md-c md-auto md-t md-f md-oci md-oci-bad md-oci-h md-oci-r md-oci-a md-rl md-s6a md-s6b md-tpl-src md-tpl-dst md-snap-src md-snap-dst md-sec md-sec2 md-sec-dst md-pasta md-pasta-bad1 md-pasta-bad2 md-obs md-mtr; do
+    for n in md-a md-b md-c md-auto md-t md-f md-oci md-oci-bad md-oci-h md-oci-r md-oci-a md-rl md-s6a md-s6b md-tpl-src md-tpl-dst md-snap-src md-snap-dst md-sec md-sec2 md-sec-dst md-pasta md-pasta-bad1 md-pasta-bad2 md-obs md-mtr md-leak; do
         curl -s -m 5 -X POST -H "Authorization: Bearer $TOKEN" \
             "$API/v1/sandboxes/$n/remove" >/dev/null 2>&1 || true
     done
@@ -1441,6 +1446,80 @@ md52() {
 run_case MD50 "D68 obs: JSON log schema + lifecycle events + no token leak" pass md50
 run_case MD51 "D68 obs: /metrics Prometheus format + fail-soft + instance up" pass md51
 run_case MD52 "D68 obs: /metrics 401 no-token + --metrics-listen fail-closed" pass md52
+
+
+# ---------- GĐ2 mục 8 (issue #171, D69) ----------
+#   MD53  destroy no-leak: Run(webport) -> Stop + Remove -> 0 process leak
+#         (pgrep instance dir), 0 mount leak (mountinfo grep), dir gone
+#   MD54  daemon idle RSS <= 30 MB: scrape /metrics minictd_process_resident_memory_bytes
+#         + cross-check /proc/$DPID/status VmRSS (match within 64 KB);
+#         assert <= 31457280 bytes (30 MB)
+md53() {
+    local leak="md-leak"
+    local lport=$(( WEB_PORT + 70 ))
+    local before_procs before_mounts
+    before_procs=$(pgrep -f "$STATE/$leak" 2>/dev/null | wc -l)
+    before_mounts=$(grep "$STATE/$leak" /proc/self/mountinfo 2>/dev/null | wc -l)
+    # Run instance WITH webport (creates webproxy bind mount — interesting leak surface)
+    api POST /v1/run "$(cat <<EOF
+{"name":"$leak","image":"base","labels":["minict.webport=$lport"],
+ "cmd":["/bin/sh","-c","mkdir -p /www && echo leak-web > /www/index.html; httpd -f -p 127.0.0.1:$lport -h /www & sleep 60"]}
+EOF
+)" >/dev/null || return 1
+    sleep 0.6
+    api GET /v1/sandboxes/$leak >/dev/null && [[ "$(jget 'd["State"]["Status"]')" == running ]] || return 1
+    # Note: on dev 5.10 without overlay (D66 env-gated), the daemon mountinfo
+    # has NO bind mounts referencing the instance dir — rootfs is a copy
+    # (copyTree), webproxy is a socket file (not a mount). Overlay mounts live
+    # in the shim's mount ns. So "during_mounts" may be 0 on dev; the leak
+    # check is the "after" state (0 stale mounts + 0 stale procs + dir gone).
+    # On CI runner (kernel 7.x + overlay D66), overlay mounts may appear in
+    # the shim ns but still not in the daemon mountinfo — same logic applies.
+    # Stop + Remove (destroy)
+    api POST /v1/sandboxes/$leak/stop >/dev/null || return 1
+    sleep 0.5
+    api POST /v1/sandboxes/$leak/remove >/dev/null || return 1
+    sleep 0.6
+    # --- process leak check: no process references instance dir ---
+    local after_procs
+    after_procs=$(pgrep -f "$STATE/$leak" 2>/dev/null | wc -l)
+    [[ "$after_procs" -eq 0 ]] || { echo "process leak: $after_procs procs reference $STATE/$leak"; pgrep -af "$STATE/$leak" 2>/dev/null | head -5; return 1; }
+    # --- mount leak check: no mount references instance dir ---
+    local after_mounts
+    after_mounts=$(grep "$STATE/$leak" /proc/self/mountinfo 2>/dev/null | wc -l)
+    [[ "$after_mounts" -eq 0 ]] || { echo "mount leak: $after_mounts mounts reference $STATE/$leak"; grep "$STATE/$leak" /proc/self/mountinfo 2>/dev/null | head -5; return 1; }
+    # --- dir leak check: instance dir gone ---
+    [[ ! -d "$STATE/$leak" ]] || { echo "dir leak: $STATE/$leak still exists"; return 1; }
+    echo "MD53 OK: 0 process leak, 0 mount leak, dir gone"
+}
+
+md54() {
+    # GĐ2 mục 8 (issue #171, D69): daemon idle RSS <= 30 MB + /metrics cross-check.
+    # NOTE: $DPID may be stale after MD21 restarts the daemon inside a run_case
+    # subshell (the new PID never reaches this scope — same class as DPID3/4/5).
+    # Find the live daemon PID via the listening port instead.
+    local rss_metrics rss_proc rss_proc_bytes delta dpid
+    dpid=$(ss -tlnp 2>/dev/null | grep ":$API_PORT " | grep -o 'pid=[0-9]*' | head -1 | cut -d= -f2)
+    [[ -n "$dpid" ]] || dpid="$DPID" # fallback to original (pre-MD21) daemon
+    [[ -n "$dpid" ]] || { echo "cannot find daemon PID (ss + DPID both empty)"; return 1; }
+    # Scrape /metrics for daemon RSS (D68 exposed minictd_process_resident_memory_bytes)
+    rss_metrics=$(curl -s -m 10 -H "Authorization: Bearer $TOKEN" "$API/metrics" \
+        | awk '/^minictd_process_resident_memory_bytes /{print $2}')
+    [[ -n "$rss_metrics" ]] || { echo "no minictd_process_resident_memory_bytes in /metrics"; return 1; }
+    # Cross-check with /proc/$dpid/status VmRSS (ground truth)
+    rss_proc=$(awk '/VmRSS/{print $2}' "/proc/$dpid/status" 2>/dev/null)
+    [[ -n "$rss_proc" ]] || { echo "no VmRSS in /proc/$dpid/status (PID=$dpid)"; return 1; }
+    rss_proc_bytes=$(( rss_proc * 1024 ))
+    # /metrics and /proc should match within 64 KB (different read timing + GC)
+    delta=$(( rss_metrics - rss_proc_bytes ))
+    [[ $delta -lt 0 ]] && delta=$(( 0 - delta ))
+    [[ $delta -le 65536 ]] || { echo "RSS mismatch: /metrics=$rss_metrics /proc=$rss_proc_bytes delta=$delta (>65536)"; return 1; }
+    # Assert <= 30 MB (30 * 1024 * 1024 = 31457280 bytes)
+    [[ $rss_metrics -le 31457280 ]] || { echo "daemon RSS $rss_metrics bytes ($(( rss_metrics / 1024 )) KB) > 30 MB threshold"; return 1; }
+    echo "MD54 OK: daemon idle RSS $(( rss_metrics / 1024 )) KB (threshold 30720 KB) — /metrics == /proc (delta ${delta} bytes)"
+}
+run_case MD53 "D69 mục 8: destroy no-leak (process + mount + dir gone)" pass md53
+run_case MD54 "D69 mục 8: daemon idle RSS <= 30 MB + /metrics cross-check" pass md54
 
 echo "=== summary: PASS=$PASS SKIP=$SKIPPED FAIL=$FAIL ==="
 if [[ $FAIL -ne 0 ]]; then
