@@ -1468,13 +1468,16 @@ EOF
 )" >/dev/null || return 1
     sleep 0.6
     api GET /v1/sandboxes/$leak >/dev/null && [[ "$(jget 'd["State"]["Status"]')" == running ]] || return 1
+    # Verify the instance IS running with processes referencing the instance dir
+    # (non-vacuous: proves the after-check would catch a real leak).
+    local during_procs
+    during_procs=$(pgrep -f "$STATE/$leak" 2>/dev/null | wc -l)
+    [[ "$during_procs" -ge 1 ]] || { echo "expected >=1 process during run, got $during_procs (vacuous test)"; return 1; }
     # Note: on dev 5.10 without overlay (D66 env-gated), the daemon mountinfo
     # has NO bind mounts referencing the instance dir — rootfs is a copy
     # (copyTree), webproxy is a socket file (not a mount). Overlay mounts live
-    # in the shim's mount ns. So "during_mounts" may be 0 on dev; the leak
-    # check is the "after" state (0 stale mounts + 0 stale procs + dir gone).
-    # On CI runner (kernel 7.x + overlay D66), overlay mounts may appear in
-    # the shim ns but still not in the daemon mountinfo — same logic applies.
+    # in the shim's mount ns. So mount "during" count may be 0 on dev; the
+    # leak check is the "after" state (0 stale mounts + 0 stale procs + dir gone).
     # Stop + Remove (destroy)
     api POST /v1/sandboxes/$leak/stop >/dev/null || return 1
     sleep 0.5
