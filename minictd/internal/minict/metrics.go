@@ -30,10 +30,10 @@ type MetricsSnapshot struct {
 
 // DaemonMetrics holds daemon-level gauges.
 type DaemonMetrics struct {
-	RSSBytes       int64               // /proc/self/status VmRSS
-	InstanceStates map[string]int      // state -> count
-	Version        string              // contract.Version
-	BuildInfo      map[string]string   // extra labels (go_version, runtime)
+	RSSBytes       int64             // /proc/self/status VmRSS
+	InstanceStates map[string]int    // state -> count
+	Version        string            // contract.Version
+	BuildInfo      map[string]string // extra labels (go_version, runtime)
 }
 
 // InstanceMetrics holds per-instance gauges/counters.
@@ -188,7 +188,7 @@ func daemonRSSBytes() int64 {
 type promMetric struct {
 	name    string
 	help    string
-	mtype   string // "counter" | "gauge"
+	mtype   string       // counter | gauge
 	samples []promSample
 }
 
