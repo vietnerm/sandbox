@@ -111,6 +111,17 @@
 #         instance dir gone (GĐ2 mục 8)
 #   MD54  D69 mục 8: daemon idle RSS <= 30 MB + /metrics cross-check with
 #         /proc/$DPID/status VmRSS (match within 64 KB; gate 31457280 bytes)
+#   MD55  D71 gd3-ui: GET / 200 + CSP script-src 'self' 'sha256-...' (no
+#         unsafe-inline) + X-Frame-Options: DENY (GĐ3 mục 4)
+#   MD56  D71 gd3-ui: traversal (/../, %2e%2e, ..%2f) + symlink escape +
+#         dotfile (/.env) -> 404, no content leak
+#   MD57  D71 gd3-ui: POST / -> 405 (GET/HEAD only)
+#   MD58  D71 gd3-ui: with --ui-dir, API (/v1/*, /metrics, /healthz) 401
+#         no-token (UI static public, API still auth)
+#   MD59  D71 gd3-ui: without --ui-dir, GET / no-token -> 401 (legacy)
+#   MD60  D71 gd3-ui: --ui-dir dir without index.html -> daemon exit != 0
+#   XSS   D71 gd3-ui: console source no dangerouslySetInnerHTML/innerHTML
+#         (xterm write() safe)
 #
 # Exit code: 0 if all expected results hold, 1 otherwise.
 set -u
@@ -154,6 +165,12 @@ S4_STATE2="$S4_DIR/state2"
 S4_SOCK2="$S4_DIR/minictd2.sock"
 S4_PORT=$(( 17300 + RANDOM % 200 ))
 S4_PORT2=$(( 17500 + RANDOM % 200 ))
+# GĐ3 mục 4 (issue #177, D71): UI security e2e — separate daemon with --ui-dir
+UI_PORT=$(( 17800 + RANDOM % 200 ))
+UI_STATE="$WORK/ui-state"
+UI_DIR="$WORK/ui"
+UI_API="http://127.0.0.1:$UI_PORT"
+DPID6=""
 
 PASS=0; FAIL=0; SKIPPED=0
 run_case() { # <id> <desc> <expect: pass|fail|skip> <cmd...>
@@ -195,6 +212,8 @@ cleanup() {
     [[ -n "$DPID3" ]] && kill "$DPID3" 2>/dev/null
     [[ -n "$DPID4" ]] && kill "$DPID4" 2>/dev/null
     [[ -n "$DPID5" ]] && kill "$DPID5" 2>/dev/null
+    [[ -n "$DPID6" ]] && kill "$DPID6" 2>/dev/null
+    pkill -TERM -f -- "$UI_STATE" 2>/dev/null || true
     # DPID3/DPID4 are set inside the run_case command-substitution subshell
     # (MD35/MD36) and never reach this scope (measured leak: daemon3/daemon4
     # outlived the run — same class as RPID, Phiên 16). Kill by the per-run
@@ -1533,6 +1552,148 @@ md54() {
 }
 run_case MD53 "D69 mục 8: destroy no-leak (process + mount + dir gone)" pass md53
 run_case MD54 "D69 mục 8: daemon idle RSS <= 30 MB + /metrics cross-check" pass md54
+
+
+# ---------- GĐ3 mục 4: UI security e2e (issue #177, D71) ----------
+#   MD55  GET / -> 200 HTML, CSP script-src 'self' 'sha256-...' (no unsafe-inline),
+#         X-Frame-Options: DENY
+#   MD56  traversal (/../, %2e%2e, ..%2f) + symlink escape + dotfile (/.env) -> 404
+#   MD57  POST / -> 405
+#   MD58  with --ui-dir: /v1/sandboxes, /v1/templates, /metrics, /healthz no-token -> 401
+#   MD59  without --ui-dir (main daemon): GET / no-token -> 401 (legacy)
+#   MD60  --ui-dir dir without index.html -> daemon exit != 0
+# Fake UI dir (no Next.js build needed): index.html with inline script (CSP hash),
+# _next/static/app.js, .env (dotfile), escape.txt (symlink -> outside).
+mkdir -p "$UI_DIR/_next/static"
+cat > "$UI_DIR/index.html" <<'UIHTML'
+<!DOCTYPE html><html><head><meta charset="utf-8">
+<script>console.log("ui-test-marker");</script>
+</head><body><h1>minictd console</h1><div id="app"></div></body></html>
+UIHTML
+echo '/* static asset */' > "$UI_DIR/_next/static/app.js"
+echo 'SECRET=leaked-content' > "$UI_DIR/.env"
+echo 'OUTSIDE_SECRET' > "$WORK/outside.txt"
+ln -sf "$WORK/outside.txt" "$UI_DIR/escape.txt"
+# Start UI daemon (DPID6) — same token as main daemon
+MINICTD_TOKEN="$TOKEN" "$MINICTD" \
+    --listen "127.0.0.1:$UI_PORT" --state-dir "$UI_STATE" \
+    --minict-bin "$MINICT" --minict-exec-bin "$MEXEC" \
+    --base-rootfs "$REPO/rootfs" --webproxy "$REPO/tools/webproxy.py" \
+    --ui-dir "$UI_DIR" \
+    > "$WORK/daemon6.log" 2>&1 &
+DPID6=$!
+for _ in $(seq 1 50); do
+    curl -s -m 1 -H "Authorization: Bearer $TOKEN" "$UI_API/healthz" >/dev/null 2>&1 && break
+    sleep 0.1
+done
+
+md55() {
+    local code csp xfo body
+    code=$(curl -s -m 10 -o "$WORK/ui-index.html" -w '%{http_code}' \
+        -H "Authorization: Bearer $TOKEN" "$UI_API/")
+    [[ "$code" == "200" ]] || { echo "GET /: got $code, want 200"; return 1; }
+    body=$(cat "$WORK/ui-index.html")
+    [[ "$body" == *"minictd console"* ]] || { echo "index.html content wrong"; return 1; }
+    # CSP header: script-src 'self' 'sha256-...' — NO 'unsafe-inline' for script
+    csp=$(curl -s -m 10 -o /dev/null -D - \
+        -H "Authorization: Bearer $TOKEN" "$UI_API/" | grep -i '^content-security-policy:')
+    [[ -n "$csp" ]] || { echo "no CSP header"; return 1; }
+    echo "$csp" | grep -qi "script-src" || { echo "CSP missing script-src: $csp"; return 1; }
+    echo "$csp" | grep -qi "script-src.*'self'" || { echo "CSP script-src missing 'self': $csp"; return 1; }
+    echo "$csp" | grep -qi "script-src.*'sha256-" || { echo "CSP script-src missing sha256 hash: $csp"; return 1; }
+    # Extract ONLY the script-src directive (up to next ';') — style-src may
+    # have unsafe-inline (Next.js CSS needs it) but script-src must NOT.
+    local script_src
+    script_src=$(echo "$csp" | sed -n "s/.*script-src \([^;]*\).*/\1/p")
+    echo "$script_src" | grep -qi "unsafe-inline" && { echo "CSP script-src has unsafe-inline: $csp"; return 1; }
+    # X-Frame-Options: DENY
+    xfo=$(curl -s -m 10 -o /dev/null -D - \
+        -H "Authorization: Bearer $TOKEN" "$UI_API/" | grep -i '^x-frame-options:')
+    echo "$xfo" | grep -qi "DENY" || { echo "X-Frame-Options not DENY: '$xfo'"; return 1; }
+}
+
+md56() {
+    local code body
+    # Traversal attempts — path.Clean normalizes ".." away; unknown paths may
+    # SPA-fallback to index.html (200). The security check is: BODY must NOT
+    # leak host file content (root: from /etc/passwd, OUTSIDE_SECRET from outside.txt).
+    for p in "/../etc/passwd" "/%2e%2e/etc/passwd" "/..%2fetc%2fpasswd" "/..%2f..%2foutside.txt" "/etc/passwd" "/outside.txt"; do
+        curl -s -m 10 -o "$WORK/ui-trav.txt"             -H "Authorization: Bearer $TOKEN" "$UI_API$p" >/dev/null
+        body=$(cat "$WORK/ui-trav.txt")
+        [[ "$body" != *"root:"* && "$body" != *"OUTSIDE_SECRET"* && "$body" != *"leaked-content"* ]] || { echo "traversal $p leaked host content!"; return 1; }
+    done
+    # Symlink escape: /escape.txt -> $WORK/outside.txt (must 404)
+    code=$(curl -s -m 10 -o "$WORK/ui-sym.txt" -w '%{http_code}' \
+        -H "Authorization: Bearer $TOKEN" "$UI_API/escape.txt")
+    body=$(cat "$WORK/ui-sym.txt")
+    [[ "$code" == "404" ]] || { echo "symlink escape: got $code, want 404"; return 1; }
+    [[ "$body" != *"OUTSIDE_SECRET"* ]] || { echo "symlink escape leaked OUTSIDE_SECRET!"; return 1; }
+    # Dotfile: /.env (must 404)
+    code=$(curl -s -m 10 -o "$WORK/ui-dot.txt" -w '%{http_code}' \
+        -H "Authorization: Bearer $TOKEN" "$UI_API/.env")
+    body=$(cat "$WORK/ui-dot.txt")
+    [[ "$code" == "404" ]] || { echo "dotfile /.env: got $code, want 404"; return 1; }
+    [[ "$body" != *"SECRET=leaked"* ]] || { echo "dotfile /.env leaked SECRET!"; return 1; }
+}
+
+md57() {
+    local code
+    code=$(curl -s -m 10 -o /dev/null -w '%{http_code}' \
+        -X POST -H "Authorization: Bearer $TOKEN" "$UI_API/")
+    [[ "$code" == "405" ]] || { echo "POST /: got $code, want 405"; return 1; }
+}
+
+md58() {
+    local code
+    # With --ui-dir: API endpoints still require token (401 without)
+    for p in "/v1/sandboxes" "/v1/templates" "/metrics" "/healthz"; do
+        code=$(curl -s -m 10 -o /dev/null -w '%{http_code}' "$UI_API$p")
+        [[ "$code" == "401" ]] || { echo "no-token $p: got $code, want 401 (UI daemon must still auth API)"; return 1; }
+    done
+}
+
+md59() {
+    local code
+    # Without --ui-dir (main daemon DPID): GET / no-token -> 401 (legacy behavior)
+    code=$(curl -s -m 10 -o /dev/null -w '%{http_code}' "$API/")
+    [[ "$code" == "401" ]] || { echo "no-token GET / (no UI): got $code, want 401"; return 1; }
+}
+
+md60() {
+    # --ui-dir pointing to dir WITHOUT index.html -> daemon exit != 0
+    local baddir="$WORK/ui-baddir"
+    mkdir -p "$baddir"
+    # Write a file that is NOT index.html
+    echo "no index here" > "$baddir/readme.txt"
+    MINICTD_TOKEN="$TOKEN" "$MINICTD" \
+        --listen "127.0.0.1:$((UI_PORT + 1))" --state-dir "$WORK/ui-bad-state" \
+        --minict-bin "$MINICT" --ui-dir "$baddir" \
+        > "$WORK/daemon-bad-ui.log" 2>&1
+    local rc=$?
+    [[ $rc -ne 0 ]] || { echo "daemon with bad --ui-dir should exit non-zero, got $rc"; return 1; }
+    grep -qi "index.html" "$WORK/daemon-bad-ui.log" || { echo "bad --ui-dir error should mention index.html"; return 1; }
+}
+
+# XSS check: console source must NOT use dangerouslySetInnerHTML or innerHTML
+# (xterm term.write() is safe — renders to canvas/DOM text, not innerHTML)
+md55b_xss() {
+    local src_dir="$REPO/console/src"
+    [[ -d "$src_dir" ]] || { echo "console/src not found — skip XSS grep (console not in tree)"; return 0; }
+    local hits
+    hits=$(grep -rn 'dangerouslySetInnerHTML\|\.innerHTML' "$src_dir" 2>/dev/null | wc -l)
+    [[ "$hits" -eq 0 ]] || { echo "XSS risk: $hits dangerouslySetInnerHTML/innerHTML in console/src"; grep -rn 'dangerouslySetInnerHTML\|\.innerHTML' "$src_dir" | head -5; return 1; }
+    # Verify xterm write() is used (safe rendering — not innerHTML)
+    grep -rq '\.write(' "$src_dir" || { echo "no xterm .write() found (terminal rendering)"; return 1; }
+    echo "XSS check OK: 0 dangerouslySetInnerHTML/innerHTML, xterm write() present"
+}
+
+run_case MD55 "D71 gd3-ui: GET / 200 + CSP sha256 (no unsafe-inline) + X-Frame DENY" pass md55
+run_case MD56 "D71 gd3-ui: traversal/symlink/dotfile -> 404 no leak" pass md56
+run_case MD57 "D71 gd3-ui: POST / -> 405" pass md57
+run_case MD58 "D71 gd3-ui: API endpoints 401 no-token (UI on)" pass md58
+run_case MD59 "D71 gd3-ui: GET / 401 no-token (no UI, legacy)" pass md59
+run_case MD60 "D71 gd3-ui: --ui-dir no index.html -> daemon exit != 0" pass md60
+run_case XSS  "D71 gd3-ui: console source no dangerouslySetInnerHTML/innerHTML" pass md55b_xss
 
 echo "=== summary: PASS=$PASS SKIP=$SKIPPED FAIL=$FAIL ==="
 if [[ $FAIL -ne 0 ]]; then

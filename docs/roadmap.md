@@ -623,7 +623,11 @@
    → 2026-11-26: Go unit `internal/server/ui_test.go` (traversal/symlink/dotfile,
    405 cho ghi, API vẫn 401 khi có UI, CSP không `unsafe-inline` cho script,
    không `--ui-dir` thì `/` vẫn sau auth). Token là header Bearer, không cookie.
-   Còn thiếu: e2e MD trên daemon thật + kiểm XSS cho log/exec output.
+   → **E2e xong 2026-11-28 Phiên 35 (#177, D71)**: MD55-MD60 (GET / 200 + CSP
+     sha256 no-unsafe-inline + X-Frame DENY; traversal/symlink/dotfile no-leak;
+     POST 405; API 401 no-token UI-on; GET / 401 no-token UI-off legacy;
+     --ui-dir no index.html → exit ≠ 0) + XSS grep (0 dangerouslySetInnerHTML/
+     innerHTML, xterm write() safe).
 
 ## Giai đoạn 4 — Backend microVM Firecracker (chưa mở code)
 
