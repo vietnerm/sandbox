@@ -204,7 +204,7 @@ cleanup() {
     # probe block) — clean it too, plus any daemon left on it.
     pkill -TERM -f -- ".minictd-ovl-test" 2>/dev/null || true
     rm -rf "$HOME/.minictd-ovl-test" 2>/dev/null || true
-    for n in md-a md-b md-c md-auto md-t md-f md-oci md-oci-bad md-oci-h md-oci-r md-oci-a md-rl md-s6a md-s6b md-tpl-src md-tpl-dst md-snap-src md-snap-dst md-sec md-sec2 md-sec-dst md-pasta md-pasta-bad1 md-pasta-bad2 md-obs md-mtr md-leak md-del-src md-pty mdstack-web mdstack-db mdroll-a mddown-live; do
+    for n in md-a md-b md-c md-auto md-t md-f md-oci md-oci-bad md-oci-h md-oci-r md-oci-a md-rl md-s6a md-s6b md-tpl-src md-tpl-dst md-snap-src md-snap-dst md-sec md-sec2 md-sec-dst md-pasta md-pasta-bad1 md-pasta-bad2 md-obs md-mtr md-leak md-del-src md-pty mdstack-web mdstack-db mdroll-a mddown-live md-stub; do
         curl -s -m 5 -X POST -H "Authorization: Bearer $TOKEN" \
             "$API/v1/sandboxes/$n/remove" >/dev/null 2>&1 || true
     done
@@ -1910,6 +1910,50 @@ EOF
     echo "MD65 OK: rollback sau ready-fail + down skip-missing chỉ in removed thật"
 }
 run_case MD65 "D76 stack: ready-fail rollback + down skip-missing + removed chỉ thật" pass md65
+
+
+# ---------- #206: PTY fail-closed + ready handshake (D77) ----------
+#   MD66  (chạy mọi nơi, không cần PTY) stub minict-exec thoát ngay (exit 3,
+#         stderr "stub-pty-fail-marker") → POST /terminal KHÔNG 2xx (trước
+#         fix: 200 giả), body chứa stderr tail, daemon log có stderr_tail.
+#         PTY tốt → MD62 (sau fix host-side openpty PASS cả trên dev 5.10;
+#         nếu host khác vẫn không hỗ trợ, MD62 giữ gate SKIP).
+md66() {
+    local S6_PORT=$(( 18100 + RANDOM % 200 ))
+    local S6_API="http://127.0.0.1:$S6_PORT"
+    local S6_STATE="$WORK/s6-state"
+    local STUB="$WORK/stub-minict-exec"
+    printf '#!/bin/sh\necho stub-pty-fail-marker >&2\nexit 3\n' > "$STUB"
+    chmod +x "$STUB"
+    mkdir -p "$S6_STATE"
+    MINICTD_TOKEN="$TOKEN" "$MINICTD" \
+        --listen "127.0.0.1:$S6_PORT" --state-dir "$S6_STATE" \
+        --minict-bin "$MINICT" --minict-exec-bin "$STUB" \
+        --base-rootfs "$REPO/rootfs" \
+        > "$WORK/daemon6.log" 2>&1 &
+    local dp6=$!
+    local ok=0
+    for _ in $(seq 1 50); do
+        curl -s -m 1 -H "Authorization: Bearer $TOKEN" "$S6_API/healthz" >/dev/null 2>&1 && { ok=1; break; }
+        sleep 0.1
+    done
+    [[ "$ok" == 1 ]] || { echo "stub daemon boot: $(tail -3 "$WORK/daemon6.log")"; kill $dp6 2>/dev/null; return 1; }
+    local c
+    c=$(curl -s -m 20 -o "$WORK/resp" -w '%{http_code}' -X POST -H "Authorization: Bearer $TOKEN" \
+        -d '{"name":"md-stub","image":"base","cmd":["/bin/sh","-c","sleep 600"]}' "$S6_API/v1/run")
+    [[ "$c" == 2* ]] || { echo "run on stub daemon: $c $(cat "$WORK/resp")"; kill $dp6 2>/dev/null; return 1; }
+    sleep 0.5
+    # POST /terminal → KHÔNG 2xx (stub thoát trước ready) + stderr tail trong body
+    c=$(curl -s -m 20 -o "$WORK/resp" -w '%{http_code}' -X POST -H "Authorization: Bearer $TOKEN" \
+        "$S6_API/v1/sandboxes/md-stub/terminal")
+    kill $dp6 2>/dev/null
+    [[ "$c" != 2* ]] || { echo "terminal start must NOT succeed with a dying minict-exec"; return 1; }
+    grep -q "stub-pty-fail-marker" "$WORK/resp" || { echo "stderr tail not in error body: $(cat "$WORK/resp")"; return 1; }
+    grep -q "stderr_tail" "$WORK/daemon6.log" || { echo "daemon log missing stderr_tail"; return 1; }
+    curl -s -m 5 -X POST -H "Authorization: Bearer $TOKEN" "$S6_API/v1/sandboxes/md-stub/remove" >/dev/null 2>&1 || true
+    echo "MD66 OK: PTY dead-on-arrival → 5xx + stderr tail (log + body), không 200 giả"
+}
+run_case MD66 "D77 pty: stub-exec dies → POST /terminal 5xx + stderr tail" pass md66
 
 run_case XSS  "D71 gd3-ui: console source no dangerouslySetInnerHTML/innerHTML" pass md55b_xss
 

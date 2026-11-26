@@ -206,3 +206,43 @@ GĐ3 mục 2: terminal line-mode xong (mỗi dòng = `execv2` `/bin/sh -c`). Cò
    rỗng → exit 0 không in "removed"; down 1 có 1 thiếu → chỉ cái có bị removed.
 6. Refactor nhỏ: stackUp/Down/Ps/waitForReady nhận `contract.Runtime` (interface) —
    unit test được bằng stub runtime, không đổi wire.
+
+---
+
+# Phiên 41 — Research (issue #206, PTY fail-closed + root cause)
+
+## Nguồn 1 — docker exec TTY model: PTY cấp ở HOST, fd truyền vào container
+- URL: moby/moby daemon/exec, `libcontainer` setsid + host /dev/ptmx; man 2 setns
+  ("namespace fds are open file descriptions")
+- Tóm tắt:
+  - `docker exec -t` KHÔNG cấp PTY bên trong container: runtime cấp PTY trên
+    devpts của HOST rồi dup2 slave vào 0/1/2 của tiến trình exec. Container
+    không cần mount devpts để có terminal.
+  - fd đã mở là open file description — hợp lệ qua mọi setns() (user/mnt/pid);
+    ioctl(TIOCSWINSZ) trên master hoạt động độc lập mount namespace.
+  - /dev/ptmx host là 0666 → rootless-safe.
+- Áp dụng minict: **root cause #206 xác nhận** — rootfs alpine minirootfs
+  KHÔNG có /dev/ptmx và sandbox không mount devpts (đo 2026-11-26: rootfs/dev
+  chỉ null/random/urandom/zero) → openpty() SAU setns(mnt) ENOENT → die →
+  session chết trước frame đầu → `/stream` "not found". Fix: cấp PTY host-side
+  TRƯỚC enter_instance_ns() (D77) — MD62 từ SKIP (5.10) thành PASS.
+
+## Nguồn 2 — readiness handshake pattern cho subprocess child
+- URL: Go os/exec `Cmd.Wait` docs + passt/pasta `--fd` handshake precedent
+  (daemonic setup rồi báo ready qua fd trước khi serve)
+- Tóm tắt:
+  - Báo thành công giả xảy ra khi API trả id ngay sau Start() mà chưa biết
+    child sống: lỗi nào chết trong setup (setns/openpty/fork) chỉ lộ qua
+    stderr/stdout. Pattern chuẩn: child ghi 1 byte trạng thái vào fd riêng
+    khi setup xong (passt dùng --fd trước khi sẵn sàng serve).
+  - Daemon-side: chờ byte với deadline ngắn (2s); EOF = child chết (ghép
+    stderr tail); deadline = kill + báo lỗi. Không bao giờ 200-giả.
+- Áp dụng minict: `--status-fd 4` ghi 'R' sau fork trong run_pty; daemon
+  `waitPtyReady` chờ 2s; stderr cap 4 KB (head+tail) vào slog + error body.
+
+## Nguồn 3 — client fallback hai lớp (stream chết trước frame đầu)
+- URL: EventSource/web reconnect semantics (whatwg), SSE error semantics
+- Tóm tắt: SSE error/close trước frame data đầu = "chưa từng có dữ liệu" —
+  phải phân biệt với "stream kết thúc bình thường": cờ `gotFirstFrame`.
+- Áp dụng minict console: POST 200 + stream chết trước frame đầu → dọn sid →
+  in notice → chuyển line-mode ExecShell (không để terminal trống).

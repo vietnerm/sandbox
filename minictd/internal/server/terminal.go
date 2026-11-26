@@ -1,4 +1,4 @@
-// Package server — terminal.go (GĐ3 mục 2, issue #187).
+// Package server — terminal.go (GĐ3 mục 2, issue #187; #206 fix D77).
 //
 // PTY terminal sessions over SSE + POST, stdlib only (no WebSocket).
 // The daemon starts `minict-exec --pty` as a subprocess per session,
@@ -12,6 +12,16 @@
 // Cleanup: when the SSE client disconnects (stream read/flush error), the
 // daemon sends SIGHUP to minict-exec → child receives SIGHUP via PTY master
 // → default action terminates → reap. SIGKILL after 5s if still alive.
+//
+// #206 (D77) — no more fake success: Start captures minict-exec stderr into
+// a capped buffer (item b, slog-logged, included in the returned error),
+// waits for the child's one-byte 'R' readiness signal on a status pipe
+// (item c — setns+chdir+openpty+fork all done) for up to 2 s, and only
+// then registers the session and returns the sid. A child that dies before
+// ready (the owner-reported bug: openpty ENOENT inside the instance — no
+// /dev/ptmx, no devpts — fixed host-side in minict-exec) or misses the
+// deadline is killed, reaped, and reported as a 5xx with the stderr tail,
+// never as a 200.
 package server
 
 import (
@@ -21,6 +31,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -28,7 +39,57 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/vietnerm/sandbox/minictd/internal/minict"
 )
+
+// ptyStderrBuffer keeps the first and last ptyStderrCap bytes of the child's
+// stderr (#206 item b): early die() messages (openpty/setns reason) AND the
+// final ones, capped so a chatty child cannot balloon daemon memory.
+type ptyStderrBuffer struct {
+	head []byte
+	tail []byte
+	over bool
+	n    int // bytes consumed (for the io.Writer count)
+}
+
+const (
+	ptyStderrCap  = 4096
+	ptyStderrHalf = 2048
+)
+
+func (w *ptyStderrBuffer) Write(p []byte) (int, error) {
+	total := len(p)
+	if len(w.head) < ptyStderrHalf {
+		n := ptyStderrHalf - len(w.head)
+		if n > len(p) {
+			n = len(p)
+		}
+		w.head = append(w.head, p[:n]...)
+		p = p[n:]
+	}
+	if len(p) > 0 {
+		w.over = true
+		w.tail = append(w.tail, p...)
+		if len(w.tail) > ptyStderrHalf {
+			w.tail = w.tail[len(w.tail)-ptyStderrHalf:]
+		}
+	}
+	w.n += total
+	return total, nil
+}
+
+func (w *ptyStderrBuffer) String() string {
+	if w.over {
+		return string(w.head) + "…[truncated]…" + string(w.tail)
+	}
+	return string(w.head)
+}
+
+// ptyReadyTimeout bounds the wait for minict-exec's 'R' status byte (#206
+// item c). Long enough for the setns chain + openpty + fork on a cold host;
+// short enough that a dead-on-arrival PTY never hangs the API call.
+const ptyReadyTimeout = 2 * time.Second
 
 // terminalSession is one live PTY session.
 type terminalSession struct {
@@ -47,23 +108,59 @@ type terminalManager struct {
 	mu       sync.Mutex
 	sessions map[string]*terminalSession
 	execBin  string // path to minict-exec
+	log      *slog.Logger
 }
 
-func newTerminalManager(execBin string) *terminalManager {
+func newTerminalManager(execBin string, log *slog.Logger) *terminalManager {
 	return &terminalManager{
 		sessions: map[string]*terminalSession{},
 		execBin:  execBin,
+		log:      log,
+	}
+}
+
+// waitPtyReady blocks until the child signals readiness on statusR ('R'),
+// the child dies (EOF), or the deadline passes. Extracted for unit testing
+// (#206 item e): the outcome does not depend on which case fires.
+func waitPtyReady(statusR io.Reader, timeout time.Duration) (ready bool, timedOut bool, err error) {
+	ch := make(chan error, 1)
+	go func() {
+		b := make([]byte, 1)
+		n, rerr := statusR.Read(b)
+		if rerr != nil || n == 0 {
+			ch <- fmt.Errorf("minict-exec exited before reporting ready")
+			return
+		}
+		if b[0] != 'R' {
+			ch <- fmt.Errorf("minict-exec sent unexpected status byte %q", b[0])
+			return
+		}
+		ch <- nil
+	}()
+	select {
+	case err := <-ch:
+		return err == nil, false, err
+	case <-time.After(timeout):
+		return false, true, fmt.Errorf("timeout after %s waiting for PTY readiness", timeout)
 	}
 }
 
 // Start launches a PTY session for the given instance (name + shim pid + env-file).
-// Returns the session id.
+// Returns the session id ONLY after the child reports ready (#206 item c).
 func (tm *terminalManager) Start(name string, pid int, envFile, cwd string) (string, error) {
 	// Create the control pipe: read end goes to the child as fd 3 (--control-fd 3),
 	// write end stays with the daemon for resize.
 	controlR, controlW, err := os.Pipe()
 	if err != nil {
 		return "", fmt.Errorf("terminal: control pipe: %w", err)
+	}
+	// Status pipe (#206 item c): write end goes to the child as fd 4
+	// (--status-fd 4); the daemon reads one 'R' byte when setup is done.
+	statusR, statusW, err := os.Pipe()
+	if err != nil {
+		controlR.Close()
+		controlW.Close()
+		return "", fmt.Errorf("terminal: status pipe: %w", err)
 	}
 
 	cmd := exec.Command(tm.execBin,
@@ -72,14 +169,17 @@ func (tm *terminalManager) Start(name string, pid int, envFile, cwd string) (str
 		"--env-file", envFile,
 		"--pty",
 		"--control-fd", "3",
+		"--status-fd", "4",
 		"--", "/bin/sh",
 	)
-	cmd.ExtraFiles = []*os.File{controlR} // fd 3 in child
+	cmd.ExtraFiles = []*os.File{controlR, statusW} // fd 3, fd 4 in child
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		controlR.Close()
 		controlW.Close()
+		statusR.Close()
+		statusW.Close()
 		return "", fmt.Errorf("terminal: stdin pipe: %w", err)
 	}
 	stdout, err := cmd.StdoutPipe()
@@ -87,17 +187,49 @@ func (tm *terminalManager) Start(name string, pid int, envFile, cwd string) (str
 		stdin.Close()
 		controlR.Close()
 		controlW.Close()
+		statusR.Close()
+		statusW.Close()
 		return "", fmt.Errorf("terminal: stdout pipe: %w", err)
 	}
-	cmd.Stderr = nil // discard stderr
+	// #206 item b: capture stderr (was nil — the setns/openpty failure never
+	// reached the daemon log). Same posture as the execv2 path: the daemon's
+	// own environment is NOT inherited (R2).
+	var stderrBuf ptyStderrBuffer
+	cmd.Stderr = &stderrBuf
+	cmd.Env = minict.ExecChildEnv()
 
 	if err := cmd.Start(); err != nil {
 		stdin.Close()
 		controlR.Close()
 		controlW.Close()
+		statusR.Close()
+		statusW.Close()
 		return "", fmt.Errorf("terminal: start minict-exec: %w", err)
 	}
 	controlR.Close() // parent does not read the control pipe
+
+	// Readiness handshake (#206 item c): 'R' → register; EOF/garbage → the
+	// child died during setup (e.g. openpty/setns) → 5xx with the stderr
+	// tail; deadline → kill + 5xx. Never a 200 for a dead PTY.
+	_, timedOut, rerr := waitPtyReady(statusR, ptyReadyTimeout)
+	statusW.Close() // parent write end no longer needed in any outcome
+	if rerr != nil || timedOut {
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		waitErr := cmd.Wait()
+		statusR.Close()
+		stdin.Close()
+		tail := stderrBuf.String()
+		if tm.log != nil {
+			tm.log.Error("terminal: pty start failed",
+				"instance", name, "timed_out", timedOut,
+				"wait_err", fmt.Sprint(waitErr), "stderr_tail", tail)
+		}
+		return "", fmt.Errorf("terminal: pty failed to start (instance %s): %v — stderr: %s",
+			name, rerr, tail)
+	}
+	statusR.Close() // handshake done — parent read end closed
 
 	b := make([]byte, 8)
 	_, _ = rand.Read(b)
