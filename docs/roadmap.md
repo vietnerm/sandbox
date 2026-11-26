@@ -609,8 +609,10 @@
    `GET /v1/templates` + `GET /v1/backups`, adapter `console/src/console/minictd.ts`
    (đăng nhập token, list/inspect/stats, run với cpus/memory/pasta_ports, start/stop/
    restart/remove, save-template/snapshot, tạo lại từ `template:`/`backup:`).
-   Còn thiếu: xoá template/backup (cần API), inspect trả lại giới hạn CPU/RAM đã đặt,
-   cảnh báo quota disk trên UI, e2e trong `test_minictd.sh`.
+   → **Xong 2026-11-28 Phiên 35 (#179, D72)**: API `POST /v1/templates|backups/{name}/remove`
+     (validName + idempotent 204 + symlink-safe); `HostConfig` trong `ContainerJSON`
+     (NanoCpus/Memory/PidsLimit từ spec.json); console map resources + bật nút xoá
+     Templates (real mode) + cảnh báo quota disk từ state notes. MD61 e2e + 8 Go unit.
 2. Web terminal vào instance qua `exec` của GĐ2.
    → **Line-mode xong 2026-11-26** (mỗi dòng = `execv2` `/bin/sh -c`, giữ cwd).
    Còn thiếu: endpoint PTY (WebSocket hoặc stream hai chiều) cho vi/top/REPL.

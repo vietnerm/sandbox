@@ -39,6 +39,7 @@ export interface Sandbox {
   uptime: string;
   cpuPct: number;
   memPct: number;
+  stateNotes?: string[]; // GĐ3 mục 1: daemon notes (quota warnings, etc.)
 }
 
 export interface Perm {

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -307,6 +308,20 @@ func (s *Store) Inspect(ctx context.Context, name string) (*contract.ContainerJS
 		}
 		cj.Mounts = append(cj.Mounts, contract.Mount{Type: "tmpfs", Source: "", Destination: dst, RW: true})
 	}
+
+	// HostConfig: resource limits from spec.json (docker inspect parity,
+	// GĐ3 mục 1 issue #179). Console reads these to show allocated resources.
+	if spec.CPUs != "" {
+		if cpus, err := strconv.ParseFloat(spec.CPUs, 64); err == nil {
+			cj.HostConfig.NanoCpus = int64(cpus * 1e9)
+		}
+	}
+	if spec.Memory != "" {
+		if bytes, err := parseDockerSize(spec.Memory); err == nil {
+			cj.HostConfig.Memory = bytes
+		}
+	}
+	cj.HostConfig.PidsLimit = int64(spec.PidsLimit)
 
 	// No bridge network: loopback-only netns (D17). IPAddress stays "" and
 	// BridgeIP() returns "" — see contract.ContainerJSON.

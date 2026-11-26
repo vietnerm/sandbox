@@ -98,6 +98,7 @@ function mapSandbox(s: ApiSandbox, stats?: { cpu: number; mem: number }): Sandbo
     uptime: status === "Running" ? fmtUptime(s.created_at) : "—",
     cpuPct: status === "Running" ? Math.round(stats?.cpu ?? 0) : 0,
     memPct: status === "Running" ? Math.round(stats?.mem ?? 0) : 0,
+    stateNotes: s.state_notes,
   };
 }
 

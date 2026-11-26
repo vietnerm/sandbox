@@ -1,6 +1,7 @@
 package minict
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -78,6 +79,51 @@ func (s *Store) ListBackups() ([]Artifact, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
+}
+
+// RemoveTemplate deletes a saved template directory (<Root>/_templates/<name>/).
+// Idempotent: a missing template returns nil (docker rm parity). The name is
+// validated and the resolved path must stay under _templates/ after symlink
+// resolution — a symlink planted by another uid cannot redirect the delete
+// outside the template store (GĐ3 mục 1, issue #179).
+func (s *Store) RemoveTemplate(name string) error {
+	if err := validName(name); err != nil {
+		return err
+	}
+	base := s.templatesDir()
+	target := filepath.Join(base, name)
+	real, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // idempotent
+		}
+		return err
+	}
+	if real != base && !strings.HasPrefix(real, base+string(os.PathSeparator)) {
+		return fmt.Errorf("template %s resolves outside _templates/", name)
+	}
+	return os.RemoveAll(real)
+}
+
+// RemoveBackup deletes a snapshot archive (<Root>/_backups/<name>.tar.gz).
+// Idempotent + symlink-safe (same posture as RemoveTemplate).
+func (s *Store) RemoveBackup(name string) error {
+	if err := validName(name); err != nil {
+		return err
+	}
+	base := s.backupsDir()
+	target := filepath.Join(base, name+".tar.gz")
+	real, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // idempotent
+		}
+		return err
+	}
+	if real != base && !strings.HasPrefix(real, base+string(os.PathSeparator)) {
+		return fmt.Errorf("backup %s resolves outside _backups/", name)
+	}
+	return os.Remove(real)
 }
 
 // dirSize sums regular-file sizes under root without following symlinks

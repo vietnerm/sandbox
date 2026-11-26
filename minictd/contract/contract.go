@@ -137,6 +137,15 @@ type ContainerJSON struct {
 		IPAddress string                          `json:"IPAddress"`
 		Networks  map[string]*NetworkEndpointInfo `json:"Networks"`
 	} `json:"NetworkSettings"`
+	// HostConfig carries the resource limits set on Run (docker inspect
+	// parity). Populated from spec.json so the console can display what
+	// was allocated (GĐ3 mục 1, issue #179). Added field — old callers
+	// that do not read HostConfig are unaffected.
+	HostConfig struct {
+		NanoCpus  int64 `json:"NanoCpus"`  // spec.CPUs * 1e9 (1 CPU = 1e9 nano)
+		Memory    int64 `json:"Memory"`    // spec.Memory in bytes
+		PidsLimit int64 `json:"PidsLimit"` // spec.PidsLimit
+	} `json:"HostConfig"`
 }
 
 // BridgeIP returns the sandbox bridge IP. For minictd it is always "".
