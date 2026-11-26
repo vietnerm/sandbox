@@ -467,3 +467,108 @@ Daily-log  : journal/2026-11-26/daily-log.md
 Kế tiếp    : Track M M3 (registry template tĩnh) — M2 residuals đã xong
 Trạng thái : DAY PASS — #203 merged, SBG dọn sạch (remote chỉ main), CI xanh thật, 0 regression
 ================================
+
+## Phiên 41 — Orchestrator (ZAI, §11) — 4 issue owner-ưu tiên: #206 → #207 → #208 → #209
+
+### Pha A — Sync + chỉ thị owner
+- Pull main `b2204e5`. Owner chỉ thị: **xử lý #206, #207, #208, #209 rồi tiếp tục**.
+- SBG: remote chỉ còn `main` (Phiên 40 dọn sạch) — 0 nhánh, 0 PR mở.
+
+### Việc 1 — #206 (p1, type:bug): PTY chết ngay, API 200-giả → `feat/206-pty-failclosed` (D77, PR #210)
+- **Root cause đo được (không đoán):** rootfs alpine minirootfs KHÔNG có /dev/ptmx
+  + sandbox không mount devpts (đo `rootfs/dev`) → `openpty()` SAU setns(mnt)
+  ENOENT → session chết trước frame đầu; lỗi `setns(pid) EPERM` chạy tay = đúng
+  thiết kế (red herring — ghi decision).
+- Fix: PTY cấp **host-side TRƯỚC setns** (docker-exec-TTY model) + `--status-fd`
+  byte 'R' handshake ≤ 2s (không còn 200-giả) + stderr cap 4KB (slog + error
+  body) + `cmd.Env = ExecChildEnv()` (R2 — trước đây helper kế thừa env daemon)
+  + console fallback 2 lớp (stream chết trước frame đầu → line-mode + notice).
+- MD66 (stub exit-3 → non-2xx + marker) + 5 unit; **MD62 PASS lần đầu trên dev
+  5.10** (SKIP env-gated → PASS — xác nhận root cause); runner 67+1+0.
+- Mutants M1/M2 CAUGHT với binary mutant thật (M1 → 200 giả đúng bug owner);
+  M3 masked env-gate — bằng chứng gốc MD62 SKIP→PASS.
+- SCR/SIA PASS @ a720508 → squash `aab1a3f`; **#206 auto-close**.
+
+### Việc 2 — #207 (p3, chore): MD55/57 flake → `fix/207-port-flake` (D78, PR #211)
+- **Root cause (log attempt 1 run 45788203542):** API_PORT 17600-17899 ∩ UI_PORT
+  17800-17999 + OVL 17900-17989 ∩ UI → UI daemon EADDRINUSE exit; wait-loop
+  `curl -s` nuốt MỌI HTTP response (kể cả 404 từ daemon khác) → case curl nhầm
+  mux → `got 404` đúng signature run đỏ.
+- Fix: dải port rời tuyệt đối (API %200, OVL đổi 18300-18399, PFPORT dời khối
+  đầu) + `curl -sf` mọi healthz loop + UI daemon assert healthz + kill -0 sau
+  loop (fail loud) + **PORT0** pairwise 9 dải cố định (mutant checker caught)
+  + daemon-stub.log tách. Harness-only (0 dòng production).
+- Bài học ghi decision: khoảng random so theo BASE không theo sample (PORT0 v1
+  tự bắt lỗi của chính tôi: UI(17919-18118)×S6 overlap giả).
+- SCR/SIA PASS → squash `86929bd`; **#207 auto-close**.
+
+### Việc 3 — #208 (p2, feature): Files qua execv2 → `feat/208-files-execv2` (D79, PR #212)
+- Phương án 1 đúng roadmap: **adapter-only — `git diff main -- minictd/ sandbox/`
+  rỗng**. list = busybox stat 4 cột (%n cuối → tên TAB sống; đo thật trên
+  rootfs); read guard 1 MB → 413 (không âm thầm cắt) + decode best-effort;
+  write/upload qua stdin (Stdin []byte JSON base64 — binary-safe);
+  create/move/`rm -rf --` (chặn xoá /); reset giữ 501 trung thực.
+- **Injection-safe:** script HẰNG SỐ + path là argv operand — **MD67** e2e
+  chứng minh tên `a;$(id -u).txt` giữ nguyên (không substitution), host sống;
+  PASS dev + runner (69+1+0). 10 unit node --test (`make console-test`).
+- Conflict Makefile với #211 → B1 merge-sync (giữ 70) + SCR delta @ c32ac38 →
+  squash `1a84f91`; **#208 auto-close**. CI workflow console-test = G7 → PR
+  riêng chờ owner.
+
+### Việc 4 — #209 (p2, bug): uptime không tick + state stale → `feat/209-uptime-stale-state` (D80, PR #213)
+- Console: `startedAt` (ISO) + **startUptimeTick** — MỘT interval 1s dùng chung
+  (guard idle 0 re-render); overview/list/detail tự tick; pollLive 5s giữ CPU/RAM.
+- Daemon: heal (`alive`) ghi `FinishedAt` + note "process lost (…)" vào
+  state.json + slog `reconcile op=heal` + persist-fail log (bỏ `_ =`); Inspect
+  giữ `exited` docker parity; console detail hiện note + gợi ý `--autostart`;
+  minictd/README lifecycle rõ (sống qua daemon restart thường, KHÔNG qua
+  session-kill/reboot).
+- Go unit TestHealRecordsNoteAndFinishedAt + **MD68** e2e (kill -9 shim → note +
+  finished_at + exited + log) PASS; mutant M1 caught.
+- 2 vòng merge-sync (research.md + test_minictd + Makefile 71) → SCR/SIA PASS
+  @ a59b7bd → squash `086e61f`; **#209 auto-close**.
+
+### CVE Check
+- Kernel 5.10.134 — watchlist 9-12 CVE tracked, **0 mới** ngoài watchlist (cả 3
+  lần chạy trong phiên). NVD live-fetch timeout sandbox dev (mạng chặn) — phần
+  NVD-live dựa workflow `cve-daily` CI. Files: cve/pty-failclosed.md,
+  cve/files-execv2.md (+ m2-residuals.md từ Phiên 40).
+
+### Validation "không bị nhiễm"
+- `make test`: 10 suites 0 FAIL (chạy đầu phiên) · `make test-web`: 9/9
+- `make test-minictd`: cuối phiên **71 cases** — dev 62 PASS + 8 SKIP + 0 FAIL
+  (MD66/MD67/MD68 PASS; MD62 PASS dev; MD64 SKIP env-gated)
+- Runner CI: mọi PR xanh 6/6 check-runs; MD62/MD66/MD67 PASS trên runner
+- console: tsc + next build sạch; `make console-test` 10/10
+- Host baseline: unchanged (baseline máy Phiên 40 khớp)
+- Perf: 2.34 ms / 1200 KB / 2.05 MB (không đụng runtime hot path)
+- Bằng chứng: evidence/pty-failclosed.txt, p207-portflake.txt,
+  files-execv2.txt, uptime-stale-state.txt
+
+### Pha E — Kết phiên (SBG)
+- Remote **chỉ còn `main`**; CI main xanh thật @ `086e61f` (ci + unicode-guard).
+- Ledger 5 dòng qua PR `chore(branches): ledger 2026-11-26 Phiên 41`.
+
+## PR
+- #210 — fix PTY fail-closed (#206) — squash `aab1a3f` — CI 6/6 xanh
+- #211 — test port-flake (#207) — squash `86929bd` — CI 6/6 xanh
+- #212 — feat Files execv2 (#208) — squash `1a84f91` — CI 6/6 xanh (sau B1 sync)
+- #213 — feat uptime/stale-state (#209) — squash `086e61f` — CI 6/6 xanh (sau B1 sync ×2)
+- Merge: CÓ (cả 4; #206/#207/#208/#209 auto-close)
+
+## Kế hoạch kế tiếp
+- Owner duyệt: PR thêm `make console-test` vào workflow ci (G7 — không tự gộp).
+- Triage: #99 (MD25 negative control, p3 needs-repro), #8 (CVE tracking p2).
+- Roadmap: Track M **M3** (registry template tĩnh) đã mở — M2 trọn vẹn xong.
+
+=== SDDA REPORT — 2026-11-26 (Phiên 41) ===
+Issue xử lý : #206 (p1 PTY fail-closed) + #207 (flake) + #208 (Files execv2) + #209 (uptime/stale) — 4 issue, 4 PR, tất cả merged
+PR mở      : 0 (đã gộp: #210 aab1a3f, #211 86929bd, #212 1a84f91, #213 086e61f) — CI 6/6 xanh từng PR
+CVE check  : 9-12 CVE tracked (watchlist), 0 mới, 0 ảnh hưởng (NVD-live: CI cve-daily)
+Escape test: PASS (10 suites 0 FAIL; test-minictd 71 cases: dev 62+8+0; runner xanh từng SHA)
+Host       : unchanged
+Perf       : cold_start=2.34 ms | rss=1200 KB | disk=2.05 MB — PASS (không đụng hot path)
+Daily-log  : journal/2026-11-26/daily-log.md
+Kế tiếp    : Owner duyệt PR workflow console-test; Track M M3 (registry tĩnh); triage #99/#8
+Trạng thái : DAY PASS — 4 issue owner-ưu tiên xong trọn vòng (dev → test → SCR → SIA → merge), remote chỉ main, CI xanh thật
+================================
