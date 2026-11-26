@@ -30,6 +30,11 @@
 5. Ghi `journal/YYYY-MM-DD/daily-log.md` (quy tắc thư mục: PROMPT.MD §10)
 
 ## Đã xong
+- [x] 2026-11-27 (phiên 34, SDDA): **GĐ2 mục 8 — daemon idle RSS ≤ 30 MB gate +
+  destroy no-leak e2e (issue #171, D69)**. MD53: Run(webport) → Stop+Remove → 0 process
+  leak (pgrep) + 0 mount leak (mountinfo grep) + dir gone. MD54: daemon idle RSS
+  ≤ 30 MB (scrape /metrics + cross-check /proc VmRSS ±64 KB); dev baseline 6372 KB.
+  **GĐ2 DoD đạt → DỪNG + nhắc owner trước khi mở GĐ3** (§8 chỉ thị owner).
 - [x] 2026-11-26 (phiên 33, SDDA): **GĐ2 mục 7 — observability: log JSON + Prometheus
   metrics + /metrics endpoint (issue #168, D68)**. `--log-format text|json` (mặc định
   json, slog.NewJSONHandler + ReplaceAttr level lowercase); lifecycle events qua
@@ -575,6 +580,18 @@
    "Hướng xa" cuối file).
 8. Đo: control plane idle ≤ 30 MB RSS (**tính cả observability mục 7**); destroy không
    rò rỉ process/mount/netns.
+   → **Xong 2026-11-27 Phiên 34 (#171, D69 qua PR squash)**:
+     - **MD53 destroy no-leak**: Run(webport) → Stop + Remove → verify 0 process leak
+       (`pgrep -f $STATE/<name>` rỗng — shim/payload/webproxy/pasta đều gone) + 0 mount
+       leak (`grep $STATE/<name> /proc/self/mountinfo` rỗng — bind mounts unmounted) +
+       instance dir gone. Netns reclaim qua kernel semantics (process + mount = 0 →
+       netns tự reclaim, research nguồn 3).
+     - **MD54 daemon idle RSS ≤ 30 MB**: scrape `/metrics` `minictd_process_resident_memory_bytes`
+       (D68) + cross-check `/proc/$DPID/status` VmRSS (match ±64 KB) → assert ≤ 31457280
+       bytes (30 MB). Dev baseline 6372 KB (~6.2 MB) — biên độ dư ~24 MB (regression
+       guard, không tight constraint).
+     - Residual: netns leak test trực tiếp (process + mount đủ bao phủ); overlay/pasta
+       leak paths env-gated SKIP trên dev (PASS thật trên CI runner kernel 7.x).
 
 ## Giai đoạn 3 — Web UI + console (chưa mở code — **DỪNG + nhắc owner trước khi mở**, chỉ thị owner)
 
