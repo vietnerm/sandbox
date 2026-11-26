@@ -16,7 +16,7 @@ import {
   X,
 } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
-import { get, sse, type Sandbox as ApiSandbox } from "@/console/api";
+import { get, post, sse, type Sandbox as ApiSandbox } from "@/console/api";
 import { navigate as go } from "@/console/ui";
 import { DemoShell } from "@/lib/demo-shell";
 import { ExecShell } from "@/lib/exec-shell";
@@ -169,6 +169,8 @@ export function TerminalView({ id }: { id: string }) {
   const fitRef = useRef<import("@xterm/addon-fit").FitAddon | null>(null);
   const transcriptRef = useRef<string>("");
   const liveWsRef = useRef(false);
+  const ptySidRef = useRef<string | null>(null); // GĐ3 mục 2: PTY session id
+  const ptyCleanupRef = useRef<(() => void) | null>(null);
 
   const running = (sandbox?.status ?? "Running") === "Running";
 
@@ -259,7 +261,10 @@ export function TerminalView({ id }: { id: string }) {
 
       term.onData((d) => {
         if (liveWsRef.current && wsRef.current?.readyState === WebSocket.OPEN) wsRef.current.send(d);
-        else shellRef.current?.handleData(d);
+        else if (ptySidRef.current) {
+          // GĐ3 mục 2: PTY mode — POST input (raw text, fire-and-forget)
+          post(`/v1/sandboxes/${id}/terminal/${ptySidRef.current}/input`, d).catch(() => {});
+        } else shellRef.current?.handleData(d);
       });
       term.onResize(({ cols, rows }) => {
         setDims({ cols, rows });
@@ -270,6 +275,9 @@ export function TerminalView({ id }: { id: string }) {
           } catch {
             /* ignore */
           }
+        } else if (ptySidRef.current) {
+          // GĐ3 mục 2: PTY resize
+          post(`/v1/sandboxes/${id}/terminal/${ptySidRef.current}/resize`, { rows, cols }).catch(() => {});
         }
       });
 
@@ -319,8 +327,29 @@ export function TerminalView({ id }: { id: string }) {
         return;
       }
 
-      /* minictd: line-mode shell over execv2 (no PTY endpoint yet) */
+      /* minictd: try PTY terminal endpoint first (GĐ3 mục 2, issue #189);
+         fall back to line-mode ExecShell if the endpoint is unavailable. */
       if (!isDemo()) {
+        try {
+          const { session_id: sid } = await post<{ session_id: string }>(`/v1/sandboxes/${id}/terminal`);
+          if (sid) {
+            ptySidRef.current = sid;
+            setConn("live");
+            // SSE stream: PTY master → term.write()
+            const stop = sse(
+              `/v1/sandboxes/${id}/terminal/${sid}/stream`,
+              (data) => { try { termWrite(JSON.parse(data) as string); } catch { /* partial */ } },
+              () => { if (!disposed) setConn("closed"); },
+            );
+            ptyCleanupRef.current = stop;
+            // initial resize so the PTY knows the terminal size
+            post(`/v1/sandboxes/${id}/terminal/${sid}/resize`, { rows: term.rows, cols: term.cols }).catch(() => {});
+            return;
+          }
+        } catch {
+          /* PTY endpoint unavailable — fall through to line-mode */
+        }
+        // Fall back to line-mode (ExecShell)
         const shell = new ExecShell({ sandboxId: id, write: termWrite, onExit: () => setConn("closed") });
         shellRef.current = shell;
         shell.banner();
@@ -397,6 +426,10 @@ export function TerminalView({ id }: { id: string }) {
         /* ignore */
       }
       wsRef.current = null;
+      // GĐ3 mục 2: cleanup PTY session (abort SSE stream)
+      ptyCleanupRef.current?.();
+      ptyCleanupRef.current = null;
+      ptySidRef.current = null;
       shellRef.current = null;
       termRef.current?.dispose();
       termRef.current = null;

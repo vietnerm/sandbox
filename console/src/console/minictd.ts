@@ -90,6 +90,24 @@ async function json<T>(method: string, path: string, body?: unknown): Promise<T>
   return (text ? JSON.parse(text) : undefined) as T;
 }
 
+/* rawText sends a text/plain body (for PTY terminal input — keystrokes are
+   raw bytes, not JSON). GĐ3 mục 2 (issue #189). */
+async function rawText(method: string, path: string, body: string): Promise<void> {
+  const h: Record<string, string> = {};
+  const t = token();
+  if (t) h.Authorization = `Bearer ${t}`;
+  h["Content-Type"] = "text/plain; charset=utf-8";
+  let res: Response;
+  try {
+    res = await fetch(path, { method, headers: h, body, credentials: "omit", cache: "no-store" });
+  } catch {
+    throw new MinictdError(0, "unreachable", "minictd unreachable");
+  }
+  if (!res.ok) {
+    throw new MinictdError(res.status, res.status === 404 ? "not_found" : "error", res.statusText);
+  }
+}
+
 /* ── minictd wire shapes (minictd/contract) ───────────────────────── */
 
 interface ContainerJSON {
@@ -353,6 +371,21 @@ export async function minictdApi<T>(method: string, fullPath: string, body?: unk
       const cmd = (body as { cmd?: string[]; command?: string[] })?.cmd ?? (body as { command?: string[] })?.command ?? [];
       return r(await execv2(id, cmd));
     }
+    // GĐ3 mục 2 (issue #189): PTY terminal — start session, input, resize.
+    if (sub === "terminal" && method === "POST") {
+      return r(await json<{ session_id: string }>("POST", `${base}/terminal`));
+    }
+    if (sub.startsWith("terminal/") && method === "POST") {
+      const parts = sub.split("/");
+      if (parts.length === 3 && parts[2] === "input") {
+        // raw text body (keystrokes), NOT JSON
+        await rawText("POST", `${base}/${sub}`, String(body ?? ""));
+        return r(undefined as void);
+      }
+      if (parts.length === 3 && parts[2] === "resize") {
+        return r(await json("POST", `${base}/${sub}`, body));
+      }
+    }
     if (sub === "volumes") {
       const cj = await json<ContainerJSON>("GET", base);
       const vols: VolumeInfo[] = [
@@ -496,9 +529,61 @@ function pollStats(id: string, intervalS: number, onData: (line: string) => void
   };
 }
 
+/* followSse reads SSE `data:` frames from a streaming fetch (for PTY terminal
+   stdout). Each frame is `data: <json-string>\n\n`; the JSON string is parsed
+   and passed to onData. GĐ3 mục 2 (issue #189). */
+function followSse(path: string, onData: (data: string) => void, onEnd?: () => void): () => void {
+  const ctl = new AbortController();
+  const h: Record<string, string> = {};
+  const t = token();
+  if (t) h.Authorization = `Bearer ${t}`;
+  (async () => {
+    try {
+      const res = await fetch(path, { headers: h, credentials: "omit", cache: "no-store", signal: ctl.signal });
+      if (!res.ok || !res.body) { onEnd?.(); return; }
+      const rd = res.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      for (;;) {
+        const { value, done } = await rd.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        // SSE frames are separated by \n\n
+        let i: number;
+        while ((i = buf.indexOf("\n\n")) >= 0) {
+          const frame = buf.slice(0, i);
+          buf = buf.slice(i + 2);
+          // parse "data: <json>" lines
+          for (const line of frame.split("\n")) {
+            if (line.startsWith("data: ")) {
+              try {
+                onData(JSON.parse(line.slice(6)) as string);
+              } catch {
+                /* partial frame */
+              }
+            }
+          }
+        }
+      }
+    } catch {
+      /* aborted or stream closed */
+    } finally {
+      if (!ctl.signal.aborted) onEnd?.();
+    }
+  })();
+  return () => ctl.abort();
+}
+
 export function minictdSse(fullPath: string, onData: (line: string) => void, onEnd?: () => void): () => void {
   const [path, qs = ""] = fullPath.split("?");
   const q = new URLSearchParams(qs);
+  // GĐ3 mục 2: PTY terminal stream — /v1/sandboxes/{id}/terminal/{sid}/stream
+  const tm = path.match(/^\/v1\/sandboxes\/([^/]+)\/terminal\/([^/]+)\/stream$/);
+  if (tm) {
+    const id = decodeURIComponent(tm[1]);
+    const sid = decodeURIComponent(tm[2]);
+    return followSse(`/v1/sandboxes/${enc(id)}/terminal/${enc(sid)}/stream`, onData, onEnd);
+  }
   const m = path.match(/^\/v1\/sandboxes\/([^/]+)\/(logs|metrics\/stream)$/);
   if (!m) {
     onEnd?.();
