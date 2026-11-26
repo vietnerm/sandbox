@@ -1,0 +1,11 @@
+5.10.134-013.15.kangaroo.al8.x86_64
+21d5de2dc39f2ceb19e33f8cc124b311b57a48aea6d7703a9a98b93079d412bd  /etc/passwd
+223fe8564b60636bc738b6178d3ba9a50ef7d791266b0efae6363bb716e4c47f  /bin/bash
+a59f393bad5037644b89de64fe558ae6d5d1473c25c63022241e7c7019ad2f0c  /usr/bin/sudo
+--- listeners ---
+LISTEN 0      2048       127.0.0.1:12600      0.0.0.0:*          
+LISTEN 0      128        127.0.0.1:19001      0.0.0.0:*          
+LISTEN 0      511        127.0.0.1:12700      0.0.0.0:*          
+LISTEN 0      1024         0.0.0.0:19005      0.0.0.0:*          
+LISTEN 0      128          0.0.0.0:19006      0.0.0.0:*          
+LISTEN 0      4096               *:81               *:*          
