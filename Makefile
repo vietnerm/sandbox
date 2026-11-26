@@ -17,7 +17,7 @@ minictd:
 # only needs Node >= 20; deps pinned in console/package-lock.json and
 # installed without lifecycle scripts.
 console:
-	cd console && npm ci --ignore-scripts --no-audit --no-fund && NEXT_TELEMETRY_DISABLED=1 npx next build
+	cd console && npm ci --ignore-scripts --no-audit --no-fund && npx tsc --noEmit && NEXT_TELEMETRY_DISABLED=1 npx next build && test -f out/index.html
 
 rootfs:
 	bash sandbox/mkrootfs.sh rootfs
