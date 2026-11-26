@@ -255,3 +255,18 @@ Issue xử lý : #189 (console PTY attach)
 PR mở      : #190 squash 56fc3a5 — CI 6/6 xanh
 Trạng thái : DAY PASS — GĐ3 mục 2 hoàn tất (backend + console)
 ================================
+
+## *** GĐ3 DoD ĐẠT — DỪNG + NHẮC OWNER GĐ4 ***
+
+GĐ3 mục 1-5 tất cả xong (manifest §7 DoD giai đoạn 3):
+1. Web UI single-user: danh sách, tạo từ template, start/stop, snapshot/restore,
+   port-forward, quota. Bind 127.0.0.1 + token. ✓
+2. Web terminal: line-mode + PTY (openpty + SSE + POST input/resize). ✓
+3. Biểu đồ CPU/RAM/IO/Network: poll /stats 2s, history trình duyệt. ✓
+   (Residual optional: chuyển sang /metrics cho 1 lần gọi/instance — "nếu cần")
+4. UI tĩnh: minictd --ui-dir phục vụ console/out, không Node runtime. RSS ≤ 30 MB. ✓
+5. CI console job: make console trong CI. ✓
+
+**Per §8: Trước khi mở code GĐ4 phải dừng và hỏi owner.**
+
+GĐ4 (Firecracker microVM) cần precondition: /dev/kvm trên runner + máy đích.
