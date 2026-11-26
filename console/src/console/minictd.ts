@@ -416,6 +416,10 @@ export async function minictdApi<T>(method: string, fullPath: string, body?: unk
           mem_usage_bytes: x.stats!.mem_usage_bytes,
           mem_limit_bytes: x.stats!.mem_limit_bytes,
           pids: x.stats!.pids,
+          block_read_bytes: x.stats!.block_read_bytes,
+          block_write_bytes: x.stats!.block_write_bytes,
+          net_rx_bytes: x.stats!.net_rx_bytes,
+          net_tx_bytes: x.stats!.net_tx_bytes,
         })),
       history: [...history],
     });
