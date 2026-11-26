@@ -39,7 +39,7 @@ type Server struct {
 }
 
 func New(store *minict.Store, token string, log *slog.Logger) *Server {
-	return &Server{store: store, token: token, log: log, term: newTerminalManager(store.MinictExecBin)}
+	return &Server{store: store, token: token, log: log, term: newTerminalManager(store.MinictExecBin, log)}
 }
 
 // Handler builds the route table (Go 1.22+ method+path patterns).

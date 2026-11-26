@@ -44,7 +44,7 @@ Nhãn theo Track M M1 (manifest §9, D74): `sẵn sàng` = e2e xanh trên CI; `t
 | Landlock LSM (ro-root + fail-closed) | sẵn sàng | LL1-3 PASS CI kernel 7.x |
 | Port-forward pasta config-side | thử nghiệm | MD47-49 env-gated /dev/net/tun |
 | cgroups v2 quota (memory/cpu/pids) | thử nghiệm | CG0-5 cần sudo bootstrap CI |
-| PTY terminal (vi/top/REPL) | thử nghiệm | MD62 env-gated openpty userns |
+| PTY terminal (vi/top/REPL) | thử nghiệm | host-side PTY + ready handshake (#206 D77); MD62 PASS dev 5.10 + runner; giữ `thử nghiệm` tới khi MD62 xanh ổn định trên CI |
 | systemd `--user` unit | thử nghiệm | MD22 chỉ verify cú pháp |
 | Observability (/metrics + log JSON) | sẵn sàng | MD50-52 PASS CI |
 | Web console (Next.js xuất tĩnh) | sẵn sàng | MD55-60+XSS PASS CI |

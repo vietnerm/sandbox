@@ -642,6 +642,9 @@ static void enter_instance_ns(pid_t pid)
 static volatile sig_atomic_t g_child_pid = 0;
 static int g_pty = 0;       /* --pty: allocate a PTY for the exec child */
 static int g_control_fd = -1; /* --control-fd N: read resize (rows+cols) */
+static int g_status_fd = -1;  /* --status-fd N: write 'R' when setup is done
+                               * (#206 D77 — the daemon blocks on this byte so a
+                               * dead-on-arrival PTY is a 5xx, never a fake 200). */
 
 /* async-signal-safe forwarder (kill(2) is AS-safe per signal-safety(7)) */
 static void fwd_to_child(int sig)
@@ -685,18 +688,31 @@ static void usage(void)
 {
         fprintf(stderr,
                 "usage: minict-exec --pid <shim-pid> --cwd <abs-dir> "
-                "--env-file <file> [--no-seccomp] -- cmd [args...]\n");
+                "--env-file <file> [--no-seccomp] [--pty] [--control-fd N] "
+                "[--status-fd N] -- cmd [args...]\n");
 }
 
 /*
  * run_pty — PTY pump for --pty mode (GĐ3 mục 2, issue #187).
  *
  * Called after the setns chain + chdir + NO_NEW_PRIVS, INSTEAD of the plain
- * fork/waitpid. Opens a PTY (openpty), forks the child with the slave as
- * 0/1/2 (so the exec'd command sees a terminal), then the parent pumps:
+ * fork/waitpid. The PTY pair is opened by main() BEFORE the setns chain and
+ * passed in here (#206 D77): the instance rootfs has no /dev/ptmx and mounts
+ * no devpts, so openpty() after setns(mnt) failed ENOENT and the session
+ * died before its first frame — the owner-reported #206 bug. A host-side
+ * PTY (docker-exec-TTY model) is rootless-safe (/dev/ptmx 0666) and every
+ * fd stays valid across setns (open file descriptions).
+ *
+ * Forks the child with the slave as 0/1/2 (so the exec'd command sees a
+ * terminal), then the parent pumps:
  *   master fd -> stdout (fd 1, the daemon reads this for SSE)
  *   stdin (fd 0, the daemon writes POST input here) -> master fd
  *   control_fd (4-byte rows+cols) -> ioctl(master, TIOCSWINSZ)
+ *
+ * After the fork the parent writes one 'R' byte to the status fd (if any),
+ * then enters the pump loop. Any fatal error before that point is a die()
+ * on stderr (captured by the daemon, #206 item b) — the daemon sees EOF on
+ * the status fd and reports a 5xx with the reason instead of a fake 200.
  *
  * The child setup (PDEATHSIG, harden_fds, rlimits, capdrop, seccomp, env) is
  * shared with the plain path via a fork_pty_child() helper. When the master
@@ -706,12 +722,8 @@ static void usage(void)
 static void fork_pty_child(char **cmd, int master, int slave,
                            sigset_t *old_mask);
 
-static int run_pty(char **cmd, int control_fd)
+static int run_pty(char **cmd, int control_fd, int master, int slave)
 {
-        int master, slave;
-        if (openpty(&master, &slave, NULL, NULL, NULL) < 0)
-                die("openpty");
-
         sigset_t fwd, old;
         sigemptyset(&fwd);
         sigaddset(&fwd, SIGTERM);
@@ -735,6 +747,17 @@ static int run_pty(char **cmd, int control_fd)
         if (sigprocmask(SIG_SETMASK, &old, NULL) < 0)
                 die("sigprocmask(SIG_SETMASK)");
         drop_all_caps(); /* supervisor posture */
+
+        /* #206 D77: signal readiness — setns + chdir + openpty + fork all
+         * done, the pump is about to start. One byte, best-effort retry on
+         * EINTR; any other failure here is a daemon-side wait timeout. */
+        if (g_status_fd >= 0) {
+                char ready = 'R';
+                ssize_t w;
+                do {
+                        w = write(g_status_fd, &ready, 1);
+                } while (w < 0 && errno == EINTR);
+        }
 
         /* pump loop: select on master + stdin + control_fd */
         int alive = 1;
@@ -899,6 +922,14 @@ int main(int argc, char **argv)
                         g_no_seccomp = 1;
                 } else if (!strcmp(argv[i], "--pty")) {
                         g_pty = 1;
+                } else if (!strcmp(argv[i], "--status-fd") && i + 1 < argc) {
+                        char *end = NULL;
+                        errno = 0;
+                        g_status_fd = (int)strtol(argv[++i], &end, 10);
+                        if (errno == ERANGE || !end || *end != '\0' || g_status_fd < 0) {
+                                fprintf(stderr, "minict-exec: bad --status-fd '%s'\n", argv[i]);
+                                return 125;
+                        }
                 } else if (!strcmp(argv[i], "--control-fd") && i + 1 < argc) {
                         char *end = NULL;
                         errno = 0;
@@ -934,6 +965,19 @@ int main(int argc, char **argv)
                 return 125;
         }
 
+        /* #206 D77: allocate the PTY on the HOST devpts BEFORE the setns
+         * chain. The instance rootfs has no /dev/ptmx and mounts no devpts
+         * (mkrootfs alpine minirootfs, measured 2026-11-26), so openpty()
+         * inside the mount namespace died ENOENT and every PTY session was
+         * killed before its first frame. Host-side allocation is the
+         * docker-exec-TTY model: /dev/ptmx is 0666 (rootless-safe) and both
+         * fds stay valid across every setns (open file descriptions). */
+        int pty_master = -1, pty_slave = -1;
+        if (g_pty) {
+                if (openpty(&pty_master, &pty_slave, NULL, NULL, NULL) < 0)
+                        die("openpty");
+        }
+
         load_env_file(envfile);
         enter_instance_ns((pid_t)pid);
 
@@ -952,9 +996,10 @@ int main(int argc, char **argv)
                 die("PR_SET_NO_NEW_PRIVS");
 
         /* --pty: PTY pump path (GĐ3 mục 2, issue #187). run_pty does its
-         * own fork + signal block + waitpid, so we return here. */
+         * own fork + signal block + waitpid, so we return here. The PTY
+         * pair was opened host-side before the setns chain (#206 D77). */
         if (g_pty)
-                return run_pty(cmd, g_control_fd);
+                return run_pty(cmd, g_control_fd, pty_master, pty_slave);
 
         /* block TERM/INT around the fork so a racing signal is QUEUED and
          * forwarded once g_child_pid is set (minict.c fork-window pattern;

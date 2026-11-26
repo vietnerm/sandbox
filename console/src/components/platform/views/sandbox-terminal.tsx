@@ -328,18 +328,37 @@ export function TerminalView({ id }: { id: string }) {
       }
 
       /* minictd: try PTY terminal endpoint first (GĐ3 mục 2, issue #189);
-         fall back to line-mode ExecShell if the endpoint is unavailable. */
+         fall back to line-mode ExecShell if the endpoint is unavailable.
+         #206 (d) two-layer fallback: a 200 from POST /terminal is no longer
+         trusted on its own — if the stream errors or closes BEFORE the first
+         frame (session died between start and stream, the owner-reported
+         bug), switch to line-mode with a visible notice instead of leaving
+         a blank terminal. */
       if (!isDemo()) {
         try {
           const { session_id: sid } = await post<{ session_id: string }>(`/v1/sandboxes/${id}/terminal`);
           if (sid) {
             ptySidRef.current = sid;
             setConn("live");
-            // SSE stream: PTY master → term.write()
+            let gotFirstFrame = false;
             const stop = sse(
               `/v1/sandboxes/${id}/terminal/${sid}/stream`,
-              (data) => { try { termWrite(JSON.parse(data) as string); } catch { /* partial */ } },
-              () => { if (!disposed) setConn("closed"); },
+              (data) => { gotFirstFrame = true; try { termWrite(JSON.parse(data) as string); } catch { /* partial */ } },
+              () => {
+                if (disposed) return;
+                // session is gone either way — stop routing input to it
+                ptyCleanupRef.current = null;
+                ptySidRef.current = null;
+                if (!gotFirstFrame) {
+                  termWrite(`\x1b[33m— PTY unavailable (session died before output) — switched to line-mode —\x1b[0m\r\n`);
+                  const shell = new ExecShell({ sandboxId: id, write: termWrite, onExit: () => setConn("closed") });
+                  shellRef.current = shell;
+                  shell.banner();
+                  setConn("live");
+                  return;
+                }
+                setConn("closed");
+              },
             );
             ptyCleanupRef.current = stop;
             // initial resize so the PTY knows the terminal size

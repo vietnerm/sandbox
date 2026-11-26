@@ -830,6 +830,12 @@ func childEnv() []string {
 	return []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}
 }
 
+// ExecChildEnv is the environment for daemon-spawned exec helpers outside
+// the minict package (the server PTY terminal manager spawns
+// `minict-exec --pty`, #206 D77): same posture as childEnv — the daemon's
+// own environment (token, creds) is NEVER inherited by helpers (R2).
+func ExecChildEnv() []string { return childEnv() }
+
 // ReconcileAll proactively runs the lazy liveness check (alive) over every
 // instance dir: a state=running instance whose payload died outside a query
 // (kernel OOM-kill, payload exit, operator kill -9) is healed to stopped
