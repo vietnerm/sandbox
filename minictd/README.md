@@ -1,8 +1,8 @@
 # minictd — control-plane daemon cho minict (GĐ2 seed)
 
-> **Trạng thái (cập nhật 2026-11-20, #91/D47):** GĐ1 đã đóng cả 5 mục nền
-> (Phiên 11, #88) — GĐ2 mở theo roadmap. Seed daemon đủ 14 op; #91 thêm
-> CLI `sandbox` + systemd --user unit + `--autostart` + A3 reconcile.
+> **Trạng thái (Track M M1, 2026-11-26):** `sẵn sàng` — GĐ2 DoD đạt (Phiên 34),
+> GĐ3 DoD đạt (Phiên 37). MD0-MD61 PASS CI. Các tính năng env-gated (overlay,
+> pasta, cgroups, PTY) ghi rõ trong bảng README chính.
 
 Daemon rootless (Go, chỉ stdlib) quản lý nhiều instance minict qua HTTP API, theo
 đúng interface 14 op + `RunSpec` của control-plane sandboxd (`contract/`), để
