@@ -96,6 +96,7 @@ function mapSandbox(s: ApiSandbox, stats?: { cpu: number; mem: number }): Sandbo
     host: s.node || "local", // fleet node it runs on (sandboxd keeps container IPs internal)
     ports: s.preview?.port ? [`${s.preview.port}:${s.preview.port}`] : (s.ports ?? []).map((p) => `${p}:${p}`),
     uptime: status === "Running" ? fmtUptime(s.created_at) : "—",
+    startedAt: s.created_at || undefined,
     cpuPct: status === "Running" ? Math.round(stats?.cpu ?? 0) : 0,
     memPct: status === "Running" ? Math.round(stats?.mem ?? 0) : 0,
     stateNotes: s.state_notes,
@@ -240,6 +241,9 @@ interface PlatformState {
   refreshAll: () => Promise<void>;
   /** light poll of /v1/monitoring — keeps KPIs + charts on live values */
   pollLive: () => Promise<void>;
+  /** #209 (D80): shared 1 s timer recomputing uptime for running sandboxes
+   *  (một timer duy nhất, không mỗi row một timer); returns the timer id. */
+  startUptimeTick: () => ReturnType<typeof setInterval>;
   signOut: () => Promise<void>;
 
   setUserRole: (userId: string, role: Role) => void;
@@ -384,6 +388,19 @@ export const usePlatform = create<PlatformState>((set, get) => ({
     } catch (e) {
       set({ ready: true, error: e instanceof Error ? e.message : String(e) });
     }
+  },
+
+  startUptimeTick: () => {
+    const t = setInterval(() => {
+      const sbxs = get().sandboxes;
+      if (!sbxs.some((b) => b.status === "Running" && b.startedAt)) return;
+      set({
+        sandboxes: sbxs.map((b) =>
+          b.status === "Running" && b.startedAt ? { ...b, uptime: fmtUptime(b.startedAt) } : b,
+        ),
+      });
+    }, 1000);
+    return t;
   },
 
   pollLive: async () => {

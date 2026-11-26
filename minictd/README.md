@@ -88,6 +88,10 @@ Daemon flags mới: `--autostart` (recreate instance state=running lúc boot —
 instance operator-stopped vẫn stopped) và `--reconcile-interval N` (A3: heal
 proactive mỗi N giây; 0 = chỉ heal-lazy khi query). Payload sống qua daemon
 restart (Setsid); autostart chỉ phục vụ reboot/daemon-restart.
+**Lưu ý (#209, D80):** instance sống qua daemon restart thường, nhưng KHÔNG
+sống qua kill cả session/cgroup hay reboot — khi đó heal ghi state `stopped`
++ `note` ("process lost …") + `finished_at` vào state.json (console hiện note
+trên trang chi tiết). Muốn instance tự chạy lại lúc boot dùng `--autostart`.
 
 ## Bảo mật — điều luôn đúng
 

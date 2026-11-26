@@ -121,6 +121,12 @@ export function AppShell() {
     return () => clearInterval(t);
   }, []);
 
+  /* #209 (D80): uptime tick 1s — overview/list/detail đếm giờ realtime */
+  useEffect(() => {
+    const t = usePlatform.getState().startUptimeTick();
+    return () => clearInterval(t);
+  }, []);
+
   /* deep link /sandboxes/<id> — open the detail when the id exists
      (the store is already populated by PlatformRoot before we render) */
   useEffect(() => {

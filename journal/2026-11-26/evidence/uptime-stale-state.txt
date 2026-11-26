@@ -1,0 +1,14 @@
+=== Phiên 41 — validation uptime/stale-state (#209, D80) — 2026-11-26 10:31:27 ===
+kernel: 5.10.134-013.15.kangaroo.al8.x86_64
+
+--- make test-minictd (71 cases) ---
+MD68  D80 stale-state: kill -9 → heal note + finished_at + reconcile log PASS
+=== summary: PASS=62 SKIP=8 FAIL=0 ===
+--- go unit heal note ---
+PASS
+ok  	github.com/vietnerm/sandbox/minictd/internal/minict	(cached)
+--- console ---
+tsc: exit 0; next build: exit 0 (/tmp/next209.log)
+--- CVE: watchlist-only đã chạy (cve/files-execv2.md) — 0 mới; NVD-live: CI cve-daily
+--- host baseline ---
+UNCHANGED

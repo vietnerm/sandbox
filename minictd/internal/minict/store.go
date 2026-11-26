@@ -114,6 +114,10 @@ type InstanceState struct {
 	Exited     bool        `json:"exited,omitempty"`
 	ExitCode   int         `json:"exit_code,omitempty"` // recorded by the reaper goroutine, when known
 	KilledBy   string      `json:"killed_by,omitempty"` // "stop" | "remove" — distinguishes an operator stop
+	// FinishedAt records WHEN the payload was observed dead and the state
+	// was healed to stopped (#209, D80) — machine-readable companion of
+	// the human-readable heal note in Notes.
+	FinishedAt string `json:"finished_at,omitempty"`
 	// CgroupPath is the cgroups v2 dir enforcing this instance's
 	// resources (CG1/S2, issue #4). Empty = not enforced (notes-only
 	// fallback). Persisted so Stop/Remove/heal can clean it up even
@@ -303,6 +307,14 @@ func (s *Store) alive(st *InstanceState) *InstanceState {
 		st.State = StateStopped
 		st.PID = 0
 		st.StartTicks = 0
+		// #209 (D80): record WHY the state flipped. Previously the user
+		// saw "stopped" with no explanation after a session/cgroup kill
+		// (the instance runs Setsid so it survives a plain daemon
+		// restart — only a session/cgroup kill, OOM or reboot reaches
+		// this heal). Console shows the note on the detail page.
+		now := time.Now().UTC().Format(time.RFC3339)
+		st.FinishedAt = now
+		st.Notes = append(st.Notes, fmt.Sprintf("process lost (payload pid dead — daemon/session restart, OOM hoặc reboot) @ %s", now))
 		if !st.Exited {
 			st.Exited = true
 			st.ExitCode = 0 // cause unknown from outside; reaper refines when it saw the wait
@@ -317,7 +329,10 @@ func (s *Store) alive(st *InstanceState) *InstanceState {
 		// paths that release the instance identity: Stop (CgroupPath=“”) and
 		// Remove (dir unlink); an empty cgroup dir holds no processes and
 		// costs nothing until then.
-		_ = s.saveState(st.Name, st)
+		if err := s.saveState(st.Name, st); err != nil {
+			s.Log.Warn("minictd reconcile: persist heal failed", "instance", st.Name, "err", err.Error())
+		}
+		s.Log.Info("reconcile", "instance", st.Name, "op", "heal", "result", "stopped", "reason", "pid dead", "finished_at", now)
 	}
 	return st
 }
