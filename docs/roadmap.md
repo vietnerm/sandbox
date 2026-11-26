@@ -143,7 +143,9 @@
   deadlock `crane.Wait()` tới ctx-cancel, đo bằng goroutine dump); remote pull thật
   = opt-in `MINICTD_OCI_REMOTE_REF` (MD33, SKIP unset — flake class documented);
   residual #109: absolute symlink targets bị refuse (rootfs của repo: 271 applet
-  links `/bin/busybox` — không boot được qua `oci:`, cần quyết định maintainer);
+  links `/bin/busybox` — không boot được qua `oci:`) → **resolved D70 (owner
+  2026-11-28): giữ refusal D50 nguyên trạng, document yêu cầu relative symlinks
+  trong README, đóng #109**;
   suite cleanup leak fix (ocireg RPID mất trong subshell → pkill theo argv).
   Mutants: M1 (bỏ drain) MD34 đỏ; M2b (drop refusal errors) MD34 đỏ qua provenance
   assert; M3 (sha mismatch) exit 1 verified; measured lessons: crane export không đọc
@@ -425,7 +427,7 @@
      còn residual mục 4 là pasta config-side (khai báo port-forward trong config instance).
    - **A2** image `oci:` (crane): **e2e xong 2026-11-21 phiên 16 (#103, D51 + fix
      #108)** — crane pin v0.22.1 + registry in-memory offline; MD28–MD34; residual:
-     #109 absolute-symlink refusal (cần quyết định maintainer), remote pull opt-in
+     #109 absolute-symlink refusal (**resolved D70**: giữ refusal, document, đóng), remote pull opt-in
      MD33, rootfs cache khi images churn. (**unpack boundary hardening xong
      2026-11-21 (#104, D50)**: `tar -x` host tar trong `oci:`/`tar:` thay bằng Go
      stdlib `secureUnpack` openat O_NOFOLLOW fail-closed — MD26/MD27 + unit matrix).
