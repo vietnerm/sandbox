@@ -1,0 +1,17 @@
+{
+  "name": "demo",
+  "services": {
+    "db": {
+      "image": "base",
+      "cmd": ["/bin/sh", "-c", "sleep 600"],
+      "ready": {"type": "exec", "cmd": ["/bin/true"], "timeout_s": 10}
+    },
+    "web": {
+      "image": "base",
+      "depends_on": ["db"],
+      "pasta_ports": ["8088:8080"],
+      "cmd": ["/bin/sh", "-c", "mkdir -p /www && echo hello-from-stack > /www/index.html; httpd -f -p 8080 -h /www; sleep 600"],
+      "ready": {"type": "tcp", "port": 8088, "timeout_s": 30}
+    }
+  }
+}

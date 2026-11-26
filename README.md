@@ -50,7 +50,7 @@ Nhãn theo Track M M1 (manifest §9, D74): `sẵn sàng` = e2e xanh trên CI; `t
 | Web console (Next.js xuất tĩnh) | sẵn sàng | MD55-60+XSS PASS CI |
 | API xoá template/backup + Inspect HostConfig | sẵn sàng | MD61 PASS CI |
 | Firecracker microVM (GĐ4) | kế hoạch | scaffolding only, cần /dev/kvm |
-| `stack.yaml` (Track M M2) | kế hoạch | thiết kế sau |
+| `stack.json` multi-instance (Track M M2) | thử nghiệm | client-side `stack up|down|ps`, ready http/tcp/exec, pasta_ports (#203) |
 | Registry template tĩnh (Track M M3) | kế hoạch | thiết kế sau |
 | Cluster nhiều VPS (Track M M4) | kế hoạch | chờ owner duyệt |
 

@@ -237,3 +237,31 @@ func TestWakePortStates(t *testing.T) {
 	}
 	_ = ln.Close()
 }
+
+// #203 D76: a missing instance dir must surface as contract.ErrNotFound
+// (HTTP 404 via mapErr), not the raw stat *fs.PathError (500). The lock()
+// pre-check is the gate every Stop/Start/Remove passes through; before
+// the fix MD65 (stack down on a partially-missing stack) could not
+// distinguish "missing" from "real error" client-side.
+func TestMissingInstanceErrNotFound(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	if err := s.Stop(ctx, "ghost", 1); !errors.Is(err, contract.ErrNotFound) {
+		t.Errorf("Stop(missing): want ErrNotFound, got %v", err)
+	}
+	if err := s.Start(ctx, "ghost"); !errors.Is(err, contract.ErrNotFound) {
+		t.Errorf("Start(missing): want ErrNotFound, got %v", err)
+	}
+	// Remove stays idempotent by contract: missing = nil (204), not 404.
+	if err := s.Remove(ctx, "ghost"); err != nil {
+		t.Errorf("Remove(missing): want nil, got %v", err)
+	}
+	// Existing dir without state.json → ErrNotFound via loadState (unchanged).
+	if err := os.MkdirAll(s.dir("empty"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Stop(ctx, "empty", 1); !errors.Is(err, contract.ErrNotFound) {
+		t.Errorf("Stop(dir-no-state): want ErrNotFound, got %v", err)
+	}
+}

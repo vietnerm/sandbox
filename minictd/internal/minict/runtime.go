@@ -3,6 +3,7 @@ package minict
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -340,8 +341,8 @@ func (s *Store) Remove(ctx context.Context, name string) error {
 	start := time.Now()
 	unlock, err := s.lock(ctx, name)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
+		if os.IsNotExist(err) || errors.Is(err, contract.ErrNotFound) {
+			return nil // remove is idempotent: missing dir/state = already gone
 		}
 		return err
 	}
@@ -499,6 +500,9 @@ func (s *Store) Start(ctx context.Context, name string) error {
 	start := time.Now()
 	unlock, err := s.lock(ctx, name)
 	if err != nil {
+		if os.IsNotExist(err) || errors.Is(err, contract.ErrNotFound) {
+			return contract.ErrNotFound
+		}
 		return err
 	}
 	defer unlock()
@@ -637,6 +641,9 @@ func (s *Store) Stop(ctx context.Context, name string, timeoutSec int) error {
 	start := time.Now()
 	unlock, err := s.lock(ctx, name)
 	if err != nil {
+		if os.IsNotExist(err) || errors.Is(err, contract.ErrNotFound) {
+			return contract.ErrNotFound
+		}
 		return err
 	}
 	defer unlock()
