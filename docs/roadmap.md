@@ -655,12 +655,41 @@
    → **Xong 2026-11-26** (owner duyệt): job `console` trong `ci.yml` chạy `make console`
      (`npm ci --ignore-scripts` + `tsc --noEmit` + `next build` + kiểm `out/index.html`).
 
-## Giai đoạn 4 — Backend microVM Firecracker (chưa mở code)
+## Giai đoạn 4 — Backend microVM Firecracker (HIỆN TẠI — owner mở 2026-11-26)
+
+> GĐ3 DoD đạt (Phiên 37). Owner chỉ thị mở GĐ4 2026-11-26.
 
 0. **KIỂM TRA TRƯỚC:** `/dev/kvm` trên runner GitHub (workflow probe `ls -l /dev/kvm`)
    và máy đích. Có → mở kế hoạch chi tiết; không có → research-only, ghi rõ.
-1. Firecracker dưới user thường, cùng API/UI (`--backend minict|firecracker`).
-2. Benchmark microVM vs container cho workload web nhỏ (startup < 1 s).
+   → **Xong 2026-11-26 Phiên 38 (#191, research-only)**:
+     - Dev machine: NO `/dev/kvm` (no vmx/svm CPU flags — cloud container).
+     - GitHub runner ubuntu-24.04 standard: NO `/dev/kvm` (no nested virt — runs inside Hyper-V).
+     - → GĐ4 ở mức **research + design** cho đến khi có KVM-capable host (self-hosted runner
+       hoặc bare metal).
+     - Research 5 nguồn: Firecracker design (KVM hard req), jailer (rootless uid/gid/chroot),
+       rootfs/kernel (vmlinux + ext4 image), API (unix socket HTTP PUT), GitHub runner KVM
+       (standard = no, larger runner = yes).
+     - --backend design: `--backend minict|firecracker` flag; RunSpec.Backend field (additive);
+       firecracker path = jailer + ext4 rootfs + TAP/pasta + API socket + serial console.
+       Same API/UI, only runtime changes.
+     - File: `journal/2026-11-26/research-gd4.md`.
+1. **Firecracker backend** (code khi có KVM):
+   a. `tools/fetch-firecracker.sh` — pin+sha256 Firecracker binary + jailer (pattern D37).
+   b. `tools/fetch-vmlinux.sh` — pin+sha256 uncompressed kernel (AWS S3 CI artifacts).
+   c. `minictd/internal/firecracker/` — Go package: API socket client (unix HTTP PUT),
+      rootfs ext4 builder (mkfs.ext4 + copyTree), TAP setup (in netns), jailer spawn.
+   d. `Store.Backend` field + `--backend` flag; Run/Start/Stop/Remove branch on backend.
+   e. Serial console terminal: GET /v1/sandboxes/{name}/serial/stream (SSE from Firecracker
+      logger socket); POST /serial/{sid}/input (write to serial).
+   f. Tests: env-gated SKIP khi no /dev/kvm (pattern overlay D66 / pasta D67); PASS thật
+      trên KVM-capable host.
+   g. Budget: daemon RSS +~5 MB (management code); per-microVM Firecracker ~10-20 MB.
+2. **Benchmark** microVM vs container:
+   - cold_start_ms: minict ~2 ms vs Firecracker ~125 ms (Firecracker measured upstream).
+   - RSS: minict ~1.2 MB wrapper vs Firecracker ~10-20 MB VMM + guest memory.
+   - Isolation: Firecracker = hardware VM (stronger than container userns+seccomp).
+   - Workload web nhỏ: HTTP 200 ready time (spawn → first request).
+   - Ghi vào `docs/perf-baseline.md` bảng GĐ4.
 
 ## Giai đoạn 5 — Appliance OS (xa hơn)
 

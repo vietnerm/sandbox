@@ -220,3 +220,6 @@ có sẵn sớm), cập nhật manifest + roadmap **trước** khi code. Mỗi i
   GĐ3 (Web UI) vẫn phải dừng và hỏi owner trước khi mở code.
 - 2026-11-26: owner mở **GĐ3** và giao template Next.js cho Web UI; chốt phương án
   xuất tĩnh do `minictd --ui-dir` phục vụ (sửa dòng DoD "không framework nặng").
+- 2026-11-26: GĐ3 DoD đạt (Phiên 37); owner chỉ thị mở **GĐ4**. Precondition check
+  (Phiên 38 #191): no /dev/kvm on dev + CI standard runner → GĐ4 research-only cho
+  đến khi có KVM-capable host.
