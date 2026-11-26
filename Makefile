@@ -1,7 +1,7 @@
 # Root Makefile — entry points required by PROMPT.MD / CI.
 # The binary build itself lives in sandbox/Makefile.
 
-.PHONY: all build minictd rootfs rootfs-alpine rootfs-debian test test-escape test-escape-alpine test-seccomp test-netns test-alpine test-debian test-web test-stack test-minictd test-pasta unicode-check test-unicode test-cve-gate test-cve-kernel check-docs test-check-docs perf-check cve-check bench clean help
+.PHONY: all build minictd console rootfs rootfs-alpine rootfs-debian test test-escape test-escape-alpine test-seccomp test-netns test-alpine test-debian test-web test-stack test-minictd test-pasta unicode-check test-unicode test-cve-gate test-cve-kernel check-docs test-check-docs perf-check cve-check bench clean help
 
 all: build
 
@@ -11,6 +11,13 @@ build:
 # GĐ2 control plane: minictd daemon (Go, stdlib only) + minict-exec (setns)
 minictd:
 	$(MAKE) -C minictd all
+
+# GĐ3 web console: Next.js STATIC export -> console/out, served by
+# `minictd --ui-dir console/out` (no Node process at runtime). Build-time
+# only needs Node >= 20; deps pinned in console/package-lock.json and
+# installed without lifecycle scripts.
+console:
+	cd console && npm ci --ignore-scripts --no-audit --no-fund && NEXT_TELEMETRY_DISABLED=1 npx next build
 
 rootfs:
 	bash sandbox/mkrootfs.sh rootfs
@@ -126,6 +133,7 @@ help:
 	@echo "make test-escape-alpine - isolation suite re-run on alpine rootfs (29 cases)"
 	@echo "make test-web     - web service suite (6 cases)"
 	@echo "make minictd      - build minictd daemon + minict-exec (needs Go >= 1.23)"
+	@echo "make console      - build the GĐ3 web console (static export -> console/out; serve with minictd --ui-dir)"
 	@echo "make test-minictd - minictd e2e suite (55 cases MD0-MD54: 44 legacy + 3 overlay D66 + 3 pasta D67 + 3 observability D68 + 2 mục8 D69, env-gated)"
 	@echo "make test-seccomp - seccomp blocklist suite (20 cases)"
 	@echo "make test-netns   - netns isolation suite (7 cases)"

@@ -46,6 +46,7 @@ func main() {
 		cgRoot     = flag.String("cgroup-root", os.Getenv("MINICTD_CGROUP_ROOT"), "cgroups v2 enforcement base (CG1/S2, issue #4; default $MINICTD_CGROUP_ROOT then the daemon's own delegated cgroup; enforcement degrades to notes + rlimit when no writable v2 subtree exists)")
 		traefikDir = flag.String("traefik-dir", "", "directory for generated Traefik file-provider routes (G3, issue #97; one sandbox-<name>.yml per running instance; empty = feature off)")
 		tfDomain   = flag.String("traefik-domain", "localhost", "domain suffix for generated Traefik Host() rules (s-<name>.<domain>, G3)")
+		uiDir      = flag.String("ui-dir", "", "serve the GĐ3 static web console from this directory (console/out after `make console`) on the same listener; static files need no token, every API path still does; empty = UI off")
 		showVer    = flag.Bool("version", false, "print version and exit")
 		logFormat  = flag.String("log-format", "json", "log format: text or json (default json, GĐ2 mục 7, issue #168). JSON emits one structured line per lifecycle event with time/level/msg/instance/op/result/duration_ms/request_id")
 		metricsLn  = flag.String("metrics-listen", "", "NOT IMPLEMENTED: /metrics is served on the main --listen/--unix-socket with the same token. Any non-empty value is rejected fail-closed (exit 1) so a future loopback-only listener can be added without widening the attack surface today (GĐ2 mục 7c, issue #168)")
@@ -169,6 +170,12 @@ func main() {
 	}
 
 	srv := server.New(store, *token, log)
+	if *uiDir != "" {
+		if err := srv.SetUIDir(*uiDir); err != nil {
+			fatal(log, "%v", err)
+		}
+		log.Info("minictd: web console on", "ui_dir", *uiDir)
+	}
 	httpServer := &http.Server{
 		Addr:              *listen,
 		Handler:           srv.Handler(),

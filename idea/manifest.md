@@ -141,7 +141,7 @@ pasta egress + DNS + port-forward, web stack nginx + CGI + SQLite trong một in
 - [x] Graceful stop (issue #6), vì control plane GĐ2 cần. → pidns-1 signal shim (#21, D19).
 - [x] Perf vẫn trong ngưỡng perf-guard. → perf-check PASS trên runner mỗi PR.
 
-### Giai đoạn 2 — Control plane + storage (lõi "Proxmox nhẹ") (HIỆN TẠI từ 2026-11-23)
+### Giai đoạn 2 — Control plane + storage (lõi "Proxmox nhẹ") (từ 2026-11-23; roadmap Phiên 34 ghi DoD đạt)
 
 **Gate nghiên cứu trước khi viết code:** `exec` vào instance đang chạy rootless
 (daemon giữ caps trong userns nó tạo → `setns` từ phía daemon), phải đo được.
@@ -173,7 +173,7 @@ xong trọn vẹn.
       ngân sách RSS của mục dưới. Chi tiết + test: roadmap GĐ2 mục 7.
 - [ ] Control plane idle ≤ 30 MB RSS; destroy không rò rỉ process/mount/netns.
 
-### Giai đoạn 3 — Web UI + console
+### Giai đoạn 3 — Web UI + console (HIỆN TẠI từ 2026-11-26)
 
 **DoD giai đoạn 3:**
 - [ ] Web UI single-user: danh sách instance, tạo từ template, start/stop,
@@ -181,7 +181,9 @@ xong trọn vẹn.
 - [ ] Web terminal vào instance đang chạy (qua `exec` của GĐ2).
 - [ ] Biểu đồ CPU/RAM/IO theo instance, **dùng lại `/metrics` của GĐ2** (không thu
       thập riêng lần hai).
-- [ ] UI tĩnh, không framework nặng; tổng RSS control plane + UI vẫn ≤ 30 MB.
+- [ ] UI tĩnh (file build sẵn do `minictd` phục vụ, **không tiến trình runtime
+      riêng**); framework chỉ được dùng lúc build (owner chốt 2026-11-26: template
+      Next.js xuất tĩnh, `console/`); tổng RSS control plane + UI vẫn ≤ 30 MB.
 
 ### Giai đoạn 4 — Backend microVM (Firecracker)
 
@@ -216,3 +218,5 @@ có sẵn sớm), cập nhật manifest + roadmap **trước** khi code. Mỗi i
 - 2026-11-23: DoD GĐ1 đạt 6/6; owner chốt **GĐ2 là giai đoạn hiện tại**. Ngoại lệ
   D27 hết hiệu lực, việc GĐ2 trên `minictd/` theo thứ tự trong `docs/roadmap.md`.
   GĐ3 (Web UI) vẫn phải dừng và hỏi owner trước khi mở code.
+- 2026-11-26: owner mở **GĐ3** và giao template Next.js cho Web UI; chốt phương án
+  xuất tĩnh do `minictd --ui-dir` phục vụ (sửa dòng DoD "không framework nặng").

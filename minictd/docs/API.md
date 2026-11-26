@@ -22,6 +22,19 @@ Auth: `Authorization: Bearer <token>` — **mandatory** (token from `$MINICTD_TO
 | — | healthz | `GET /healthz` | — | `200 {"ok":"1"}` |
 | — | RawState (extra) | `GET /v1/sandboxes/{name}/state` | — | `200 InstanceState` (notes, proxy pids, exec mode) · 404 |
 | — | Wake (extra, G3 #97) | `POST /v1/sandboxes/{name}/wake` | — | `200 {"ports":{"8125":true}}` per-port TCP-ready over 127.0.0.1 · 404 · **409 not running** |
+| — | ListTemplates (GĐ3) | `GET /v1/templates` | — | `200 {"templates":[{"name","image":"template:<n>","size_bytes","created_at"}]}` |
+| — | ListBackups (GĐ3) | `GET /v1/backups` | — | `200 {"backups":[{"name","image":"backup:<n>","size_bytes","created_at"}]}` |
+
+## Web console (`--ui-dir`, GĐ3)
+
+`minictd --ui-dir console/out` serves the static console export on the same
+listener. Routing: `/v1/*`, `/metrics`, `/healthz` → API (token required, as
+before); every other path → static file (no token: build output only), GET/HEAD
+only, dotfiles and symlinks out of the UI root refused, unknown extension-less
+paths fall back to `index.html` (client-side routes). HTML responses carry a CSP
+with the sha256 of each inline `<script>`; `X-Frame-Options: DENY`,
+`nosniff`, `Referrer-Policy: no-referrer`. Without `--ui-dir`, `/` stays behind
+auth exactly as before. See `console/README.md`.
 
 Status codes: `404` = `contract.ErrNotFound`; `409` = exec on a non-running
 instance; `400` = validation; `401` = bad token; `500` = the rest.

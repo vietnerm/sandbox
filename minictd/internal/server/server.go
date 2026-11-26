@@ -34,6 +34,7 @@ type Server struct {
 	store *minict.Store
 	token string
 	log   *slog.Logger
+	uiDir string // GĐ3 static console root (SetUIDir); "" = UI off
 }
 
 func New(store *minict.Store, token string, log *slog.Logger) *Server {
@@ -64,8 +65,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/subnets", s.handleSubnets)
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("GET /metrics", s.handleMetrics) // GĐ2 mục 7c (issue #168): same token auth as /v1/*
+	// GĐ3 mục 1: read-only artifact lists for the console (#128/#130 residual)
+	mux.HandleFunc("GET /v1/templates", s.handleListTemplates)
+	mux.HandleFunc("GET /v1/backups", s.handleListBackups)
 
-	return s.auth(s.requestLog(mux))
+	api := s.auth(s.requestLog(mux))
+	if s.uiDir == "" {
+		return api
+	}
+	return s.withUI(api)
 }
 
 func (s *Server) auth(next http.Handler) http.Handler {
@@ -104,6 +112,24 @@ func (r *statusRecorder) WriteHeader(code int) {
 	}
 	r.ResponseWriter.WriteHeader(code)
 }
+
+// Flush forwards to the wrapped writer. Without it the access-log
+// middleware hid http.Flusher from streaming handlers (logs?follow=1,
+// execstream): their `w.(http.Flusher)` check failed and output sat in
+// the 4 KB response buffer until it filled (found by the GĐ3 console's
+// live-log panel, 2026-11-26).
+func (r *statusRecorder) Flush() {
+	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		if !r.wrote {
+			r.status = http.StatusOK
+			r.wrote = true
+		}
+		f.Flush()
+	}
+}
+
+// Unwrap lets http.ResponseController reach the underlying writer.
+func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
 
 func (r *statusRecorder) Write(b []byte) (int, error) {
 	if !r.wrote {
@@ -274,6 +300,24 @@ func (s *Server) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"backup": req.Backup})
+}
+
+func (s *Server) handleListTemplates(w http.ResponseWriter, r *http.Request) {
+	ts, err := s.store.ListTemplates()
+	if err != nil {
+		mapErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"templates": ts})
+}
+
+func (s *Server) handleListBackups(w http.ResponseWriter, r *http.Request) {
+	bs, err := s.store.ListBackups()
+	if err != nil {
+		mapErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"backups": bs})
 }
 
 func (s *Server) handleSaveTemplate(w http.ResponseWriter, r *http.Request) {
