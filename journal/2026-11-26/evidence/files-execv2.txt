@@ -1,0 +1,16 @@
+=== Phiên 41 — validation Files execv2 (#208, D79) — 2026-11-26 10:20:21 ===
+kernel: 5.10.134-013.15.kangaroo.al8.x86_64
+
+--- make test-minictd (70 cases) ---
+MD67  D79 files execv2: injection-safe operand argv + stdin write + list PASS
+=== summary: PASS=62 SKIP=8 FAIL=0 ===
+--- console ---
+tsc --noEmit: exit 0
+next build: exit 0 (/tmp/next208.log)
+make console-test: 10/10 PASS
+--- CVE (watchlist; NVD-live timeout sandbox) ---
+12
+0 mới ngoài watchlist
+--- host baseline ---
+UNCHANGED
+--- 0 dòng production core ---

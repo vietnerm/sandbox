@@ -246,3 +246,26 @@ GĐ3 mục 2: terminal line-mode xong (mỗi dòng = `execv2` `/bin/sh -c`). Cò
   phải phân biệt với "stream kết thúc bình thường": cờ `gotFirstFrame`.
 - Áp dụng minict console: POST 200 + stream chết trước frame đầu → dọn sid →
   in notice → chuyển line-mode ExecShell (không để terminal trống).
+
+---
+
+# Phiên 41 — Research bổ sung (issue #208, Files qua execv2)
+
+## Nguồn 1 — docker exec -i stdin semantics + busybox stat format
+- URL: docker exec docs (-i keep STDIN open) + busybox stat.c (printf-style
+  format, \t/\n escapes hỗ trợ) — đo thật trên rootfs: `stat -c "%F\t%s\t%Y\t%a\t%n"`
+  trả 4 cột TAB với file/dir/tên chứa `;` `$()` (MD67 khớp).
+- Áp dụng: list dùng stat thay vì `ls -la` (parse cột kiểu ls gãy với space);
+  %n ĐẶT CUỐI → tên chứa TAB vẫn parse được (join phần thừa); write qua stdin
+  (`cat > "$1"`, stdin base64 theo JSON []byte của Go) — không đụng giới hạn
+  argv, binary-safe.
+
+## Nguồn 2 — command injection: operand vs eval (BashFAQ/OWASP command injection)
+- URL: mywiki.wooledge.org/BashPitfalls (unquoted expansions) + OWASP CIC
+- Tóm tắt: payload shell là CONSTANT; dữ liệu người dùng đi vào `$1` (quoted
+  positional) — shell KHÔNG re-expand `$( )` bên trong giá trị biến khi
+  redirection `> "$1"`; không có eval/xargs -I. Injection chỉ xảy ra khi ghép
+  chuỗi vào script.
+- Áp dụng: mọi op files = `["/bin/sh","-c",<CONSTANT>,"sh",<path>...]`;
+  MD67 chứng minh tên độc `a;$(id -u).txt` giữ nguyên (không substitution),
+  host sống.

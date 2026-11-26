@@ -700,7 +700,7 @@ export function FileManagerView({ id }: { id: string }) {
             <span>
               {entries.length} entries · {fmtBytes(totalSize)} in files · {path}
             </span>
-            <span className="hidden sm:block">sftp://{id}.ssh.4aicoding.dev/home/sandbox · user sandbox</span>
+            <span className="hidden sm:block">execv2-backed · paths là argv operand (#208)</span>
           </div>
         </div>
       </Panel>
