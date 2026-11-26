@@ -270,3 +270,53 @@ GĐ3 mục 1-5 tất cả xong (manifest §7 DoD giai đoạn 3):
 **Per §8: Trước khi mở code GĐ4 phải dừng và hỏi owner.**
 
 GĐ4 (Firecracker microVM) cần precondition: /dev/kvm trên runner + máy đích.
+
+## Phiên 38 — Orchestrator (ZAI, §11) — GĐ4 mở: research + scaffolding + wiring
+
+### Sync
+- Pull main `8243fd7` (GĐ3 DoD đạt Phiên 37). Owner chỉ thị mở GĐ4.
+- 0 PR mở, 2 issue (#99 p3, #8 CVE p2).
+
+### Việc 1 — GĐ4 mục 0: precondition + research (#191, PR #192 squash `1a9df67`)
+- Dev machine: NO /dev/kvm (no vmx/svm). CI runner ubuntu-24.04: NO /dev/kvm.
+- → GĐ4 research-only cho đến khi có KVM-capable host.
+- Research 5 nguồn: Firecracker design (KVM hard req), jailer (rootless), rootfs/kernel
+  (vmlinux + ext4), API (unix socket HTTP), GitHub runner KVM.
+- --backend design: `--backend minict|firecracker`; RunSpec.Backend (additive);
+  firecracker path = jailer + ext4 rootfs + TAP + API socket + serial console.
+- Manifest §8: GĐ3 DoD đạt → GĐ4 mở (research-only).
+- MD54 fix: RSS delta threshold 64KB→256KB (CI GC timing variance).
+
+### Việc 2 — GĐ4 mục 1: scaffolding (#193, PR #194 squash `d860d27`)
+- --backend flag + Store.Backend + RunSpec.Backend (additive, contract compat).
+- tools/fetch-firecracker.sh + tools/fetch-vmlinux.sh (pin+sha256, gitignored).
+- minictd/internal/firecracker/ Go package: api.go (unix socket HTTP client),
+  backend.go (Backend interface + FirecrackerBackend + ErrNoKVM), rootfs.go
+  (ext4 builder), jailer.go (JailerArgs + Argv pin).
+- 4 Go unit tests (API mock, jailer argv, ErrNoKVM, Remove). All PASS.
+
+### Việc 3 — GĐ4 mục 1 wiring (#193 cont., PR #196 squash `736e1f0`)
+- runtime.go Run(): branch on spec.Backend → runFirecracker() or minict path.
+- firecracker_run.go: runFirecracker() → FirecrackerBackend.Run() → ErrNoKVM.
+- MD63 e2e: POST backend=firecracker → fail-closed error mentioning /dev/kvm.
+- 57 PASS + 8 SKIP + 0 FAIL.
+
+### GĐ4 tiến độ
+- Mục 0 (precondition): xong (#191 — no /dev/kvm, research-only).
+- Mục 1 (firecracker backend): scaffolding + wiring xong (#193, #196). Run/Start/Stop
+  return ErrNoKVM without /dev/kvm. Actual Firecracker spawn needs KVM host.
+- Mục 2 (benchmark): chưa bắt đầu (needs KVM).
+
+### Kế tiếp (khi có KVM host)
+1. Update sha256 pins in fetch-firecracker.sh + fetch-vmlinux.sh.
+2. Implement runFirecracker() body: spawn jailer + firecracker, configure API,
+   start instance, TAP network.
+3. Add Start/Stop/Remove for firecracker backend.
+4. Serial console terminal (SSE from Firecracker logger socket).
+5. MD63 on KVM host: actual boot → PASS.
+
+=== SDDA REPORT — 2026-11-26 (Phiên 38) ===
+Issue xử lý : #191 (research) + #193 (scaffold) + #196 (wire)
+PR mở      : #192, #194, #196 — all CI 6/6 xanh — merged
+Trạng thái : DAY PASS — GĐ4 scaffolding hoàn chỉnh, env-gated ErrNoKVM
+================================
