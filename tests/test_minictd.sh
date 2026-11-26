@@ -8,6 +8,7 @@
 # Cases:
 #   MD0   seccomp filter in minict-exec.c == minict.c (no drift; filters
 #         are per-thread and do not cross setns, so exec re-installs a copy)
+#   PORT0 D78 (#207): port ranges disjoint — chặn trùng dải port suite
 #   MD1   /healthz with token -> 200
 #   MD2   request without token -> 401
 #   MD3   daemon refuses to start with no token (fail-closed auth)
@@ -141,7 +142,7 @@ done
 WORK="$(mktemp -d)"
 STATE="$WORK/state"
 TOKEN="tok-$$-$RANDOM"
-API_PORT=$(( 17600 + RANDOM % 300 ))
+API_PORT=$(( 17600 + RANDOM % 200 ))  # 17600-17799 — D78: phải rời UI/OVL (xem PORT0)
 WEB_PORT=$(( 19000 + RANDOM % 900 ))
 WP_S6=$(( WEB_PORT + 50 ))
 API="http://127.0.0.1:$API_PORT"
@@ -166,7 +167,9 @@ S4_SOCK2="$S4_DIR/minictd2.sock"
 S4_PORT=$(( 17300 + RANDOM % 200 ))
 S4_PORT2=$(( 17500 + RANDOM % 200 ))
 # GĐ3 mục 4 (issue #177, D71): UI security e2e — separate daemon with --ui-dir
-UI_PORT=$(( 17800 + RANDOM % 200 ))
+UI_PORT=$(( 17800 + RANDOM % 200 ))  # 17800-17999
+OVL_PORT=$(( 18300 + RANDOM % 100 ))  # 18300-18399
+PFPORT=$(( 18800 + RANDOM % 100 ))    # 18800-18899 — MD47-49 pasta forward (FPORT != 8080: auto-forward pasta không giải thích được) — D78: trước đây 17900-17989 trùng UI_PORT → UI daemon EADDRINUSE exit, MD55/57 curl nhầm mux 404 (run 45788203542 attempt 1); PORT0 cần biến này sớm
 UI_STATE="$WORK/ui-state"
 UI_DIR="$WORK/ui"
 UI_API="http://127.0.0.1:$UI_PORT"
@@ -298,13 +301,46 @@ LEAKME="leak-$$" MINICTD_TOKEN="$TOKEN" "$MINICTD" \
     > "$WORK/daemon.log" 2>&1 &
 DPID=$!
 for _ in $(seq 1 50); do
-    curl -s -m 1 -H "Authorization: Bearer $TOKEN" "$API/healthz" >/dev/null 2>&1 && break
+    curl -sf -m 1 -H "Authorization: Bearer $TOKEN" "$API/healthz" >/dev/null 2>&1 && break  # D78: -f — chỉ 2xx mới break (404 của daemon khác trước đây lọt)
     sleep 0.1
 done
 
 run_case MD1 "/healthz with token -> 200" pass api GET /healthz
 run_case MD2 "request without token -> 401" pass \
     sh -c "[ \"\$(curl -s -o /dev/null -w '%{http_code}' $API/v1/version)\" = 401 ]"
+
+# ---------- D78 (#207): port ranges disjoint ----------
+#   PORT0  mọi dải port random của suite phải TÁCH RỜI nhau. Trước fix:
+#          API_PORT 17600-17899 ∩ UI_PORT 17800-17999 và OVL_PORT
+#          17900-17989 ∩ UI — khi trùng, daemon sau fail bind (EADDRINUSE)
+#          exit, wait-loop vẫn break (curl -s exit 0 với mọi HTTP response),
+#          các case UI curl nhầm mux của daemon khác → 404/405 sai
+#          (run 45788203542 attempt 1: MD55/MD57 FAIL, rerun cùng SHA PASS).
+#          Case này chạy mỗi lần chạy suite và chặn mọi dải mới thêm vào
+#          mà đụng dải cũ.
+port0() {
+    # interval: name min max (inclusive) — so với DÃỐ CỐ ĐỊNH (BASE..BASE+width-1),
+    # KHÔNG phải giá trị random đã rút (UI_PORT=17919 không có nghĩa dải là
+    # 17919-18118 — lần chạy trước tôi mắc đúng lỗi đó và PORT0 bắt được).
+    local -a NAMES=(REG S4 API UI S6 OVL PFPORT WPORT2 WEB)
+    local -a MINS=( 15100 17300 17600 17800 18100 18300 18800 18900 19000 )
+    local -a MAXS=( 15399 17499 17799 17999 18299 18399 18899 18999 19899 )
+    local i j bad=""
+    for i in "${!NAMES[@]}"; do
+        for j in "${!NAMES[@]}"; do
+            [[ "$j" -gt "$i" ]] || continue
+            # overlap: min_i <= max_j && min_j <= max_i
+            if [[ "${MINS[$i]}" -le "${MAXS[$j]}" && "${MINS[$j]}" -le "${MAXS[$i]}" ]]; then
+                bad+=" ${NAMES[$i]}(${MINS[$i]}-${MAXS[$i]})×${NAMES[$j]}(${MINS[$j]}-${MAXS[$j]})"
+            fi
+        done
+    done
+    # S4_PORT2 (17500-17699) bind tcp off ("tcp":"off") — không bind TCP, bỏ
+    # khỏi bảng so sánh; nếu ai bật lại tcp cho daemon4 thì phải đổi dải.
+    [[ -z "$bad" ]] || { echo "port ranges OVERLAP:$bad"; return 1; }
+}
+run_case PORT0 "D78 port ranges disjoint (md55/57 flake root cause)" pass port0
+
 
 # ---------- lifecycle + exec ----------
 RUN_A=$(cat <<EOF
@@ -502,7 +538,7 @@ md21() {
         > "$WORK/daemon2.log" 2>&1 &
     DPID=$!
     for _ in $(seq 1 50); do
-        curl -s -m 1 -H "Authorization: Bearer $TOKEN" "$API/healthz" >/dev/null 2>&1 && break
+        curl -sf -m 1 -H "Authorization: Bearer $TOKEN" "$API/healthz" >/dev/null 2>&1 && break  # D78: -f — chỉ 2xx mới break (404 của daemon khác trước đây lọt)
         sleep 0.1
     done
     st=none
@@ -1068,7 +1104,6 @@ run_case MD43 "template:md-tpl-sec carries seccomp_profile (EPERM)" pass md43
 # silent probe; tmpfs upper is a known candidate: tmpfs lacks user.* xattr
 # support before 6.13, and userxattr copy-up needs them).
 OVL_STATE="$WORK/ovlstate"
-OVL_PORT=$(( 17900 + RANDOM % 90 ))
 OVL_API="http://127.0.0.1:$OVL_PORT"
 OVL_SUPPORTED=0
 DPID5=""
@@ -1226,7 +1261,6 @@ run_case MD46 "D66 overlay: snapshot/save-template refuse, remove cleans" skip m
 # cases; `make test` fetches it in the pasta suite when run in order, but
 # test-minictd also runs standalone in CI -> fetch here, idempotent).
 PASTA_OK=0
-PFPORT=$(( 18800 + RANDOM % 100 ))
 if [[ -c /dev/net/tun ]]; then
     bash "$REPO/tools/fetch-pasta.sh" >/dev/null 2>&1 || true
     [[ -x "$REPO/tools/bin/pasta" ]] && PASTA_OK=1
@@ -1585,9 +1619,15 @@ MINICTD_TOKEN="$TOKEN" "$MINICTD" \
     > "$WORK/daemon6.log" 2>&1 &
 DPID6=$!
 for _ in $(seq 1 50); do
-    curl -s -m 1 -H "Authorization: Bearer $TOKEN" "$UI_API/healthz" >/dev/null 2>&1 && break
+    curl -sf -m 1 -H "Authorization: Bearer $TOKEN" "$UI_API/healthz" >/dev/null 2>&1 && break  # D78: -f (xem PORT0)
     sleep 0.1
 done
+# D78 (#207): wait loop trước đây break với MỌI HTTP response (kể cả 404 từ
+# một daemon khác trên port trùng) — nếu UI daemon chết lúc bind, mọi case
+# UI (MD55-58) curl nhầm mux → 404/405 sai. Assert daemon sống + healthz 200.
+curl -sf -m 2 -H "Authorization: Bearer $TOKEN" "$UI_API/healthz" >/dev/null 2>&1 \
+    || { echo "FATAL: UI daemon ($UI_PORT) không healthz 200 sau boot — log:"; tail -5 "$WORK/daemon6.log"; exit 1; }
+kill -0 "$DPID6" 2>/dev/null || { echo "FATAL: UI daemon chết sau boot — log:"; tail -5 "$WORK/daemon6.log"; exit 1; }
 
 md55() {
     local code csp xfo body
@@ -1930,14 +1970,14 @@ md66() {
         --listen "127.0.0.1:$S6_PORT" --state-dir "$S6_STATE" \
         --minict-bin "$MINICT" --minict-exec-bin "$STUB" \
         --base-rootfs "$REPO/rootfs" \
-        > "$WORK/daemon6.log" 2>&1 &
+        > "$WORK/daemon-stub.log" 2>&1 &
     local dp6=$!
     local ok=0
     for _ in $(seq 1 50); do
-        curl -s -m 1 -H "Authorization: Bearer $TOKEN" "$S6_API/healthz" >/dev/null 2>&1 && { ok=1; break; }
+        curl -sf -m 1 -H "Authorization: Bearer $TOKEN" "$S6_API/healthz" >/dev/null 2>&1 && { ok=1; break; }  # D78: -f
         sleep 0.1
     done
-    [[ "$ok" == 1 ]] || { echo "stub daemon boot: $(tail -3 "$WORK/daemon6.log")"; kill $dp6 2>/dev/null; return 1; }
+    [[ "$ok" == 1 ]] || { echo "stub daemon boot: $(tail -3 "$WORK/daemon-stub.log")"; kill $dp6 2>/dev/null; return 1; }
     local c
     c=$(curl -s -m 20 -o "$WORK/resp" -w '%{http_code}' -X POST -H "Authorization: Bearer $TOKEN" \
         -d '{"name":"md-stub","image":"base","cmd":["/bin/sh","-c","sleep 600"]}' "$S6_API/v1/run")
@@ -1949,7 +1989,7 @@ md66() {
     kill $dp6 2>/dev/null
     [[ "$c" != 2* ]] || { echo "terminal start must NOT succeed with a dying minict-exec"; return 1; }
     grep -q "stub-pty-fail-marker" "$WORK/resp" || { echo "stderr tail not in error body: $(cat "$WORK/resp")"; return 1; }
-    grep -q "stderr_tail" "$WORK/daemon6.log" || { echo "daemon log missing stderr_tail"; return 1; }
+    grep -q "stderr_tail" "$WORK/daemon-stub.log" || { echo "daemon log missing stderr_tail"; return 1; }
     curl -s -m 5 -X POST -H "Authorization: Bearer $TOKEN" "$S6_API/v1/sandboxes/md-stub/remove" >/dev/null 2>&1 || true
     echo "MD66 OK: PTY dead-on-arrival → 5xx + stderr tail (log + body), không 200 giả"
 }

@@ -1,0 +1,23 @@
+=== Phiên 41 — validation port-flake (#207, D78) — 2026-11-26 09:59:28 ===
+kernel: 5.10.134-013.15.kangaroo.al8.x86_64
+
+--- root cause (log attempt 1 run 45788203542) ---
+MD55 output: 'GET /: got 404, want 200' — UI daemon fail bind (API_PORT 17600-17899 ∩ UI_PORT 17800-17999; OVL 17900-17989 ∩ UI); wait-loop break với MỌI HTTP response (curl -s exit 0 kể cả 404) → case curl nhầm mux khác
+
+--- make test-minictd (69 cases) sau fix ---
+PORT0 D78 port ranges disjoint (md55/57 flake root cause)          PASS
+=== summary: PASS=61 SKIP=8 FAIL=0 ===
+
+--- make test (10 suites) + test-web ---
+(chạy trước PR #210 trong Phiên 41: 10 suites 0 FAIL; web 9/9 — suite chỉ đụng tests/test_minictd.sh + Makefile)
+
+--- mutant PORT0 checker (API MAXS 17799→17999) ---
+PORT0 D78 port ranges disjoint (md55/57 flake root cause)          FAIL
+
+--- host baseline ---
+UNCHANGED
+--- make test-minictd FULL sau fix (lần 2, chạy lại full) ---
+PORT0 D78 port ranges disjoint (md55/57 flake root cause)          PASS
+MD55  D71 gd3-ui: GET / 200 + CSP sha256 (no unsafe-inline) + X-Frame DENY PASS
+MD57  D71 gd3-ui: POST / -> 405                                    PASS
+=== summary: PASS=61 SKIP=8 FAIL=0 ===
