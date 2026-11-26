@@ -395,6 +395,17 @@ export function SandboxDetailView() {
             {sandbox.stateNotes.filter((n) => /quota/i.test(n)).join("; ")}
           </div>
         )}
+        {/* #209 (D80): heal note — giải thích vì sao instance stopped sau
+            session/cgroup kill (Setsid sống qua daemon restart thường) */}
+        {sandbox.status === "Stopped" &&
+          sandbox.stateNotes?.some((n) => /process lost/i.test(n)) && (
+            <div className="rounded-lg border border-gray-600/40 bg-gray-800/40 p-3 text-[11px] leading-relaxed text-gray-300">
+              <strong className="text-gray-200">Process lost:</strong>{" "}
+              {sandbox.stateNotes.filter((n) => /process lost/i.test(n)).join("; ")}
+              {" — muốn tự chạy lại dùng "}
+              <code className="rounded bg-gray-900 px-1">--autostart</code>.
+            </div>
+          )}
         <Panel className="p-6">
           <SectionTitle title="Sandbox" vi="Thông tin sandbox" />
           <div className="mt-3">

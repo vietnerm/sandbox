@@ -40,6 +40,7 @@ export interface Sandbox {
   cpuPct: number;
   memPct: number;
   stateNotes?: string[]; // GĐ3 mục 1: daemon notes (quota warnings, etc.)
+  startedAt?: string; // #209 (D80): ISO created_at — uptime tick 1s tính lại từ đây
 }
 
 export interface Perm {

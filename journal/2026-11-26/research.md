@@ -249,6 +249,27 @@ GĐ3 mục 2: terminal line-mode xong (mỗi dòng = `execv2` `/bin/sh -c`). Cò
 
 ---
 
+# Phiên 41 — Research bổ sung (issue #209, uptime + stale state)
+
+## Nguồn 1 — docker inspect State + restart policy semantics
+- URL: docker inspect (State.Status running/exited) + `--restart=unless-stopped`
+- Tóm tắt: docker báo container chết = `exited` (không phải "stopped" — API
+  mapping của console mới là chỗ dịch cho user); restart policy `unless-stopped`
+  phục vụ reboot/daemon-restart, KHÔNG phủ case kill cả cgroup/session (khi
+  nhóm tiến trình chết cùng lúc, daemon cũng chết → không ai restart được).
+- Áp dụng minict: heal (alive) ghi `note` + `finished_at` vào state.json —
+  user thấy NGUYÊN NHÂN; console detail hiện note + gợi ý `--autostart`;
+  Inspect giữ "exited" (docker parity), console map thành "stopped".
+
+## Nguồn 2 — realtime UI: một timer dùng chung vs per-row timers
+- URL: React docs (render cost) + zustand selector re-render semantics
+- Tóm tắt: N row × 1s timers = N intervals + N re-render độc lập → jitter;
+  một shared tick trong store (zustand set một lần) → một re-render/lần tick
+  cho toàn bộ view subscribe sandboxes.
+- Áp dụng console: `startUptimeTick` (1s) recompute `uptime` từ `startedAt`
+  (ISO created_at) cho running sandboxes; overview/list/detail đều đọc
+  `sandbox.uptime` → tự tick; dừng tick khi không có instance running (guard
+  `some(...)`) để idle không re-render.
 # Phiên 41 — Research bổ sung (issue #208, Files qua execv2)
 
 ## Nguồn 1 — docker exec -i stdin semantics + busybox stat format

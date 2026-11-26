@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -128,3 +129,52 @@ func TestAutostartNamesEmptyRoot(t *testing.T) {
 }
 
 // contract import guard removed: reconcile tests need no RunSpec.
+
+// #209 D80: heal phải ghi NGUYÊN NHÂN vào state (note "process lost" +
+// finished_at) — trước đây user thấy "stopped" không giải thích sau khi
+// session/cgroup kill. PID 0 → pidAlive false ngay (heal deterministically).
+func TestHealRecordsNoteAndFinishedAt(t *testing.T) {
+	s := newTestStore(t)
+	s.seedState(t, "dead", InstanceState{Name: "dead", State: StateRunning})
+	st, err := s.loadState("dead")
+	if err != nil {
+		t.Fatal(err)
+	}
+	healed := s.alive(st)
+	if healed.State != StateStopped {
+		t.Fatalf("state: %s, want stopped", healed.State)
+	}
+	if healed.FinishedAt == "" {
+		t.Fatal("finished_at trống")
+	}
+	found := false
+	for _, n := range healed.Notes {
+		if strings.Contains(n, "process lost") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("note 'process lost' thiếu: %v", healed.Notes)
+	}
+	// persisted to state.json
+	var disk InstanceState
+	b, err := os.ReadFile(filepath.Join(s.dir("dead"), fState))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(b, &disk); err != nil {
+		t.Fatal(err)
+	}
+	if disk.FinishedAt == "" {
+		t.Fatal("finished_at chưa persist")
+	}
+	found = false
+	for _, n := range disk.Notes {
+		if strings.Contains(n, "process lost") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("note chưa persist")
+	}
+}

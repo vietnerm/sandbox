@@ -207,7 +207,7 @@ cleanup() {
     # probe block) — clean it too, plus any daemon left on it.
     pkill -TERM -f -- ".minictd-ovl-test" 2>/dev/null || true
     rm -rf "$HOME/.minictd-ovl-test" 2>/dev/null || true
-    for n in md-a md-b md-c md-auto md-t md-f md-oci md-oci-bad md-oci-h md-oci-r md-oci-a md-rl md-s6a md-s6b md-tpl-src md-tpl-dst md-snap-src md-snap-dst md-sec md-sec2 md-sec-dst md-pasta md-pasta-bad1 md-pasta-bad2 md-obs md-mtr md-leak md-del-src md-pty mdstack-web mdstack-db mdroll-a mddown-live md-stub md-files; do
+    for n in md-a md-b md-c md-auto md-t md-f md-oci md-oci-bad md-oci-h md-oci-r md-oci-a md-rl md-s6a md-s6b md-tpl-src md-tpl-dst md-snap-src md-snap-dst md-sec md-sec2 md-sec-dst md-pasta md-pasta-bad1 md-pasta-bad2 md-obs md-mtr md-leak md-del-src md-pty mdstack-web mdstack-db mdroll-a mddown-live md-stub md-files md-uptime; do
         curl -s -m 5 -X POST -H "Authorization: Bearer $TOKEN" \
             "$API/v1/sandboxes/$n/remove" >/dev/null 2>&1 || true
     done
@@ -2037,6 +2037,31 @@ md67() {
     echo "MD67 OK: operand argv an toàn (tên độc giữ nguyên), stdin write, list 4 cột"
 }
 run_case MD67 "D79 files execv2: injection-safe operand argv + stdin write + list" pass md67
+
+# ---------- #209: uptime tick + stale-state heal note (D80) ----------
+#   MD68  (chạy mọi nơi) kill -9 shim → heal ghi state stopped + note
+#         "process lost" + finished_at vào state.json; GET /state trả đủ;
+#         Inspect stopped; daemon log có sự kiện reconcile (op=heal).
+md68() {
+    local u="md-uptime"
+    api POST /v1/sandboxes/$u/remove >/dev/null 2>&1 || true
+    api POST /v1/run '{"name":"md-uptime","image":"base","cmd":["/bin/sh","-c","sleep 600"]}' >/dev/null || return 1
+    sleep 0.5
+    local shim
+    shim=$(python3 -c "import json;print(json.load(open('$STATE/md-uptime/state.json')).get('pid', 0))")
+    [[ "$shim" -gt 0 ]] || { echo "no shim pid"; return 1; }
+    kill -9 "$shim" 2>/dev/null || { echo "cannot kill shim $shim"; return 1; }
+    sleep 0.5
+    api GET /v1/sandboxes/$u/state >/dev/null || return 1
+    [[ "$(jget 'd["state"]')" == "stopped" ]] || { echo "state: $(jget 'd["state"]')"; return 1; }
+    python3 -I -c "import json; d=json.load(open('$WORK/resp')); assert any('process lost' in n for n in d.get('notes', [])), d.get('notes'); assert d.get('finished_at'), 'finished_at trống'" \
+        || { echo "note/finished_at thiếu: $(head -c 200 "$WORK/resp")"; return 1; }
+    api GET /v1/sandboxes/$u >/dev/null && [[ "$(jget 'd["State"]["Status"]')" == exited ]] || { echo "inspect not exited"; return 1; }
+    grep -q '"op":"heal"' "$WORK/daemon.log" || { echo "daemon log thiếu reconcile heal event"; return 1; }
+    api POST /v1/sandboxes/$u/remove >/dev/null 2>&1 || true
+    echo "MD68 OK: heal ghi note + finished_at + state stopped + reconcile log"
+}
+run_case MD68 "D80 stale-state: kill -9 → heal note + finished_at + reconcile log" pass md68
 
 run_case XSS  "D71 gd3-ui: console source no dangerouslySetInnerHTML/innerHTML" pass md55b_xss
 
