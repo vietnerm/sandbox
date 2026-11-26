@@ -618,7 +618,10 @@
    Còn thiếu: endpoint PTY (WebSocket hoặc stream hai chiều) cho vi/top/REPL.
    → **Research xong 2026-11-26 Phiên 35 (#181)**: chọn (B) openpty sau setns trong
      `minict-exec` + 2 kênh SSE (stdout) + POST (stdin/resize), stdlib only, < 1 MB RSS/phiên.
-     **Code: chờ owner duyệt kế hoạch #181** — khi owner chưa duyệt, làm mục 3 trước.
+     **Owner duyệt kế hoạch (B) 2026-11-26** → việc kế tiếp: code theo #181 (PTY trong
+     `minict-exec`, endpoint SSE + POST stdin/resize trong `minictd`, console dùng xterm
+     thật thay line-mode khi endpoint có), MD e2e (vi/top chạy được, đóng phiên dọn PTY),
+     giữ ngân sách RSS. Làm sau mục 3 nếu mục 3 đang dở.
 3. Biểu đồ CPU/RAM/IO theo instance: UI scrape `/metrics` của GĐ2 mục 7 (cùng token,
    qua 127.0.0.1), giữ lịch sử ngắn phía trình duyệt; không thêm collector trong daemon.
    → 2026-11-26: biểu đồ CPU/RAM dùng `GET /{name}/stats` (cùng nguồn cgroup với
@@ -637,7 +640,9 @@
      --ui-dir no index.html → exit ≠ 0) + XSS grep (0 dangerouslySetInnerHTML/
      innerHTML, xterm write() safe).
 5. CI build console: thêm bước `make console` (tsc + next build) vào CI để PR làm hỏng
-   console bị chặn. **Chạm `.github/workflows` → PR riêng, gắn `needs-human`, không tự gộp (G7).**
+   console bị chặn.
+   → **Xong 2026-11-26** (owner duyệt): job `console` trong `ci.yml` chạy `make console`
+     (`npm ci --ignore-scripts` + `tsc --noEmit` + `next build` + kiểm `out/index.html`).
 
 ## Giai đoạn 4 — Backend microVM Firecracker (chưa mở code)
 

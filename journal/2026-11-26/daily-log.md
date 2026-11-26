@@ -189,3 +189,8 @@ Bối cảnh: owner mở GĐ3 (PR #176, console xuất tĩnh do `minictd --ui-di
 
 ### Ghi chú khác
 - `decisions/issue-109-symlink.md` (D70, #109): giữ từ chối symlink tuyệt đối của D50, ghi rõ yêu cầu symlink tương đối (PR #175).
+
+## Owner duyệt (11:45 ICT)
+
+- Owner duyệt kế hoạch PTY (B) của #181 → roadmap GĐ3 mục 2: code PTY là việc kế tiếp của ZAI (sau mục 3 nếu đang dở).
+- Owner duyệt GĐ3 mục 5: job `console` trong `ci.yml` chạy `make console` (`npm ci --ignore-scripts` + `tsc --noEmit` + `next build`).

@@ -73,3 +73,18 @@ jobs:
           name: test-evidence
           path: ci-evidence/*.txt
           if-no-files-found: ignore
+
+  # GĐ3 mục 5: the web console (console/, Next.js static export served by
+  # `minictd --ui-dir`) must keep type-checking and building, so a PR that
+  # breaks it is blocked. Separate job: no userns/rootfs needed, runs in
+  # parallel. `npm ci --ignore-scripts` = no dependency install scripts.
+  console:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: make console (npm ci + tsc --noEmit + next build -> console/out)
+        run: make console
