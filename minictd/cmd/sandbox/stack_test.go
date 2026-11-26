@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/vietnerm/sandbox/minictd/contract"
 )
@@ -250,6 +251,7 @@ type stubRuntime struct {
 	ran          []string
 	stopped      []string
 	removed      []string
+	lastSpec     contract.RunSpec
 }
 
 func (s *stubRuntime) Run(ctx context.Context, spec contract.RunSpec) (string, error) {
@@ -257,6 +259,7 @@ func (s *stubRuntime) Run(ctx context.Context, spec contract.RunSpec) (string, e
 		return "", s.runErr
 	}
 	s.ran = append(s.ran, spec.Name)
+	s.lastSpec = spec
 	return "id-" + spec.Name, nil
 }
 func (s *stubRuntime) Inspect(ctx context.Context, name string) (*contract.ContainerJSON, error) {
@@ -354,5 +357,61 @@ func TestStackDownStopErrorNoRemove(t *testing.T) {
 	}
 	if len(rt.removed) != 0 {
 		t.Errorf("must NOT remove an instance whose Stop failed: removed=%v", rt.removed)
+	}
+}
+
+func TestWaitForReadyHTTPHangServer(t *testing.T) {
+	// Listener accepts but NEVER responds: with http.Get (DefaultClient,
+	// no timeout) the first attempt would block forever inside the poll
+	// loop — go test timeout fails the mutant. With the per-attempt client
+	// timeout (#203 f) the overall deadline wins in ~3s.
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			func() { // hold the connection open, never write
+				defer c.Close()
+				time.Sleep(30 * time.Second)
+			}()
+		}
+	}()
+	defer l.Close()
+	port := l.Addr().(*net.TCPAddr).Port
+	start := time.Now()
+	err = waitForReady(context.Background(), &stubRuntime{}, "inst", &ReadyDef{Type: "http", Port: port, TimeoutS: 2})
+	el := time.Since(start)
+	if err == nil || !strings.Contains(err.Error(), "timeout after 2s") {
+		t.Fatalf("want timeout after 2s, got %v", err)
+	}
+	if el > 8*time.Second {
+		t.Fatalf("per-attempt timeout missing: took %v (http.Get without client timeout hangs)", el)
+	}
+}
+
+func TestStackUpMapsPastaPortsAndPids(t *testing.T) {
+	rt := &stubRuntime{}
+	sf := &StackFile{Name: "st", Services: map[string]ServiceDef{
+		"web": {Image: "base", PastaPorts: []string{"8080:80"}, PidsLimit: 512},
+	}}
+	if err := stackUp(context.Background(), rt, sf); err != nil {
+		t.Fatalf("stackUp: %v", err)
+	}
+	if len(rt.ran) != 1 || rt.ran[0] != "st-web" {
+		t.Fatalf("ran: %v", rt.ran)
+	}
+	if len(rt.lastSpec.PastaPorts) != 1 || rt.lastSpec.PastaPorts[0] != "8080:80" {
+		t.Errorf("PastaPorts not mapped to RunSpec: %v", rt.lastSpec.PastaPorts)
+	}
+	if rt.lastSpec.PidsLimit != 512 {
+		t.Errorf("PidsLimit not mapped: %d", rt.lastSpec.PidsLimit)
 	}
 }
