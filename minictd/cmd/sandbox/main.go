@@ -255,6 +255,34 @@ loop:
 		}
 		return emitJSON(map[string]string{"version": v})
 
+	case "stack":
+		if len(rest) < 1 {
+			return errUsage("stack requires up|down|ps")
+		}
+		sub := rest[0]
+		file := "stack.json"
+		if len(rest) > 1 {
+			for i := 1; i < len(rest); i++ {
+				if rest[i] == "--file" && i+1 < len(rest) {
+					file = rest[i+1]
+				}
+			}
+		}
+		sf, err := parseStack(file)
+		if err != nil {
+			return err
+		}
+		switch sub {
+		case "up":
+			return stackUp(ctx, rt, sf)
+		case "down":
+			return stackDown(ctx, rt, sf)
+		case "ps":
+			return stackPs(ctx, rt, sf)
+		default:
+			return errUsage("stack %q — want up|down|ps", sub)
+		}
+
 	default:
 		return errUsage("unknown command %q — %s", cmd, usage)
 	}
