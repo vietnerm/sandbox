@@ -61,6 +61,10 @@ type Store struct {
 	// (GĐ2 mục 4, issue #165, D67); empty falls back to beside-binary
 	// then PATH resolution, all fail-closed at spawn time.
 	PastaBin string
+	// Backend selects the runtime backend (GĐ4, issue #193).
+	// "minict" (default) = container userns+seccomp; "firecracker" = microVM.
+	// Empty = "minict". The firecracker backend returns ErrNoKVM without /dev/kvm.
+	Backend string
 	// cg is the lazily-resolved cgroup manager (CG1). Guarded by cgMu
 	// because Run/Start can run concurrently for different instances.
 	cg   *cgroupManager

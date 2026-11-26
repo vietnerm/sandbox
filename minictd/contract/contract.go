@@ -85,6 +85,11 @@ type RunSpec struct {
 	// runs automatically. Trusted workloads only (manifest §3).
 	SeccompProfile string `json:"seccomp_profile,omitempty"` // --seccomp-profile
 
+	// Backend selects the runtime backend (GĐ4, issue #193).
+	// "" = "minict" (default, container); "firecracker" = microVM.
+	// Additive field — old callers that do not set it get "minict".
+	Backend string `json:"backend,omitempty"`
+
 	// PastaPorts declares per-instance host→namespace port forwards
 	// served by pasta (passt project) attached to the sandbox netns by
 	// the daemon (GĐ2 mục 4, issue #165, D67). Entry grammar — "tcp"
