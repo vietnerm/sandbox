@@ -211,12 +211,18 @@ func (s *Store) loadSpec(name string) (*contract.RunSpec, error) {
 // fix for the flat-file TOCTOU window in the PoC state dir: every mutating
 // op holds it for the whole critical section. Best-effort 10s deadline.
 // The instance dir must already exist (Stop/Start/Remove treat a missing
-// dir as not-found); Run uses lockCreate.
+// dir as not-found); Run uses lockCreate. A missing dir maps to
+// contract.ErrNotFound (#203 D76: it previously leaked the raw stat
+// *fs.PathError, which mapErr turned into a 500 — breaking the documented
+// 404 contract of Stop/Start and forcing clients to string-match errors).
 func (s *Store) lock(ctx context.Context, name string) (func(), error) {
 	if err := validName(name); err != nil {
 		return nil, err
 	}
 	if _, err := os.Stat(s.dir(name)); err != nil {
+		if os.IsNotExist(err) {
+			return nil, contract.ErrNotFound
+		}
 		return nil, err
 	}
 	return s.lockCreate(ctx, name)

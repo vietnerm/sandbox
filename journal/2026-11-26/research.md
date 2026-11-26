@@ -145,3 +145,64 @@ GĐ3 mục 2: terminal line-mode xong (mỗi dòng = `execv2` `/bin/sh -c`). Cò
 ## Không làm (cần owner duyệt riêng)
 - WebSocket (stdlib không có — cần external dep hoặc implement tay RFC 6455 ~150 dòng). Nếu owner muốn WS real-time → mở issue riêng.
 - `make console` CI step (cần owner duyệt .github/ change).
+
+---
+
+# Phiên 40 — Research (issue #203, Track M M2 residuals d–i)
+
+## Nguồn 1 — Docker Compose spec: depends_on + healthcheck + down semantics
+- URL: https://github.com/compose-spec/compose-spec/blob/master/spec.md (05-services.md healthcheck section)
+- Tóm tắt:
+  - Compose `depends_on` + `healthcheck`: service chỉ coi "healthy" khi healthcheck
+    pass liên tiếp; `condition: service_healthy` chờ dependency healthy trước khi start
+    service kế. Healthcheck test = lệnh trong container, exit 0 = healthy.
+  - `compose down`: dừng + xoá theo thứ tự ngược; service không tồn tại không phải lỗi.
+  - Failure khi `up` (healthcheck fail sau `start_period`): các container đã start
+    bị dừng/xoá (rollback) — hành vi chuẩn của docker compose up --wait.
+- Áp dụng minict: `stack up` đã làm topoSort + rollback (D75); residual e hiện thực
+  ready `exec` theo đúng mô hình healthcheck (exit 0 = ready, poll tới deadline);
+  residual g cho `stack down` bám semantics compose: thiếu = bỏ qua, lỗi thật = báo.
+
+## Nguồn 2 — Go net/http Client.Timeout (residual f: http.Get không timeout)
+- URL: https://pkg.go.dev/net/http#Client.Timeout + https://go.dev/src/net/http/client.go
+- Tóm tắt:
+  - `http.Get` dùng `DefaultClient` — **không có Timeout** (documented zero-value
+    hazard): request có thể treo vô hạn → `stack up` vượt `timeout_s` của ready.
+  - `http.Client{Timeout: d}` là per-request deadline bọc toàn bộ: connect + gửi
+    request + đọc headers + đọc body. Đúng thứ tự: 1 attempt chậm bị cắt ở 2s,
+    vòng poll ngoài vẫn giữ deadline tổng `timeout_s`.
+  - Pattern chuẩn: client cấp per-call (không dùng lại global mutable), per-attempt
+    timeout < tổng deadline.
+- Áp dụng minict: `waitForReady` case "http" dùng `&http.Client{Timeout: 2 * time.Second}`
+  tạo trong hàm; bỏ `http.Get`. TCP dial đã có `DialTimeout` — giữ nguyên.
+
+## Nguồn 3 — passt/pasta port-forward grammar (mirror client-side, residual d)
+- URL: passt.1 man page (đã trích D67) + minictd/internal/minict/pasta.go parsePastaPorts
+- Tóm tắt:
+  - Daemon đã validate fail-closed (D67): `[tcp|udp/]<host>:<ns>`, host 1024..65535
+    (rootless bind floor), ns 1..65535, không range/space, ≤ 16 entries, không dup
+    host bind theo proto.
+  - Stack (client) nếu KHÔNG validate trước: lỗi config chỉ lộ sau khi daemon Run
+    fail → rollback đã chạy oan (instance trước đó bị dừng vì 1 dòng config sai).
+  - Client-side mirror cùng luật (không import internal package — layer client
+    không được đụng daemon internals) → parse lỗi TRƯỚC khi chạy instance nào.
+- Áp dụng minict: `validatePastaPortsStack()` trong stack.go (sai → parseStack lỗi),
+  daemon vẫn là nguồn sự thật (fail-closed lần hai ở Run).
+
+## Kết luận
+1. d: `ServiceDef.PastaPorts []string` → `spec.PastaPorts`; client pre-validate
+   grammar D67; ready tcp/http chỉ đo được qua pasta forward (loopback-only netns
+   D17 khi không có pasta → ready tcp/http KHÔNG có pasta chỉ hợp khi test giả lập
+   ở unit; e2e thật dùng pasta env-gated MD47-49 gate).
+2. e: `ReadyDef.Cmd []string`; case "exec" → `rt.ExecV2(ctx, name, {Cmd, TimeoutS:5})`
+   ExitCode 0 = ready; poll tới deadline giống http/tcp (service có thể chưa boot);
+   validate type ∈ {http,tcp,exec,none} + port + cmd LUÔN PARSE TIME.
+3. f: `http.Client{Timeout: 2s}` per attempt; port 1..65535 parse time.
+4. g: `stackDown` phân loại: `errors.Is(err, contract.ErrNotFound)` → bỏ qua;
+   lỗi khác → gom, in, exit ≠ 0; "removed" chỉ khi Remove thật sự OK; sau stop lỗi
+   (không phải NotFound) → KHÔNG remove (instance vẫn chạy, remove sẽ phá sai).
+5. h: MD64 (env-gated pasta): stack 2 service db(exec ready)+web(pasta fwd, tcp ready)
+   → up/ps/curl/down sạch; MD65 (không pasta): ready exec fail → rollback; down stack
+   rỗng → exit 0 không in "removed"; down 1 có 1 thiếu → chỉ cái có bị removed.
+6. Refactor nhỏ: stackUp/Down/Ps/waitForReady nhận `contract.Runtime` (interface) —
+   unit test được bằng stub runtime, không đổi wire.

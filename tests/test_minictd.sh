@@ -204,7 +204,7 @@ cleanup() {
     # probe block) — clean it too, plus any daemon left on it.
     pkill -TERM -f -- ".minictd-ovl-test" 2>/dev/null || true
     rm -rf "$HOME/.minictd-ovl-test" 2>/dev/null || true
-    for n in md-a md-b md-c md-auto md-t md-f md-oci md-oci-bad md-oci-h md-oci-r md-oci-a md-rl md-s6a md-s6b md-tpl-src md-tpl-dst md-snap-src md-snap-dst md-sec md-sec2 md-sec-dst md-pasta md-pasta-bad1 md-pasta-bad2 md-obs md-mtr md-leak md-del-src md-pty; do
+    for n in md-a md-b md-c md-auto md-t md-f md-oci md-oci-bad md-oci-h md-oci-r md-oci-a md-rl md-s6a md-s6b md-tpl-src md-tpl-dst md-snap-src md-snap-dst md-sec md-sec2 md-sec-dst md-pasta md-pasta-bad1 md-pasta-bad2 md-obs md-mtr md-leak md-del-src md-pty mdstack-web mdstack-db mdroll-a mddown-live; do
         curl -s -m 5 -X POST -H "Authorization: Bearer $TOKEN" \
             "$API/v1/sandboxes/$n/remove" >/dev/null 2>&1 || true
     done
@@ -1263,8 +1263,9 @@ port_no_listener() { # pasta holds LISTENING sockets for its forwards (0.0.0.0
     # NOTE the ':' before the port: ss prints "0.0.0.0:<port>" — a space
     # before the number never occurs (a space-anchored grep would be a
     # false negative and make the probe vacuous).
-    [[ -n "$(ss -tln 2>/dev/null | grep -E "[^0-9]$PFPORT[[:space:]]" || true)" ]] \
-        && { echo "listener still present on $PFPORT"; ss -tln | grep "$PFPORT" || true; return 1; }
+    local p="${1:-$PFPORT}"   # #203 D76: optional port arg (MD64 stack forwards)
+    [[ -n "$(ss -tln 2>/dev/null | grep -E "[^0-9]$p[[:space:]]" || true)" ]] \
+        && { echo "listener still present on $p"; ss -tln | grep "$p" || true; return 1; }
     return 0
 }
 md47() {
@@ -1837,6 +1838,78 @@ md63() {
     echo "MD63 OK: firecracker backend fail-closed without /dev/kvm (code=$code)"
 }
 run_case MD63 "D74 gd4: firecracker backend fail-closed (no /dev/kvm)" pass md63
+
+
+# ---------- Track M M2 residuals d–i: stack qua CLI (issue #203, D76) ----------
+#   MD64  (env-gated pasta, cùng gate MD47–49) stack 2 service qua CLI:
+#         db (ready exec exit 0) -> web (depends_on db, pasta_ports fwd,
+#         ready tcp qua forward host) -> up/ps JSON running đủ -> curl
+#         host trúng web qua forward khai báo -> down dọn sạch (dir hết,
+#         listener hết). pasta_ports đi qua RunSpec nguyên trạng (daemon
+#         re-validate fail-closed).
+#   MD65  (không cần pasta) lỗi ready -> rollback: up exit ≠ 0 + dir
+#         instance đã chạy bị xoá; down stack không tồn tại -> exit 0,
+#         KHÔNG in "removed"; down 1 sống 1 thiếu -> chỉ cái sống bị
+#         removed, cái thiếu bị bỏ qua im lặng (exit 0).
+md64() {
+    [[ "$PASTA_OK" == 1 ]] || return 125
+    local WPORT2=$(( 18900 + RANDOM % 100 ))
+    cat > "$WORK/mdstack.json" <<EOF
+{"name":"mdstack","services":{
+ "db":{"image":"base","cmd":["/bin/sh","-c","sleep 600"],
+       "ready":{"type":"exec","cmd":["/bin/true"],"timeout_s":10}},
+ "web":{"image":"base","depends_on":["db"],
+       "pasta_ports":["$WPORT2:8080"],
+       "cmd":["/bin/sh","-c","mkdir -p /www && echo stack-ok > /www/index.html; httpd -f -p 8080 -h /www; sleep 600"],
+       "ready":{"type":"tcp","port":$WPORT2,"timeout_s":30}}}}
+EOF
+    sb stack up --file "$WORK/mdstack.json" >/dev/null || { echo "stack up failed"; return 1; }
+    # ps JSON: cả hai running
+    sb stack ps --file "$WORK/mdstack.json" | python3 -I -c "import json,sys; rows=json.load(sys.stdin); d={r['name']:r['status'] for r in rows}; assert d=={'db':'running','web':'running'}, d" || { echo "ps not running x2"; return 1; }
+    # host curl -> web qua forward config-declared (không phải auto-forward)
+    local ok=0
+    for _ in $(seq 1 20); do
+        curl -s -m 2 "http://127.0.0.1:$WPORT2/" 2>/dev/null | grep -q stack-ok && { ok=1; break; }
+        sleep 0.5
+    done
+    [[ "$ok" == 1 ]] || { echo "curl $WPORT2 failed (forward)"; return 1; }
+    # down dọn sạch: dirs gone + listener gone
+    sb stack down --file "$WORK/mdstack.json" >/dev/null || { echo "stack down failed"; return 1; }
+    [[ ! -d "$STATE/mdstack-web" && ! -d "$STATE/mdstack-db" ]] || { echo "stack dirs survived down"; return 1; }
+    sleep 0.5
+    port_no_listener "$WPORT2" || return 1
+    echo "MD64 OK: stack 2 svc qua pasta fwd (exec+tcp ready) + down sạch"
+}
+run_case MD64 "D76 stack e2e: 2 svc pasta fwd + exec/tcp ready + down sạch" skip md64
+
+md65() {
+    # (a) ready exec fail -> rollback: up exit ≠ 0, dir instance đã chạy bị xoá
+    cat > "$WORK/mdroll.json" <<EOF
+{"name":"mdroll","services":{"a":{"image":"base","cmd":["/bin/sh","-c","sleep 600"],"ready":{"type":"exec","cmd":["/bin/false"],"timeout_s":3}}}}
+EOF
+    if sb stack up --file "$WORK/mdroll.json" >/dev/null 2>&1; then
+        echo "up must fail when ready exec never passes"; return 1
+    fi
+    [[ ! -d "$STATE/mdroll-a" ]] || { echo "rollback left mdroll-a behind"; return 1; }
+    # (b) down stack không tồn tại -> exit 0, KHÔNG in "removed"
+    local out rc
+    out=$(sb stack down --file "$WORK/mdroll.json" 2>&1); rc=$?
+    [[ $rc -eq 0 ]] || { echo "down missing stack rc=$rc: $out"; return 1; }
+    [[ "$out" != *removed* ]] || { echo "down printed removed for missing instances: $out"; return 1; }
+    # (c) down 1 sống + 1 thiếu -> chỉ cái sống removed, cái thiếu skip, exit 0
+    cat > "$WORK/mddown.json" <<EOF
+{"name":"mddown","services":{"live":{"image":"base"},"ghost":{"image":"base"}}}
+EOF
+    sb up mddown-live base --cmd "/bin/sh,-c,sleep 600" >/dev/null || return 1
+    sleep 0.5
+    out=$(sb stack down --file "$WORK/mddown.json" 2>&1); rc=$?
+    [[ $rc -eq 0 ]] || { echo "down partial rc=$rc: $out"; return 1; }
+    echo "$out" | grep -q "live removed" || { echo "live not reported removed: $out"; return 1; }
+    echo "$out" | grep -q "ghost removed" && { echo "ghost wrongly reported removed: $out"; return 1; }
+    [[ ! -d "$STATE/mddown-live" ]] || { echo "mddown-live survived down"; return 1; }
+    echo "MD65 OK: rollback sau ready-fail + down skip-missing chỉ in removed thật"
+}
+run_case MD65 "D76 stack: ready-fail rollback + down skip-missing + removed chỉ thật" pass md65
 
 run_case XSS  "D71 gd3-ui: console source no dangerouslySetInnerHTML/innerHTML" pass md55b_xss
 
