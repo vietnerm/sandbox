@@ -36,7 +36,6 @@ UNCHANGED
 CVE mới ngoài watchlist: 0 (table đầy đủ trong cve/m2-residuals.md)
 
 --- go unit sandbox + minict ---
-/bin/bash: line 1: go: command not found
 --- go unit sandbox + minict (go version go1.23.4 linux/amd64) ---
 ok  	github.com/vietnerm/sandbox/minictd/cmd/sandbox	(cached)
 ok  	github.com/vietnerm/sandbox/minictd/internal/firecracker	0.011s

@@ -353,3 +353,117 @@ Issue xử lý : #197 (M1 labels) + #199 (M2 stack)
 PR mở      : #198 + #200 — all CI 6/6 xanh — merged
 Trạng thái : DAY PASS — Track M M1+M2 hoàn tất
 ================================
+
+## Phiên 40 — Orchestrator (ZAI, §11) — Track M M2 residuals d–i (issue #203)
+
+### Pha A — Sync + SBG (chỉ thị owner: hoàn thành SBG trước)
+- Pull main `e36ab77` (Phiên 39 + roadmap M2 residuals d–i qua PR #201).
+- SBG MODE=plan → `branch/plan-phien40.md`: 0 PR mở; 6 nhánh stale, toàn bộ PR
+  MERGED với headRefOid khớp HEAD, cherry=0.
+- SBG MODE=apply: **5 DELETE_MERGED** (#184/#195/#176/#183/#174) + **1 KEEP**
+  `docs/roadmap-m2-residuals` (PR #201 MERGED nhưng commit cuối 07:59:17Z < 30
+  phút trước lần chạy 08:07:48Z, §0.4). Ledger qua PR #202 squash `2453a18`
+  (chỉ journal/ledger — miễn G3/G4/G6; CI 6/6 green; xoá nhánh ledger sau merge).
+- Host baseline: máy sandbox mới (cùng kernel 5.10.134 kangaroo) → thiết lập
+  baseline mới `evidence/host-baseline-p40.txt`, không phải báo động.
+
+### Triage + chọn issue
+- 2 issue mở (#99 p3 from-audit needs-repro, #8 p2 CVE tracking) — không p0/p1
+  security. Roadmap: GĐ4 research-only (không /dev/kvm) → Track M mục thấp nhất
+  chưa xong = **M2 residuals d–i** (owner review 2026-11-26: "Còn thiếu, làm
+  trước M3"). Tạo **#203** (p1, area:minictd, type:feature).
+
+### Research (journal/2026-11-26/research.md — Phiên 40)
+- Nguồn 1: compose-spec healthcheck/depends_on/down — mô hình ready exec exit-0
+  + rollback + skip-missing cho down.
+- Nguồn 2: Go net/http Client.Timeout — http.Get (DefaultClient) KHÔNG timeout,
+  per-attempt client deadline đúng thứ tự.
+- Nguồn 3: D67 parsePastaPorts — mirror grammar client-side để fail-fast ở PARSE.
+
+### Development (`feat/203-m2-residuals`, D76)
+- d: `ServiceDef.PastaPorts` → `RunSpec.PastaPorts` 1:1 + client pre-validate
+  grammar (host 1024..65535, ns 1..65535, [tcp|udp/], cap 16, no dup) — lỗi
+  config chặn trước khi chạy instance nào.
+- e: ready `exec` qua `ExecV2` (exit 0 = ready) + validate type/port/cmd parse
+  time ("unsupported" lúc chạy biến mất; default fail-closed giữ cho caller).
+- f: `http.Client{Timeout: 2s}` per attempt (hang-server unit chứng minh mutant
+  http.Get bị catch).
+- g: `stackDown` policy — NotFound skip, lỗi thật gom + exit ≠ 0, "removed" chỉ
+  khi remove thật, stop-fail → không remove. Refactor nhận `contract.Runtime`
+  để unit-test bằng stub.
+- h: MD64 (env-gated pasta: 2 svc db-exec-ready + web-pasta-fwd-tcp-ready, curl
+  qua forward, down sạch dir+listener) + MD65 (rollback ready-fail + down
+  skip-missing, chạy mọi nơi).
+- i: README `stack.json` nhãn `thử nghiệm` + `examples/04-stack/` mẫu.
+- **Fix daemon phát lộ bởi MD65**: `Store.lock()` trả raw `*fs.PathError` cho
+  missing dir → 500, phá 404 contract đã ghi rõ của Stop/Start. Fix map
+  `contract.ErrNotFound` (Stop/Start 404 docker parity; Remove giữ idempotent
+  204). MD65 đỏ→xanh; unit `TestMissingInstanceErrNotFound`.
+
+### Debug log (bằng chứng quá trình)
+1. Unit test data sai: `udp/53:53` (host 53 < 1024) — grammar daemon đúng, sửa
+   test thành `udp/1053:53`.
+2. MD65 FAIL lần 1: daemon trả 500 (không phải 404) cho stop-missing — root
+   cause `Store.lock()` leak raw PathError (fix D76 mục 8).
+3. Mutant M1/M1a bị mask có chủ ý: lock() và callers cùng map IsNotExist —
+   defense-in-depth; M1c (full pre-fix) caught.
+
+### CVE Check
+- Kernel: `5.10.134-013.15.kangaroo.al8.x86_64`
+- 12 CVE tracked (watchlist), **0 mới** ngoài watchlist. NVD live-fetch timeout
+  trong sandbox dev (mạng chặn) — phần NVD-live dựa workflow `cve-daily` CI.
+- 0 ảnh hưởng sandbox (PR chỉ client + fix mapping lỗi; không syscall surface mới).
+- File: journal/2026-11-26/cve/m2-residuals.md
+
+### Validation "không bị nhiễm"
+- `make test` (10 suites): 0 FAIL (isolation 38 + seccomp 25 + netns 7 + alpine 9
+  + debian 8 + escape-alpine 38 + cve 4 + pasta 5+6 SKIP + stack 8 + cg 6 SKIP)
+- `make test-web`: 9/9 PASS
+- `make test-minictd`: dev 58 PASS + 9 SKIP + 0 FAIL (MD65 PASS; MD64 SKIP
+  env-gated); **runner CI @1f6f952: 65 PASS + 2 SKIP + 0 FAIL (MD64 PASS thật)**
+- Host baseline: unchanged; listeners sạch
+- Perf: cold_start=2.06 ms | rss=1096 KB | disk=2.05 MB — PASS
+- Mutants: 6/6 caught (M1c daemon pre-fix, M2 skip, M3 port, M4 map, M5 exec,
+  M6 http.Get hang)
+- Bằng chứng: journal/2026-11-26/evidence/m2-residuals.txt
+
+### Pha B/C — PR #204 (squash `cfadf3b`)
+- B2 — SCR @ 1f6f952: PASS (số liệu trên; SHA mới chỉ thêm stack_test.go
+  test-only — suites e2e không đổi giữa 7de6693 → 1f6f952).
+- B3 — SIA @ 1f6f952: PASS — 11/11 contract, 0 claim sai (MD65 đỏ→xanh
+  verified), 6/6 mutant, 0 security finding (404 giảm leak so với 500 lộ path),
+  3 low: MD64 runner-verified trước merge ✓ / evidence noise dọn ✓ / nhãn đúng.
+  Label `audit:pass`.
+- B4/C — SBG gates G1–G8 PASS (SIA việc #1 đã gỡ: MD64 PASS runner run
+  45787011472) → REST squash `--sha 1f6f952` → **`cfadf3b` trên main; #203
+  auto-close**; nhánh DELETE_MERGED.
+
+### Pha E — Kết phiên (SBG)
+- `feat/203-m2-residuals` DELETE_MERGED.
+- `docs/roadmap-m2-residuals` KEEP → DELETE_MERGED 09:00:06Z (commit > 60', §0.4
+  hết hiệu lực) — **remote chỉ còn `main`**.
+- Ledger kết phiên qua PR `chore(branches): ledger 2026-11-26 Phiên 40 (b)`.
+- CI main sau merge: kiểm cuối trong báo cáo.
+
+## PR
+- #202 — ledger Phiên 40 (đầu phiên) — squash `2453a18` — CI 6/6 green
+- #204 — feat M2 residuals d–i — squash `cfadf3b` — CI 6/6 green @1f6f952
+- Merge: CÓ (cả hai; #203 auto-close)
+
+## Kế hoạch kế tiếp
+- Track M **M3** — Registry template tĩnh (index.json + tar.zst, push/pull HTTPS
+  + sha256 pre-extract) — giờ đã mở vì M2 residuals xong.
+- Residual mở: #99 (MD25 negative control e2e, p3 needs-repro), #8 (CVE
+  tracking p2), systemd-real env-gated (GĐ2 residual, chờ nhu cầu owner).
+
+=== SDDA REPORT — 2026-11-26 (Phiên 40) ===
+Issue xử lý : #203 — Track M M2 residuals d–i (stack pasta_ports, ready exec, http timeout, down policy, MD e2e, examples) + fix 404 mapping daemon
+PR mở      : #202 (merged 2453a18) + #204 (merged cfadf3b) — CI 6/6 xanh — draft: no
+CVE check  : 12 CVE tracked (watchlist), 0 mới, 0 ảnh hưởng sandbox (NVD-live: CI cve-daily)
+Escape test: PASS (10 suites 0 FAIL; test-minictd dev 58+9+0 / runner 65+2+0; test-web 9/9)
+Host       : unchanged (máy mới — baseline thiết lập + re-check khớp)
+Perf       : cold_start=2.06 ms | rss=1096 KB | disk=2.05 MB — PASS
+Daily-log  : journal/2026-11-26/daily-log.md
+Kế tiếp    : Track M M3 (registry template tĩnh) — M2 residuals đã xong
+Trạng thái : DAY PASS — #203 merged, SBG dọn sạch (remote chỉ main), CI xanh thật, 0 regression
+================================

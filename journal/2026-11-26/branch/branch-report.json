@@ -4,13 +4,93 @@
   "halted": false,
   "halt_reason": "",
   "branches": [
-    {"name": "chore/owner-approve-pty-ci-console", "head_sha": "895ace7", "decision": "DELETE_MERGED", "reason": "PR #184 MERGED, headRefOid khớp HEAD nhánh, cherry=0 (squash-merge), commit cuối 04:46:25Z > 30'", "pr": 184, "issue": 0, "gates": {"G1": false}, "archive_tag": "", "done": true, "error": ""},
-    {"name": "docs/core-principles-extension-track", "head_sha": "7e352b9", "decision": "DELETE_MERGED", "reason": "PR #195 MERGED, headRefOid khớp HEAD nhánh, cherry=0, commit cuối 06:19:31Z > 30'", "pr": 195, "issue": 0, "gates": {"G1": false}, "archive_tag": "", "done": true, "error": ""},
-    {"name": "docs/roadmap-m2-residuals", "head_sha": "06c242e", "decision": "KEEP", "reason": "PR #201 MERGED (nội dung đã vào main) nhưng commit cuối 07:59:17Z < 30 phút trước lần chạy SBG (08:07:48Z), không do lần chạy hiện tại tạo — §0.4 chặn xoá. Xem lại 08:30Z / đầu phiên sau", "pr": 201, "issue": 0, "gates": {"G1": false}, "archive_tag": "", "done": true, "error": ""},
-    {"name": "feat/gd3-console-ui", "head_sha": "4994c60", "decision": "DELETE_MERGED", "reason": "PR #176 MERGED, headRefOid khớp HEAD nhánh, cherry=0, commit cuối 03:53:14Z > 30'", "pr": 176, "issue": 0, "gates": {"G1": false}, "archive_tag": "", "done": true, "error": ""},
-    {"name": "fix/journal-date-2026-11-26", "head_sha": "9b1bee2", "decision": "DELETE_MERGED", "reason": "PR #183 MERGED, headRefOid khớp HEAD nhánh, cherry=0, commit cuối 04:43:10Z > 30'", "pr": 183, "issue": 0, "gates": {"G1": false}, "archive_tag": "", "done": true, "error": ""},
-    {"name": "fix/low-audit-residuals-61-62-77-93-119", "head_sha": "4f88499", "decision": "DELETE_MERGED", "reason": "PR #174 MERGED, headRefOid khớp HEAD nhánh, cherry=0, commit cuối 03:32:20Z > 30'", "pr": 174, "issue": 0, "gates": {"G1": false}, "archive_tag": "", "done": true, "error": ""}
+    {
+      "name": "chore/owner-approve-pty-ci-console",
+      "head_sha": "895ace7",
+      "decision": "DELETE_MERGED",
+      "reason": "PR #184 MERGED, headRefOid khớp HEAD nhánh, cherry=0 (squash-merge), commit cuối 04:46:25Z > 30'",
+      "pr": 184,
+      "issue": 0,
+      "gates": {
+        "G1": false
+      },
+      "archive_tag": "",
+      "done": true,
+      "error": ""
+    },
+    {
+      "name": "docs/core-principles-extension-track",
+      "head_sha": "7e352b9",
+      "decision": "DELETE_MERGED",
+      "reason": "PR #195 MERGED, headRefOid khớp HEAD nhánh, cherry=0, commit cuối 06:19:31Z > 30'",
+      "pr": 195,
+      "issue": 0,
+      "gates": {
+        "G1": false
+      },
+      "archive_tag": "",
+      "done": true,
+      "error": ""
+    },
+    {
+      "name": "docs/roadmap-m2-residuals",
+      "head_sha": "06c242e",
+      "decision": "DELETE_MERGED",
+      "reason": "PR #201 MERGED; KEEP ban đầu theo §0.4 (commit 07:59Z < 30 phút trước SBG 08:07Z); xoá 09:00:06Z khi commit > 60 phút, cherry=0",
+      "pr": 201,
+      "issue": 0,
+      "gates": {
+        "G1": false
+      },
+      "archive_tag": "",
+      "done": true,
+      "error": ""
+    },
+    {
+      "name": "feat/gd3-console-ui",
+      "head_sha": "4994c60",
+      "decision": "DELETE_MERGED",
+      "reason": "PR #176 MERGED, headRefOid khớp HEAD nhánh, cherry=0, commit cuối 03:53:14Z > 30'",
+      "pr": 176,
+      "issue": 0,
+      "gates": {
+        "G1": false
+      },
+      "archive_tag": "",
+      "done": true,
+      "error": ""
+    },
+    {
+      "name": "fix/journal-date-2026-11-26",
+      "head_sha": "9b1bee2",
+      "decision": "DELETE_MERGED",
+      "reason": "PR #183 MERGED, headRefOid khớp HEAD nhánh, cherry=0, commit cuối 04:43:10Z > 30'",
+      "pr": 183,
+      "issue": 0,
+      "gates": {
+        "G1": false
+      },
+      "archive_tag": "",
+      "done": true,
+      "error": ""
+    },
+    {
+      "name": "fix/low-audit-residuals-61-62-77-93-119",
+      "head_sha": "4f88499",
+      "decision": "DELETE_MERGED",
+      "reason": "PR #174 MERGED, headRefOid khớp HEAD nhánh, cherry=0, commit cuối 03:32:20Z > 30'",
+      "pr": 174,
+      "issue": 0,
+      "gates": {
+        "G1": false
+      },
+      "archive_tag": "",
+      "done": true,
+      "error": ""
+    }
   ],
-  "remaining_branches": ["main", "docs/roadmap-m2-residuals"],
-  "main_ci_after": "pending"
+  "remaining_branches": [
+    "main"
+  ],
+  "main_ci_after": "success"
 }
