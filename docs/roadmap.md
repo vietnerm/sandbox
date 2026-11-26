@@ -630,6 +630,9 @@
    → Việc kế tiếp: thêm biểu đồ IO (block read/write, net rx/tx — đã có trong `/stats`)
      vào trang chi tiết + Monitoring; MD e2e hoặc Go unit cho dữ liệu, `npx tsc --noEmit`
      + `npx next build` sạch.
+   → **Xong 2026-11-26 Phiên 36 (#185)**: biểu đồ Block IO (read/write rate KB/s) +
+     Network IO (rx/tx rate) trong sandbox-detail; monitoring response thêm IO fields;
+     tsc + next build sạch.
 4. Test bảo mật UI: CSRF/token, không bind 0.0.0.0 mặc định, path traversal API.
    → 2026-11-26: Go unit `internal/server/ui_test.go` (traversal/symlink/dotfile,
    405 cho ghi, API vẫn 401 khi có UI, CSP không `unsafe-inline` cho script,

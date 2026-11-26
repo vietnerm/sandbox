@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Camera, Cpu, ExternalLink, FolderOpen, HardDrive, MemoryStick, Network, Pause, Play, RotateCw, SquareTerminal, Timer } from "lucide-react";
 import { toast } from "sonner";
 import { Switch } from "@/components/ui/switch";
@@ -36,7 +36,11 @@ import { KpiCard, Mono, Panel, SectionTitle, StatusPill } from "../primitives";
 
 interface Metrics {
   status: string;
-  stats: { cpu_percent: number; mem_usage_bytes: number; mem_limit_bytes: number; pids: number };
+  stats: {
+    cpu_percent: number; mem_usage_bytes: number; mem_limit_bytes: number; pids: number;
+    block_read_bytes: number; block_write_bytes: number;
+    net_rx_bytes: number; net_tx_bytes: number;
+  };
 }
 
 const HISTORY = 90; // samples kept for the charts (≈3 min at 2s)
@@ -81,6 +85,11 @@ export function SandboxDetailView() {
   const [m, setM] = useState<Metrics | null>(null);
   const [cpu, setCpu] = useState<number[]>([]);
   const [mem, setMem] = useState<number[]>([]);
+  const [ioR, setIoR] = useState<number[]>([]); // block read rate KB/s
+  const [ioW, setIoW] = useState<number[]>([]); // block write rate KB/s
+  const [netR, setNetR] = useState<number[]>([]); // net rx rate KB/s
+  const [netW, setNetW] = useState<number[]>([]); // net tx rate KB/s
+  const prevIO = useRef({ r: 0, w: 0, rx: 0, tx: 0 });
 
   // volumes (GET /v1/sandboxes/{id}/volumes)
   const [volumes, setVolumes] = useState<VolumeInfo[] | null>(null);
@@ -129,7 +138,12 @@ export function SandboxDetailView() {
   useEffect(() => {
     setCpu([]);
     setMem([]);
+    setIoR([]);
+    setIoW([]);
+    setNetR([]);
+    setNetW([]);
     setM(null);
+    prevIO.current = { r: 0, w: 0, rx: 0, tx: 0 };
     if (!id || status !== "Running") return;
     return sse(`/v1/sandboxes/${id}/metrics/stream?interval=2`, (line) => {
       try {
@@ -140,6 +154,17 @@ export function SandboxDetailView() {
           setCpu((xs) => [...xs, st.cpu_percent].slice(-HISTORY));
           setMem((xs) => [...xs, (st.mem_usage_bytes / st.mem_limit_bytes) * 100].slice(-HISTORY));
         }
+        // IO rate: delta from previous sample / 2s interval → KB/s
+        const p = prevIO.current;
+        const dr = Math.max(0, st.block_read_bytes - p.r) / 2 / 1024;
+        const dw = Math.max(0, st.block_write_bytes - p.w) / 2 / 1024;
+        const drx = Math.max(0, st.net_rx_bytes - p.rx) / 2 / 1024;
+        const dwx = Math.max(0, st.net_tx_bytes - p.tx) / 2 / 1024;
+        setIoR((xs) => [...xs, dr].slice(-HISTORY));
+        setIoW((xs) => [...xs, dw].slice(-HISTORY));
+        setNetR((xs) => [...xs, drx].slice(-HISTORY));
+        setNetW((xs) => [...xs, dwx].slice(-HISTORY));
+        prevIO.current = { r: st.block_read_bytes, w: st.block_write_bytes, rx: st.net_rx_bytes, tx: st.net_tx_bytes };
       } catch {
         /* partial frame */
       }
@@ -344,6 +369,8 @@ export function SandboxDetailView() {
           [
             ["CPU usage", "Mức sử dụng CPU", cpu, "neon"],
             ["Memory usage", "Mức sử dụng bộ nhớ", mem, "cyan"],
+            ["Block read", "Đọc ổ đĩa (KB/s)", ioR, "amber"],
+            ["Block write", "Ghi ổ đĩa (KB/s)", ioW, "danger"],
           ] as const
         ).map(([title, vi, data, tone]) => (
           <Panel key={title} className="p-6">
