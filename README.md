@@ -25,7 +25,7 @@ guy hiểm + clone ns-flags + AF_ALG + AF_NETLINK; `MINICT_NO_SECCOMP=1` để t
 do A/B), PDEATHSIG + pidns teardown.
 Isolated dirs: tmpfs /tmp; /dev = bind 4 node (null/zero/urandom/random).
 
-## Control plane `minictd` (GĐ2 — giai đoạn hiện tại)
+## Control plane `minictd` (GĐ2)
 
 Daemon rootless (Go stdlib) quản lý nhiều instance qua HTTP API + token:
 run/start/stop/remove/inspect/logs/stats và **exec vào instance đang chạy bằng
@@ -33,6 +33,12 @@ setns** (`minict-exec`, seccomp cài lại). Cấu hình instance qua `MINICT_SP
 (hostname, env, bind[:ro], tmpfs, shm, ulimit, nhiều webport), CLI `sandbox`,
 systemd `--user` unit, quota cgroups v2, template. GĐ1 xong 2026-11-20; GĐ2 là giai
 đoạn hiện tại từ 2026-11-23. Xem `minictd/README.md`; test: `make test-minictd`.
+
+## Web console (GĐ3 — giai đoạn hiện tại từ 2026-11-26)
+
+UI web single-user dựng từ template Next.js, **xuất tĩnh** (`make console` →
+`console/out`) và do chính `minictd --ui-dir console/out` phục vụ trên
+127.0.0.1 + token; không có tiến trình Node lúc chạy. Xem `console/README.md`.
 
 ## Quick start
 

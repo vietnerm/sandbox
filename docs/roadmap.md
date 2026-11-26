@@ -593,18 +593,35 @@
      - Residual: netns leak test trực tiếp (process + mount đủ bao phủ); overlay/pasta
        leak paths env-gated SKIP trên dev (PASS thật trên CI runner kernel 7.x).
 
-## Giai đoạn 3 — Web UI + console (chưa mở code — **DỪNG + nhắc owner trước khi mở**, chỉ thị owner)
+## Giai đoạn 3 — Web UI + console (HIỆN TẠI — owner mở 2026-11-26)
 
-> Per chỉ thị owner (roadmap Phiên 11 + mỗi lần chạy): khi mọi mục GĐ2
-> trước mục này hoàn thành và GĐ3 sẵn sàng mở code → DỪNG chu trình, nhắc
-> owner trước khi viết dòng code UI đầu tiên.
+> 2026-11-26: owner mở GĐ3 và giao template Next.js (`console/`). Owner chốt
+> (thẻ quyết định 2026-11-26) **"xuất tĩnh, minictd phục vụ"**: `next build`
+> với `output: "export"` → `console/out`, `minictd --ui-dir` phục vụ trên cùng
+> listener 127.0.0.1 + token; không tiến trình Node lúc chạy. React/Next chỉ
+> dùng lúc build (manifest §7 GĐ3 đã sửa theo quyết định này).
 
-1. UI tĩnh single-user (không framework nặng), bind 127.0.0.1 + token: danh sách,
+1. UI tĩnh single-user, bind 127.0.0.1 + token: danh sách,
    tạo từ template, start/stop, snapshot/restore, port-forward, quota.
+   → **Khung xong 2026-11-26** (PR console): `--ui-dir` + CSP hash inline script,
+   `GET /v1/templates` + `GET /v1/backups`, adapter `console/src/console/minictd.ts`
+   (đăng nhập token, list/inspect/stats, run với cpus/memory/pasta_ports, start/stop/
+   restart/remove, save-template/snapshot, tạo lại từ `template:`/`backup:`).
+   Còn thiếu: xoá template/backup (cần API), inspect trả lại giới hạn CPU/RAM đã đặt,
+   cảnh báo quota disk trên UI, e2e trong `test_minictd.sh`.
 2. Web terminal vào instance qua `exec` của GĐ2.
+   → **Line-mode xong 2026-11-26** (mỗi dòng = `execv2` `/bin/sh -c`, giữ cwd).
+   Còn thiếu: endpoint PTY (WebSocket hoặc stream hai chiều) cho vi/top/REPL.
 3. Biểu đồ CPU/RAM/IO theo instance: UI scrape `/metrics` của GĐ2 mục 7 (cùng token,
    qua 127.0.0.1), giữ lịch sử ngắn phía trình duyệt; không thêm collector trong daemon.
+   → 2026-11-26: biểu đồ CPU/RAM dùng `GET /{name}/stats` (cùng nguồn cgroup với
+   `/metrics`), poll 2 s, lịch sử trong trình duyệt. Còn thiếu: IO + chuyển sang
+   parse `/metrics` nếu cần một lần gọi cho mọi instance.
 4. Test bảo mật UI: CSRF/token, không bind 0.0.0.0 mặc định, path traversal API.
+   → 2026-11-26: Go unit `internal/server/ui_test.go` (traversal/symlink/dotfile,
+   405 cho ghi, API vẫn 401 khi có UI, CSP không `unsafe-inline` cho script,
+   không `--ui-dir` thì `/` vẫn sau auth). Token là header Bearer, không cookie.
+   Còn thiếu: e2e MD trên daemon thật + kiểm XSS cho log/exec output.
 
 ## Giai đoạn 4 — Backend microVM Firecracker (chưa mở code)
 
