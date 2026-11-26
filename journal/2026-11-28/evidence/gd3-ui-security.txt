@@ -1,0 +1,164 @@
+=== minictd e2e tests (2026-11-26 04:08:02) — api :17639, web :19326 ===
+MD0   seccomp blocklist identical: minict.c vs minict-exec.c       PASS
+MD3   daemon refuses to start without a token                      PASS
+MD1   /healthz with token -> 200                                   PASS
+MD2   request without token -> 401                                 PASS
+MD4   Run + Inspect -> running                                     PASS
+MD5   exec via setns sees spec hostname                            PASS
+MD6   exec shares payload mount ns (/tmp marker visible)           PASS
+MD7   spec env -> payload, request env -> exec                     PASS
+MD8   bind :ro visible and not writable                            PASS
+MD9   seccomp in exec: unshare -U -> EPERM                         PASS
+MD10  daemon env/token NOT leaked into payload or exec             PASS
+MD11  exec timeout -> 124 + timed_out                              PASS
+MD12  exec stdin passthrough                                       PASS
+MD13  execstream NDJSON stdout + single exit frame                 PASS
+MD14  preview webport: host curl -> httpd in netns                 PASS
+MD15  path-traversal name -> 400, outside untouched                PASS
+MD16  Stop -> Start keeps rootfs changes                           PASS
+MD17  symlinked bind target -> Start refused, host untouched       PASS
+MD18  exec on stopped -> 409, unknown -> 404                       PASS
+MD19  Remove -> dir gone, no instance processes                    PASS
+MD20  CLI sandbox round-trip: list/up/inspect/exec/stop/rm         PASS
+MD21  --autostart heals + wake-recreates running-after-reboot      PASS
+MD22  deploy: install.sh renders --user unit, systemd-analyze verify PASS
+MD23  G3 routes: run -> Traefik YAML written; disabled -> no file  PASS
+MD24  G3 routes: stop -> route removed; wake stopped -> 409        PASS
+MD25  G3 routes: start -> route back + wake 200; remove -> 404     PASS
+MD28  crane pinned+sha256-verified (fetch-crane.sh, D51)           PASS
+MD29  ocireg harness + real crane push -> manifest served          PASS
+MD30  boot from oci:<ref> via real crane + exec marker             PASS
+MD31  oci: nonexistent ref -> fail-closed 500, dir wiped           PASS
+MD32  hostile oci: image streamed by crane -> refused, wiped       PASS
+MD34  oci: refusal after >64KB -> 500 fast, no Wait deadlock       PASS
+MD33  opt-in remote pull (MINICTD_OCI_REMOTE_REF)                  SKIP
+      (env-blocked: see case)
+MD26  tar: hostile .. member -> Run fails closed, dir wiped, no escape PASS
+MD27  oci: without crane -> Run fails closed, dir wiped            PASS
+MD35  S4: --unix-socket serves API, socket 0600, dir corrected 0700 PASS
+MD36  S4: unix-only posture, 401 no-token, CLI --socket round-trip PASS
+MD37  S5: exec gets spec rlimits (nofile=64 -> ulimit -n 64)       FAIL
+      output: ulimit -n:  
+MD38  S6: webport collision -> 409; stop A -> B reuses port        PASS
+MD39  GĐ2 mục 2: save-template (stopped) + run from template (marker seen) PASS
+MD40  GĐ2 mục 3: snapshot (stopped) + restore from backup:md-snap (marker seen) PASS
+MD41  allowlist+exec parity: readlink EPERM, tcp OK (D59)          PASS
+MD42  control: no profile -> readlink works in exec                PASS
+MD43  template:md-tpl-sec carries seccomp_profile (EPERM)          PASS
+ovl-probe: unsupported on this host — MD44-46 SKIP. full output:
+    mount: /tmp/tmp.JexXZ7KERM/ovlmnt: wrong fs type, bad option, bad superblock on overlay, missing codepage or helper program, or other error.
+           dmesg(1) may have more information after failed mount system call.
+    fs: overlayfs lower | overlayfs work | kernel: 5.10.134-013.15.kangaroo.al8.x86_64
+    apparmor userns: n/a
+    BI1 tmpfs-in-userns: OK
+    BI2 overlay-all-tmpfs-userxattr: OK
+    BI3 lower-ext-upper-tmpfs-userxattr: FAIL
+    BI4 overlay-ext-nouserxattr: FAIL
+    BI5 overlay-ext-userxattr-flags-off: FAIL
+MD44  D66 overlay: boot+exec via upper, base unchanged, thin-provision SKIP
+      (env-blocked: see case)
+MD45  D66 overlay: Stop -> Start keeps upper changes               SKIP
+      (env-blocked: see case)
+MD46  D66 overlay: snapshot/save-template refuse, remove cleans    SKIP
+      (env-blocked: see case)
+pasta gate: no /dev/net/tun or pinned binary — MD47-49 SKIP (env-blocked, D34)
+MD47  D67 pasta config-side forward: host curl -> httpd in netns   SKIP
+      (env-blocked: see case)
+MD48  D67 pasta lifecycle: stop frees host port, start re-attaches SKIP
+      (env-blocked: see case)
+MD49  D67 pasta crash-heal reaps attach; invalid pasta_ports fail-closed SKIP
+      (env-blocked: see case)
+MD50  D68 obs: JSON log schema + lifecycle events + no token leak  PASS
+MD51  D68 obs: /metrics Prometheus format + fail-soft + instance up PASS
+MD52  D68 obs: /metrics 401 no-token + --metrics-listen fail-closed PASS
+MD53  D69 mục 8: destroy no-leak (process + mount + dir gone)    PASS
+MD54  D69 mục 8: daemon idle RSS <= 30 MB + /metrics cross-check PASS
+MD55  D71 gd3-ui: GET / 200 + CSP sha256 (no unsafe-inline) + X-Frame DENY PASS
+MD56  D71 gd3-ui: traversal/symlink/dotfile -> 404 no leak         PASS
+MD57  D71 gd3-ui: POST / -> 405                                    PASS
+MD58  D71 gd3-ui: API endpoints 401 no-token (UI on)               PASS
+MD59  D71 gd3-ui: GET / 401 no-token (no UI, legacy)               PASS
+MD60  D71 gd3-ui: --ui-dir no index.html -> daemon exit != 0       PASS
+XSS   D71 gd3-ui: console source no dangerouslySetInnerHTML/innerHTML PASS
+=== summary: PASS=54 SKIP=7 FAIL=1 ===
+--- daemon log (tail) ---
+{"time":"2026-11-26T04:08:07.83975315Z","level":"info","msg":"destroy","instance":"md-b","op":"destroy","result":"ok","duration_ms":2}
+{"time":"2026-11-26T04:08:07.839790444Z","level":"info","msg":"http","request_id":"84a19eab6306aa08","method":"POST","path":"/v1/sandboxes/md-b/remove","instance":"md-b","op":"destroy","status":204,"result":"ok","duration_ms":2}
+{"time":"2026-11-26T04:08:08.361160892Z","level":"info","msg":"http","request_id":"764eba6b6ce3850a","method":"GET","path":"/v1/sandboxes","instance":"","op":"sandboxes","status":200,"result":"ok","duration_ms":0}
+{"time":"2026-11-26T04:08:08.43946663Z","level":"info","msg":"minictd note","name":"md-c","note":"cgroups v2 unavailable: daemon sits at the v2 hierarchy root without a delegated subtree (no systemd delegation; bootstrap with MINICTD_CGROUP_ROOT) (CG1 fallback: notes + rlimit nproc)"}
+{"time":"2026-11-26T04:08:08.439487849Z","level":"info","msg":"create","instance":"md-c","op":"create","result":"ok","duration_ms":75,"pid":13940,"image":"base","ports":"[]"}
+{"time":"2026-11-26T04:08:08.439558586Z","level":"info","msg":"http","request_id":"7f701141b93c524e","method":"POST","path":"/v1/run","instance":"","op":"run","status":200,"result":"ok","duration_ms":75}
+{"time":"2026-11-26T04:08:08.944562567Z","level":"info","msg":"http","request_id":"ac2252227088f0f6","method":"GET","path":"/v1/sandboxes","instance":"","op":"sandboxes","status":200,"result":"ok","duration_ms":0}
+{"time":"2026-11-26T04:08:08.950335758Z","level":"info","msg":"http","request_id":"34f63104c023032a","method":"GET","path":"/v1/sandboxes/md-c","instance":"md-c","op":"md-c","status":200,"result":"ok","duration_ms":0}
+{"time":"2026-11-26T04:08:08.9737827Z","level":"info","msg":"http","request_id":"5de82e2a8b9ea310","method":"POST","path":"/v1/sandboxes/md-c/execv2","instance":"md-c","op":"execv2","status":200,"result":"ok","duration_ms":3}
+{"time":"2026-11-26T04:08:08.977283585Z","level":"warn","msg":"payload exited","name":"md-c","pid":13940,"err":"exit status 143"}
+{"time":"2026-11-26T04:08:09.027228095Z","level":"info","msg":"stop","instance":"md-c","op":"stop","result":"ok","duration_ms":50,"timeout_sec":1}
+{"time":"2026-11-26T04:08:09.027253865Z","level":"info","msg":"http","request_id":"bb910916b42a23d2","method":"POST","path":"/v1/sandboxes/md-c/stop","instance":"md-c","op":"stop","status":204,"result":"ok","duration_ms":50}
+{"time":"2026-11-26T04:08:09.034345273Z","level":"info","msg":"http","request_id":"aa698a1e78f75ea3","method":"GET","path":"/v1/sandboxes/md-c","instance":"md-c","op":"md-c","status":200,"result":"ok","duration_ms":0}
+{"time":"2026-11-26T04:08:09.053015952Z","level":"info","msg":"destroy","instance":"md-c","op":"destroy","result":"ok","duration_ms":2}
+{"time":"2026-11-26T04:08:09.053050343Z","level":"info","msg":"http","request_id":"269b489530c5fdfe","method":"POST","path":"/v1/sandboxes/md-c/remove","instance":"md-c","op":"destroy","status":204,"result":"ok","duration_ms":2}
+{"time":"2026-11-26T04:08:09.130613323Z","level":"info","msg":"minictd note","name":"md-auto","note":"cgroups v2 unavailable: daemon sits at the v2 hierarchy root without a delegated subtree (no systemd delegation; bootstrap with MINICTD_CGROUP_ROOT) (CG1 fallback: notes + rlimit nproc)"}
+{"time":"2026-11-26T04:08:09.130630606Z","level":"info","msg":"create","instance":"md-auto","op":"create","result":"ok","duration_ms":73,"pid":13996,"image":"base","ports":"[]"}
+{"time":"2026-11-26T04:08:09.130687632Z","level":"info","msg":"http","request_id":"445e145debb12f1d","method":"POST","path":"/v1/run","instance":"","op":"run","status":200,"result":"ok","duration_ms":73}
+{"time":"2026-11-26T04:08:09.635748537Z","level":"info","msg":"http","request_id":"0cd790c4699c8e43","method":"GET","path":"/v1/sandboxes/md-auto","instance":"md-auto","op":"md-auto","status":200,"result":"ok","duration_ms":0}
+{"time":"2026-11-26T04:08:09.688780055Z","level":"info","msg":"minictd: shutting down (instances keep running; re-attach with Start)"}
+--- daemon2 log (tail) ---
+{"time":"2026-11-26T04:08:26.71597317Z","level":"info","msg":"http","request_id":"316d453561510ea3","method":"GET","path":"/metrics","instance":"","op":"metrics","status":200,"result":"ok","duration_ms":0}
+{"time":"2026-11-26T04:08:26.723626233Z","level":"info","msg":"http","request_id":"ce1fe50fce00e209","method":"GET","path":"/metrics","instance":"","op":"metrics","status":200,"result":"ok","duration_ms":0}
+{"time":"2026-11-26T04:08:26.758823821Z","level":"info","msg":"http","request_id":"fec313c5301eb410","method":"GET","path":"/v1/sandboxes/md-mtr/state","instance":"md-mtr","op":"state","status":200,"result":"ok","duration_ms":0}
+{"time":"2026-11-26T04:08:26.787337252Z","level":"warn","msg":"payload exited","name":"md-mtr","pid":14582,"err":"exit status 143"}
+{"time":"2026-11-26T04:08:26.839489982Z","level":"info","msg":"destroy","instance":"md-mtr","op":"destroy","result":"ok","duration_ms":52}
+{"time":"2026-11-26T04:08:26.839539543Z","level":"info","msg":"http","request_id":"7204792c405df37b","method":"POST","path":"/v1/sandboxes/md-mtr/remove","instance":"md-mtr","op":"destroy","status":204,"result":"ok","duration_ms":52}
+{"time":"2026-11-26T04:08:26.85782157Z","level":"info","msg":"http","request_id":"02a6574783933073","method":"GET","path":"/metrics","instance":"","op":"metrics","status":200,"result":"ok","duration_ms":0}
+{"time":"2026-11-26T04:08:27.194392315Z","level":"info","msg":"minictd routes: synced","name":"md-leak","file":"sandbox-md-leak.yml","ports":"[19396]"}
+{"time":"2026-11-26T04:08:27.194415653Z","level":"info","msg":"minictd note","name":"md-leak","note":"cgroups v2 unavailable: daemon sits at the v2 hierarchy root without a delegated subtree (no systemd delegation; bootstrap with MINICTD_CGROUP_ROOT) (CG1 fallback: notes + rlimit nproc)"}
+{"time":"2026-11-26T04:08:27.194419454Z","level":"info","msg":"minictd note","name":"md-leak","note":"preview port 19396 via unix-socket bridge (pid 14627)"}
+{"time":"2026-11-26T04:08:27.194424211Z","level":"info","msg":"create","instance":"md-leak","op":"create","result":"ok","duration_ms":315,"pid":14626,"image":"base","ports":"[19396]"}
+{"time":"2026-11-26T04:08:27.194453316Z","level":"info","msg":"http","request_id":"42272437e8923626","method":"POST","path":"/v1/run","instance":"","op":"run","status":200,"result":"ok","duration_ms":315}
+{"time":"2026-11-26T04:08:27.804941598Z","level":"info","msg":"http","request_id":"a258d1d7613dc302","method":"GET","path":"/v1/sandboxes/md-leak","instance":"md-leak","op":"md-leak","status":200,"result":"ok","duration_ms":0}
+{"time":"2026-11-26T04:08:27.84537704Z","level":"warn","msg":"payload exited","name":"md-leak","pid":14626,"err":"exit status 143"}
+{"time":"2026-11-26T04:08:27.896211379Z","level":"warn","msg":"webproxy exited","name":"md-leak","port":19396,"pid":14627,"err":"signal: terminated"}
+{"time":"2026-11-26T04:08:27.945440415Z","level":"info","msg":"stop","instance":"md-leak","op":"stop","result":"ok","duration_ms":100,"timeout_sec":10}
+{"time":"2026-11-26T04:08:27.945472184Z","level":"info","msg":"http","request_id":"aa9ba999d7dddc28","method":"POST","path":"/v1/sandboxes/md-leak/stop","instance":"md-leak","op":"stop","status":204,"result":"ok","duration_ms":100}
+{"time":"2026-11-26T04:08:28.460080545Z","level":"info","msg":"destroy","instance":"md-leak","op":"destroy","result":"ok","duration_ms":2}
+{"time":"2026-11-26T04:08:28.460124385Z","level":"info","msg":"http","request_id":"08a397ea933e5698","method":"POST","path":"/v1/sandboxes/md-leak/remove","instance":"md-leak","op":"destroy","status":204,"result":"ok","duration_ms":2}
+{"time":"2026-11-26T04:08:29.087961375Z","level":"info","msg":"http","request_id":"4cb62545454e283d","method":"GET","path":"/metrics","instance":"","op":"metrics","status":200,"result":"ok","duration_ms":0}
+--- daemon3 log (tail) ---
+{"time":"2026-11-26T04:08:15.866280118Z","level":"info","msg":"minictd: listening","tcp":"127.0.0.1:17399","unix":"/tmp/tmp.JexXZ7KERM/s4/minictd.sock","state_dir":"/tmp/tmp.JexXZ7KERM/s4/state","minict":"/home/z/sandbox/sandbox/minict","exec_mode":"setns","version":"0.1.0"}
+{"time":"2026-11-26T04:08:15.972263154Z","level":"info","msg":"http","request_id":"7411ad25550fb9df","method":"GET","path":"/healthz","instance":"","op":"healthz","status":200,"result":"ok","duration_ms":0}
+{"time":"2026-11-26T04:08:15.979149083Z","level":"info","msg":"http","request_id":"23f14a028f8d4b9e","method":"GET","path":"/healthz","instance":"","op":"healthz","status":200,"result":"ok","duration_ms":0}
+--- daemon4 log (tail) ---
+{"time":"2026-11-26T04:08:15.988268346Z","level":"info","msg":"minictd: listening","tcp":"off","unix":"/tmp/tmp.JexXZ7KERM/s4/minictd2.sock","state_dir":"/tmp/tmp.JexXZ7KERM/s4/state2","minict":"/home/z/sandbox/sandbox/minict","exec_mode":"setns","version":"0.1.0"}
+{"time":"2026-11-26T04:08:16.097162083Z","level":"info","msg":"http","request_id":"ca787932eb97a3df","method":"GET","path":"/healthz","instance":"","op":"healthz","status":200,"result":"ok","duration_ms":0}
+{"time":"2026-11-26T04:08:16.106714314Z","level":"info","msg":"http","request_id":"94278b6a31ddc032","method":"GET","path":"/v1/sandboxes","instance":"","op":"sandboxes","status":200,"result":"ok","duration_ms":0}
+--- daemon5 log (tail) ---
+--- install log (tail) ---
+installed: /tmp/tmp.JexXZ7KERM/home/bin/minictd
+installed: /tmp/tmp.JexXZ7KERM/home/bin/minict-exec
+token created: /tmp/tmp.JexXZ7KERM/home/.config/minictd/token (first line)
+unit written: ~/.config/systemd/user/minictd.service
+systemd-analyze verify: OK
+
+Next steps (run yourself, not from this script):
+  systemctl --user daemon-reload
+  systemctl --user enable --now minictd
+  loginctl enable-linger "$USER"   # boot-time user manager (no session needed)
+--- ocireg log (tail) ---
+2026/11/26 04:08:15 HEAD /v2/oci-e2e/blobs/sha256:b37fcd23525514a0505ea4e638534704ab4305419ac2b159ef6533808c283ef4 404 BLOB_UNKNOWN Unknown blob
+2026/11/26 04:08:15 PATCH /v2/oci-e2e/blobs/uploads/6094213455038970484
+2026/11/26 04:08:15 POST /v2/oci-e2e/blobs/uploads/
+2026/11/26 04:08:15 PUT /v2/oci-e2e/blobs/uploads/6094213455038970484?digest=sha256%3Ad8567eb044de6c2e45c1c4474bbb917193696f7b59826bc8a16a3eead06bcab6
+2026/11/26 04:08:15 PATCH /v2/oci-e2e/blobs/uploads/2476237807521671415
+2026/11/26 04:08:15 PUT /v2/oci-e2e/blobs/uploads/2476237807521671415?digest=sha256%3Ab37fcd23525514a0505ea4e638534704ab4305419ac2b159ef6533808c283ef4
+2026/11/26 04:08:15 PUT /v2/oci-e2e/manifests/abslink
+2026/11/26 04:08:15 GET /v2/
+2026/11/26 04:08:15 GET /v2/oci-e2e/manifests/abslink
+2026/11/26 04:08:15 GET /v2/oci-e2e/blobs/sha256:b37fcd23525514a0505ea4e638534704ab4305419ac2b159ef6533808c283ef4
+=== XSS grep evidence ===
+dangerouslySetInnerHTML/innerHTML hits: 0
+xterm .write() usage:
+console/src/components/platform/views/sandbox-terminal.tsx:194:    termRef.current?.write(data);
+console/src/lib/demo-shell.ts:137:    this.o.write(s.replace(/\n/g, "\r\n"));
+console/src/lib/exec-shell.ts:45:    this.o.write(s.replace(/\r?\n/g, "\r\n"));
+console/src/lib/exec-shell.ts:58:    this.o.write("\r\x1b[K" + this.prompt() + this.line);
+console/src/lib/exec-shell.ts:59:    if (this.cursor < this.line.length) this.o.write(`\x1b[${this.line.length - this.cursor}D`);
