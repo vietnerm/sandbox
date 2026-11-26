@@ -115,7 +115,7 @@ Mỗi dòng là một câu và một link tới bằng chứng; chi tiết nằm
 - `minict.sh exec` tạo bộ namespace mới trên cùng rootfs; exec vào instance đang chạy (setns) chỉ có qua `minictd` ([minictd](journal/2026-11-18/decisions/minictd.md)).
 - Quota cgroups v2 cần cgroup delegation cho user; không có thì `minictd` fail-soft về rlimit ([cgroups-v2](journal/2026-11-20/decisions/cgroups-v2.md)).
 - systemd `--user` unit mới được kiểm cú pháp, chưa chạy thật dưới user manager có lingering ([daemon-service](journal/2026-11-20/decisions/daemon-service.md)).
-- Image `oci:`/`tar:` có symlink target tuyệt đối (vd. `/bin/busybox`) bị từ chối fail-closed (D50 `secureUnpack` — reject, không sanitize). Image builder phải dùng **symlink tương đối** (vd. `ln -s busybox` thay vì `ln -s /bin/busybox`) hoặc copies (`busybox --install` không `-s`). Rootfs `base` nội bộ không qua đường này (copy, không `secureUnpack`) nên `mkrootfs.sh --install -s` vẫn dùng được ([D70](journal/2026-11-28/decisions/issue-109-symlink.md), [crane-e2e](journal/2026-11-21/decisions/crane-e2e.md)).
+- Image `oci:`/`tar:` có symlink target tuyệt đối (vd. `/bin/busybox`) bị từ chối fail-closed (D50 `secureUnpack` — reject, không sanitize). Image builder phải dùng **symlink tương đối** (vd. `ln -s busybox` thay vì `ln -s /bin/busybox`) hoặc copies (`busybox --install` không `-s`). Rootfs `base` nội bộ không qua đường này (copy, không `secureUnpack`) nên `mkrootfs.sh --install -s` vẫn dùng được ([D70](journal/2026-11-26/decisions/issue-109-symlink.md), [crane-e2e](journal/2026-11-21/decisions/crane-e2e.md)).
 - Chỉ kiểm trên x86_64: bảng syscall seccomp và `mkrootfs-alpine.sh` là của x86_64 ([alpine-rootfs](journal/2026-11-17/decisions/alpine-rootfs.md)).
 
 ## Quy trình hằng ngày

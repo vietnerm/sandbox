@@ -1,4 +1,4 @@
-# SBG Plan — 2026-11-28 (Việc 1: GĐ3 mục 4 UI security e2e)
+# SBG Plan — 2026-11-26 (Việc 1: GĐ3 mục 4 UI security e2e)
 
 ## MODE=plan (Pha A)
 

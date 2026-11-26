@@ -1,4 +1,4 @@
-# SBG Plan — 2026-11-27 (Phiên 34)
+# SBG Plan — 2026-11-26 (Phiên 34)
 
 ## MODE=plan (Pha A)
 
