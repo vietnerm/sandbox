@@ -21,7 +21,9 @@ import (
 //     never sanitize — an image containing "../x" is refused outright).
 //   - link targets (symlink/hardlink): same validation; a symlink planted by
 //     the archive can only point at paths INSIDE dst, so it can never reach
-//     host files.
+//     host files. Absolute symlink targets (e.g. busybox --install -s pattern
+//     `/bin/busybox`) are REFUSED — image builders must use relative links or
+//     copies (D70, issue #109, owner 2026-11-28: keep refusal, do not sanitize).
 //   - every create/walk goes through openat(O_NOFOLLOW) per path component:
 //     the extractor never resolves through a symlink the archive planted
 //     (TOCTOU-free; D31 pattern from the webproxy fix, issue #41).
