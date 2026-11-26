@@ -711,6 +711,7 @@
    và tài liệu console. `sẵn sàng` chỉ khi có e2e xanh trên CI; env-gated SKIP trên CI
    hoặc còn residual → `thử nghiệm`. Thêm câu cũ mơ hồ vào `tools/docs-stale-phrases.txt`
    nếu cần (`make check-docs`).
+   → **Xong 2026-11-26 Phiên 39 (#197, PR #198)**: bảng 22 tính năng trong README.
 2. **M2 — `stack.yaml` + `sandbox stack up|down|ps`.**
    a. Thiết kế trước (decision file): schema tối giản chỉ gồm trường `minictd` đã hỗ
       trợ (image/`template:`, cmd, env, `pasta_ports`, cpus/memory/pids, mount thư mục,
@@ -720,6 +721,23 @@
       hoặc JSON nếu thư viện làm phình binary, ghi số đo). Daemon không đổi.
    c. Test: MD e2e một stack 2 instance (web + db) có phụ thuộc + chờ sẵn sàng; down
       dọn sạch (không rò process/mount/netns).
+   → **Một phần 2026-11-26 Phiên 39 (#199, PR #200, D75)**: `stack.json` (JSON thay
+     YAML để giữ zero-dep; YAML qua `yq`), `DisallowUnknownFields`, topoSort + phát hiện
+     vòng, `sandbox stack up|down|ps`, 6 Go unit test. **Còn thiếu, làm trước M3**
+     (owner review 2026-11-26):
+     d. Thêm trường `pasta_ports` (map thẳng `RunSpec.PastaPorts`). Hiện stack không
+        khai báo được port, nên ready `http`/`tcp` trên 127.0.0.1 không trỏ tới service.
+     e. Ready `exec` đang được nhận trong schema nhưng trả lỗi "unsupported": hiện
+        thực qua `execv2` (exit 0 = sẵn sàng) hoặc bỏ khỏi schema; validate `type` lúc
+        parse, không đợi tới lúc chạy.
+     f. Ready `http` dùng `http.Client` có `Timeout` (hiện `http.Get` không timeout, có
+        thể treo quá `timeout_s`); validate `port` 1–65535 khi type là http/tcp.
+     g. `stack down` không nuốt lỗi: instance không tồn tại → bỏ qua, lỗi khác → in ra
+        và exit ≠ 0; chỉ in "removed" khi xoá thật.
+     h. MD e2e theo mục c (2 instance có `depends_on` + ready, `down` dọn sạch, lỗi ready
+        → rollback các instance đã chạy). Env-gated như MD47–49 nếu cần pasta.
+     i. Cập nhật README dòng `stack.yaml` → `stack.json`, nhãn `thử nghiệm` (M1), thêm
+        `examples/` một stack.json mẫu.
 3. **M3 — Registry template tĩnh.**
    a. Định dạng: `index.json` (name, version, sha256, size, created) + `<name>-<ver>.tar.zst`.
    b. `sandbox template push <name> --out DIR`: sinh file tĩnh từ template local.
