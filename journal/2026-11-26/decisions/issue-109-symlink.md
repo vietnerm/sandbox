@@ -1,6 +1,6 @@
 # Decision D70 — Issue #109: absolute-symlink refusal policy (keep, document, close)
 
-- **Phiên**: 35 (2026-11-28)
+- **Phiên**: 35 (2026-11-26)
 - **Issue**: #109 (oci: refuse absolute-symlink members)
 - **Slug**: `issue-109-symlink`
 
@@ -12,7 +12,7 @@ Issue #109 mở câu hỏi cho maintainer: refusal có chặn production use-cas
 - (b) rewrite target absolute → dst-relative lúc extract (WEAKEN D50 — cần threat-model note).
 - (c) cho phép absolute target chỉ khi resolve ra inside-dst (grey — vẫn là sanitize).
 
-## Quyết định (owner, 2026-11-28)
+## Quyết định (owner, 2026-11-26)
 **Chọn (a) — giữ từ chối như hiện tại (D50 nguyên trạng).** Lý do:
 1. **An toàn nhất**: D50 là fail-closed posture — KHÔNG sanitize, KHÔNG trust symlink target. Mọi phương án (b)/(c) đều weakening: rewrite/sanitize mở attack surface (TOCTOU, path confusion, symlink race). Maintainer principle: "reject, never sanitize" (D50 comment dòng 21).
 2. **Threat model giữ nguyên**: `secureUnpack` comment (dòng 22-24) ghi "a symlink planted by the archive can only point at paths INSIDE dst, so it can never reach host files" — absolute target violate invariant này. Cho phép (b)/(c) = phải viết threat-model note mới + test thêm.

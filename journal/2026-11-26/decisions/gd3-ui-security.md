@@ -1,6 +1,6 @@
 # Decision D71 — GĐ3 mục 4: UI security e2e (MD55-MD60) + XSS check
 
-- **Phiên**: 35 (2026-11-28, Việc 1)
+- **Phiên**: 35 (2026-11-26, Việc 1)
 - **Issue**: #177
 - **Slug**: `gd3-ui-security`
 

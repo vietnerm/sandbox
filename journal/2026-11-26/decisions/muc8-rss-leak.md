@@ -1,6 +1,6 @@
 # Decision D69 — GĐ2 mục 8: daemon idle RSS ≤ 30 MB gate + destroy no-leak e2e
 
-- **Phiên**: 34 (2026-11-27)
+- **Phiên**: 34 (2026-11-26)
 - **Issue**: #171 (GĐ2 mục 8 — mục cuối GĐ2)
 - **Slug**: `muc8-rss-leak`
 

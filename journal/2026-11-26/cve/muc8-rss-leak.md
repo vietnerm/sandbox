@@ -1,4 +1,4 @@
-# CVE Check — 2026-11-27 (Phiên 34, issue #171 mục 8)
+# CVE Check — 2026-11-26 (Phiên 34, issue #171 mục 8)
 
 - Kernel: `5.10.134-013.15.kangaroo.al8.x86_64` (dev machine)
 - Tool: `python3 tools/cve-check.py --kernel $(uname -r) --watchlist docs/cve-watchlist.md`

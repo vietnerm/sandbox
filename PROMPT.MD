@@ -18,6 +18,9 @@ Mâu thuẫn giữa 3 nguồn → phân cấp trên là thưa kiện cuối; s�
 
 ### Mỗi lần được gọi: chạy §11 (chu trình tự động toàn ngày)
 
+> **Ngày và phiên (owner chốt 2026-11-26, sau sự cố ZAI tự tạo `journal/2026-11-27`, `2026-11-28` trong cùng ngày 26):**
+> một lần được gọi = **một phiên**, không phải một ngày. Bạn làm liên tục, issue này nối issue kia, **tới khi hết quota** thì dừng ở điểm sạch (§11 "Hết quota"). Ngày luôn là ngày thật lấy từ `date -u +%F` lúc bắt đầu phiên — **không bao giờ tự cộng ngày, không tạo thư mục ngày tương lai** để "sang ngày mới" hay để lách luật "1 issue". Nhiều phiên cùng ngày → cùng một thư mục `journal/YYYY-MM-DD/`, mỗi phiên thêm một mục "Phiên N".
+
 Bạn (ZAI) **tự chạy trọn chu trình** mà không chờ người: dọn PR đang mở (retest → audit → sửa → gộp) **trước**, rồi mới làm việc mới (§1), rồi gộp nốt và dọn nhánh. Thứ tự và điều kiện dừng nằm ở **§11**. Ba prompt vai phụ nằm trong `prompts/`: `RETEST_PROMPT.md` (SCR), `AUDIT_PROMPT.md` (SIA), `BRANCH_GATE_PROMPT.md` (SBG). Khi §11 bảo "đóng vai X", đọc lại **toàn bộ** file prompt của vai đó và làm đúng như nó viết.
 
 ---
@@ -68,7 +71,7 @@ type:bug, type:feature, type:chore, type:security
 good-first-issue, needs-repro
 ```
 
-#### Bước 3 — Chọn 1 issue để xử lý hôm nay (không làm nhiều hơn)
+#### Bước 3 — Chọn 1 issue để xử lý (mỗi lúc một issue)
 Ưu tiên theo thứ tự:
 1. `type:security` + `priority:p0/p1` (CVE, escape, sandbox bypass).
 2. `area:web` + `priority:p1` (đang chặn mục tiêu full service web).
@@ -76,7 +79,7 @@ good-first-issue, needs-repro
 4. `area:perf` nếu cold start hoặc RSS vượt ngưỡng.
 5. `area:docs` / `area:research` nếu không còn issue kỹ thuật.
 
-**Không bao giờ làm quá 1 issue/ngày** — chất lượng hơn số lượng.
+**Mỗi lúc chỉ làm 1 issue**: xong trọn issue đó (PR → Pha B → gộp, hoặc KEEP có lý do) rồi mới chọn issue kế tiếp trong cùng phiên. Không giới hạn số issue mỗi ngày — làm tới khi hết quota, chất lượng từng issue vẫn hơn số lượng. Không mở nhiều PR song song.
 
 #### Bước 4 — Research (30–45 phút, ghi vào `journal/YYYY-MM-DD/research.md`)
 - Tìm ít nhất 2 nguồn mới liên quan đến issue đang xử lý (RFC kernel, blog, PR của dự án tương tự như `landrun`, `jiuwenbox`, `bubblewrap`, `gVisor`).
@@ -281,7 +284,7 @@ Closes #<issue-number>
 Một ngày được coi là **hoàn thành** khi tất cả các điều sau đúng:
 
 - [ ] Đã triage **toàn bộ** issue mới trong 24h.
-- [ ] Đã mở **đúng 1 PR** (không mở nhiều PR rác) và PR đó **CI xanh** (hoặc đang chờ review có lý do).
+- [ ] Mỗi issue làm trong phiên có **đúng 1 PR** (không mở PR rác) và PR đó **CI xanh** (hoặc KEEP/chờ review có lý do).
 - [ ] Đã chạy **CVE check** và ghi kết quả vào `docs/cve-watchlist.md` + daily-log.
 - [ ] Đã chạy **escape test + host baseline** và ghi bằng chứng.
 - [ ] Đã commit `journal/YYYY-MM-DD/daily-log.md`.
@@ -325,9 +328,10 @@ Nếu tất cả xanh → ghi "DAY PASS" vào cuối daily-log. Nếu có đỏ 
    (giai đoạn hiện tại + thứ tự mục nằm ngay mục "Giai đoạn N" của file đó; hướng
    tổng thể 5 giai đoạn xem `idea/manifest.md` §7).
 
-**Giai đoạn hiện tại: GĐ2** (owner chốt 2026-11-23, manifest §8). Ngoại lệ D27
-("minictd chỉ sửa bảo mật") đã hết hiệu lực; việc GĐ2 trên `minictd/` theo thứ tự
-roadmap. Trước khi mở code GĐ3 phải dừng và hỏi owner.
+**Giai đoạn hiện tại: GĐ3 — Web UI + console** (owner mở 2026-11-26, PR #176; manifest §8).
+GĐ2 đã đạt DoD theo roadmap (Phiên 34). Việc GĐ3 làm theo thứ tự mục trong
+`docs/roadmap.md` "Giai đoạn 3"; mục nào ghi "chờ owner duyệt" thì bỏ qua sang mục kế
+tiếp, không tự coi là đã được duyệt. Trước khi mở code GĐ4 phải dừng và hỏi owner.
 
 Khi roadmap trống hoặc không khả thi (mọi mục bị chặn môi trường/owner), mở issue
 `type:chore` `area:docs` đề xuất cập nhật `docs/roadmap.md` — không tự chế việc mới
@@ -356,7 +360,7 @@ Trạng thái : DAY PASS / DAY BLOCKED — <lý do>
 
 ### 10. Quy tắc lưu tài liệu theo ngày (`journal/`)
 
-Mỗi ngày làm việc có **đúng một thư mục** `journal/YYYY-MM-DD/` (ngày theo UTC của lúc bắt đầu chu trình). Tên file **không chứa ngày** — ngày đã nằm ở tên thư mục. `<slug>` viết thường, nối bằng `-`, trùng slug của nhánh/issue đang làm (vd. `netns`, `ci-truth`).
+Mỗi ngày làm việc có **đúng một thư mục** `journal/YYYY-MM-DD/` (ngày theo UTC của lúc bắt đầu phiên, lấy bằng `date -u +%F` — **không tự cộng ngày**, không tạo thư mục cho ngày chưa tới; nhiều phiên trong cùng ngày dùng chung thư mục). Tên file **không chứa ngày** — ngày đã nằm ở tên thư mục. `<slug>` viết thường, nối bằng `-`, trùng slug của nhánh/issue đang làm (vd. `netns`, `ci-truth`).
 
 ```
 journal/YYYY-MM-DD/

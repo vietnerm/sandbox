@@ -30,7 +30,7 @@
 5. Ghi `journal/YYYY-MM-DD/daily-log.md` (quy tắc thư mục: PROMPT.MD §10)
 
 ## Đã xong
-- [x] 2026-11-27 (phiên 34, SDDA): **GĐ2 mục 8 — daemon idle RSS ≤ 30 MB gate +
+- [x] 2026-11-26 (phiên 34, SDDA): **GĐ2 mục 8 — daemon idle RSS ≤ 30 MB gate +
   destroy no-leak e2e (issue #171, D69)**. MD53: Run(webport) → Stop+Remove → 0 process
   leak (pgrep) + 0 mount leak (mountinfo grep) + dir gone. MD54: daemon idle RSS
   ≤ 30 MB (scrape /metrics + cross-check /proc VmRSS ±64 KB); dev baseline 6372 KB.
@@ -144,7 +144,7 @@
   = opt-in `MINICTD_OCI_REMOTE_REF` (MD33, SKIP unset — flake class documented);
   residual #109: absolute symlink targets bị refuse (rootfs của repo: 271 applet
   links `/bin/busybox` — không boot được qua `oci:`) → **resolved D70 (owner
-  2026-11-28): giữ refusal D50 nguyên trạng, document yêu cầu relative symlinks
+  2026-11-26): giữ refusal D50 nguyên trạng, document yêu cầu relative symlinks
   trong README, đóng #109**;
   suite cleanup leak fix (ocireg RPID mất trong subshell → pkill theo argv).
   Mutants: M1 (bỏ drain) MD34 đỏ; M2b (drop refusal errors) MD34 đỏ qua provenance
@@ -582,7 +582,7 @@
    "Hướng xa" cuối file).
 8. Đo: control plane idle ≤ 30 MB RSS (**tính cả observability mục 7**); destroy không
    rò rỉ process/mount/netns.
-   → **Xong 2026-11-27 Phiên 34 (#171, D69 qua PR squash)**:
+   → **Xong 2026-11-26 Phiên 34 (#171, D69 qua PR squash)**:
      - **MD53 destroy no-leak**: Run(webport) → Stop + Remove → verify 0 process leak
        (`pgrep -f $STATE/<name>` rỗng — shim/payload/webproxy/pasta đều gone) + 0 mount
        leak (`grep $STATE/<name> /proc/self/mountinfo` rỗng — bind mounts unmounted) +
@@ -609,27 +609,35 @@
    `GET /v1/templates` + `GET /v1/backups`, adapter `console/src/console/minictd.ts`
    (đăng nhập token, list/inspect/stats, run với cpus/memory/pasta_ports, start/stop/
    restart/remove, save-template/snapshot, tạo lại từ `template:`/`backup:`).
-   → **Xong 2026-11-28 Phiên 35 (#179, D72)**: API `POST /v1/templates|backups/{name}/remove`
+   → **Xong 2026-11-26 Phiên 35 (#179, D72)**: API `POST /v1/templates|backups/{name}/remove`
      (validName + idempotent 204 + symlink-safe); `HostConfig` trong `ContainerJSON`
      (NanoCpus/Memory/PidsLimit từ spec.json); console map resources + bật nút xoá
      Templates (real mode) + cảnh báo quota disk từ state notes. MD61 e2e + 8 Go unit.
 2. Web terminal vào instance qua `exec` của GĐ2.
    → **Line-mode xong 2026-11-26** (mỗi dòng = `execv2` `/bin/sh -c`, giữ cwd).
    Còn thiếu: endpoint PTY (WebSocket hoặc stream hai chiều) cho vi/top/REPL.
+   → **Research xong 2026-11-26 Phiên 35 (#181)**: chọn (B) openpty sau setns trong
+     `minict-exec` + 2 kênh SSE (stdout) + POST (stdin/resize), stdlib only, < 1 MB RSS/phiên.
+     **Code: chờ owner duyệt kế hoạch #181** — khi owner chưa duyệt, làm mục 3 trước.
 3. Biểu đồ CPU/RAM/IO theo instance: UI scrape `/metrics` của GĐ2 mục 7 (cùng token,
    qua 127.0.0.1), giữ lịch sử ngắn phía trình duyệt; không thêm collector trong daemon.
    → 2026-11-26: biểu đồ CPU/RAM dùng `GET /{name}/stats` (cùng nguồn cgroup với
    `/metrics`), poll 2 s, lịch sử trong trình duyệt. Còn thiếu: IO + chuyển sang
    parse `/metrics` nếu cần một lần gọi cho mọi instance.
+   → Việc kế tiếp: thêm biểu đồ IO (block read/write, net rx/tx — đã có trong `/stats`)
+     vào trang chi tiết + Monitoring; MD e2e hoặc Go unit cho dữ liệu, `npx tsc --noEmit`
+     + `npx next build` sạch.
 4. Test bảo mật UI: CSRF/token, không bind 0.0.0.0 mặc định, path traversal API.
    → 2026-11-26: Go unit `internal/server/ui_test.go` (traversal/symlink/dotfile,
    405 cho ghi, API vẫn 401 khi có UI, CSP không `unsafe-inline` cho script,
    không `--ui-dir` thì `/` vẫn sau auth). Token là header Bearer, không cookie.
-   → **E2e xong 2026-11-28 Phiên 35 (#177, D71)**: MD55-MD60 (GET / 200 + CSP
+   → **E2e xong 2026-11-26 Phiên 35 (#177, D71)**: MD55-MD60 (GET / 200 + CSP
      sha256 no-unsafe-inline + X-Frame DENY; traversal/symlink/dotfile no-leak;
      POST 405; API 401 no-token UI-on; GET / 401 no-token UI-off legacy;
      --ui-dir no index.html → exit ≠ 0) + XSS grep (0 dangerouslySetInnerHTML/
      innerHTML, xterm write() safe).
+5. CI build console: thêm bước `make console` (tsc + next build) vào CI để PR làm hỏng
+   console bị chặn. **Chạm `.github/workflows` → PR riêng, gắn `needs-human`, không tự gộp (G7).**
 
 ## Giai đoạn 4 — Backend microVM Firecracker (chưa mở code)
 
