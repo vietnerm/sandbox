@@ -622,6 +622,14 @@
      `minict-exec`, endpoint SSE + POST stdin/resize trong `minictd`, console dùng xterm
      thật thay line-mode khi endpoint có), MD e2e (vi/top chạy được, đóng phiên dọn PTY),
      giữ ngân sách RSS. Làm sau mục 3 nếu mục 3 đang dở.
+   → **PTY backend xong 2026-11-26 Phiên 36 (#187, D73)**: minict-exec `--pty` (openpty
+     + slave dup2 + master pump select + control_fd TIOCSWINSZ) + daemon endpoints
+     (terminal.go: POST /terminal → sid, GET /stream SSE, POST /input, POST /resize,
+     SIGHUP cleanup) + Store.PrepareTerminal (env-file reuse ExecV2). MD62 e2e env-gated.
+   → **Console xterm attach xong 2026-11-26 Phiên 37 (#189)**: adapter rawText() cho
+     PTY input (text/plain), followSse() đọc SSE frames, route mappings /terminal/*.
+     Terminal view: thử POST /terminal → PTY mode (SSE+input+resize), fallback ExecShell.
+     tsc + next build clean.
 3. Biểu đồ CPU/RAM/IO theo instance: UI scrape `/metrics` của GĐ2 mục 7 (cùng token,
    qua 127.0.0.1), giữ lịch sử ngắn phía trình duyệt; không thêm collector trong daemon.
    → 2026-11-26: biểu đồ CPU/RAM dùng `GET /{name}/stats` (cùng nguồn cgroup với

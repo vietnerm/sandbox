@@ -231,3 +231,27 @@ Escape test: PASS (56+8+0; MD62 SKIP env-gated)
 Host       : unchanged
 Trạng thái : DAY PASS — 2 issue merged, GĐ3 mục 2+3 tiến triển
 ================================
+
+## Phiên 37 — Orchestrator (ZAI, §11) — GĐ3 mục 2 console attach (issue #189)
+
+### Việc — Console xterm PTY attach (#189, PR #190 squash `56fc3a5`)
+- Adapter (minictd.ts): rawText() cho PTY input (text/plain, không JSON); route
+  mappings /terminal, /terminal/{sid}/input, /terminal/{sid}/resize; followSse()
+  đọc SSE data: frames từ streaming fetch.
+- Terminal view (sandbox-terminal.tsx): thử POST /terminal → PTY mode (SSE stream
+  → term.write, POST input → onData, POST resize → onResize). Fallback ExecShell
+  nếu endpoint unavailable. ptySidRef + ptyCleanupRef cleanup khi unmount.
+- tsc --noEmit + next build clean. CI 6/6 green.
+
+### GĐ3 tiến độ
+- Mục 1: xong (UI + API delete/Inspect/quota)
+- Mục 2: xong (line-mode + PTY backend #187 + console attach #189)
+- Mục 3: xong (CPU/RAM + IO/Network charts #185)
+- Mục 4: xong (MD55-60 + XSS #177)
+- Mục 5: xong (CI console job, owner #184)
+
+=== SDDA REPORT — 2026-11-26 (Phiên 37) ===
+Issue xử lý : #189 (console PTY attach)
+PR mở      : #190 squash 56fc3a5 — CI 6/6 xanh
+Trạng thái : DAY PASS — GĐ3 mục 2 hoàn tất (backend + console)
+================================
