@@ -320,3 +320,36 @@ Issue xử lý : #191 (research) + #193 (scaffold) + #196 (wire)
 PR mở      : #192, #194, #196 — all CI 6/6 xanh — merged
 Trạng thái : DAY PASS — GĐ4 scaffolding hoàn chỉnh, env-gated ErrNoKVM
 ================================
+
+## Phiên 39 — Orchestrator (ZAI, §11) — Track M M1+M2
+
+### Sync
+- Pull main `183acf3` (Phiên 38 GĐ4). PROMPT.MD §8: GĐ4 research-only → Track M.
+- 0 PR mở, 2 issue (#99 p3, #8 CVE p2).
+
+### M1 — Nhãn trạng thái tài liệu (#197, PR #198 squash `a2f563d`)
+- README.md: bảng "Trạng thái tính năng" (22 tính năng: sẵn sàng/thử nghiệm/kế hoạch).
+- Fix overlayfs limitation (D66 đã xong). Stale phrase thêm.
+- minictd/README + console/README: nhãn trạng thái.
+- check-docs PASS. Hai phép thử §3: docs-only (lightweight), removable.
+
+### M2 — stack.json + sandbox stack up|down|ps (#199, PR #200 squash `09c2ffc`, D75)
+- stack.go: JSON schema (stdlib, zero dep). DisallowUnknownFields. topoSort (circular
+  detection). stackUp (start + waitForReady TCP/HTTP), stackDown (reverse stop+remove),
+  stackPs.
+- main.go: "stack" subcommand (up|down|ps, --file).
+- 6 Go unit tests PASS.
+- Hai phép thử §3: client-side (0 daemon impact), removable (core works without).
+
+### Track M tiến độ
+- M1: xong (#197)
+- M2: xong (#199)
+- M3: kế tiếp (registry template tĩnh — index.json + tar.zst + push/pull)
+- M4: chờ owner duyệt (cluster — docs only)
+- M5: kế hoạch (Ansible + GitHub Action)
+
+=== SDDA REPORT — 2026-11-26 (Phiên 39) ===
+Issue xử lý : #197 (M1 labels) + #199 (M2 stack)
+PR mở      : #198 + #200 — all CI 6/6 xanh — merged
+Trạng thái : DAY PASS — Track M M1+M2 hoàn tất
+================================
