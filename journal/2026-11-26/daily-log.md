@@ -194,3 +194,40 @@ Bối cảnh: owner mở GĐ3 (PR #176, console xuất tĩnh do `minictd --ui-di
 
 - Owner duyệt kế hoạch PTY (B) của #181 → roadmap GĐ3 mục 2: code PTY là việc kế tiếp của ZAI (sau mục 3 nếu đang dở).
 - Owner duyệt GĐ3 mục 5: job `console` trong `ci.yml` chạy `make console` (`npm ci --ignore-scripts` + `tsc --noEmit` + `next build`).
+
+## Phiên 36 — Orchestrator (ZAI, §11) — GĐ3 việc tiếp (issue #185, #187)
+
+### Sync
+- Pull main `14225c4` (owner PR #183 journal gộp + PROMPT.MD phiên≠ngày, #184 CI console + owner duyệt PTY plan B).
+- 0 PR mở, 2 issue (#99 p3, #8 CVE p2). GĐ3 hiện tại (PROMPT.MD §8 cập nhật).
+
+### Việc 1 — Mục 3: biểu đồ IO + Network (#185, PR #186 squash `d9cbd02`)
+- sandbox-detail.tsx: mở rộng Metrics.stats + Block IO (read/write rate KB/s) + Network IO (rx/tx rate) history. Compute delta per 2s. 2 chart mới (amber + danger).
+- minictd.ts: monitoring response thêm IO fields per sandbox.
+- tsc --noEmit + next build clean. check-docs PASS. CI 6/6 green.
+
+### Việc 2 — Mục 2: PTY backend (#187, PR #188 squash `2da0da8`, D73)
+- minict-exec.c --pty mode: openpty + slave dup2 + master pump (select: master→stdout, stdin→master, control_fd→ioctl TIOCSWINSZ). TERM=xterm-256color. Same child setup (PDEATHSIG/harden/rlimits/capdrop/seccomp/env).
+- terminal.go (daemon, stdlib only): POST /terminal → sid; GET /stream → SSE; POST /input → stdin; POST /resize → TIOCSWINSZ. Session manager + SIGHUP→SIGKILL 5s cleanup.
+- Store.PrepareTerminal: env-file (rlimits+seccomp+env, same as ExecV2).
+- MD62 e2e env-gated (dev 5.10 SKIP — openpty in userns unstable; CI kernel 7.x should PASS).
+- CI 6/6 green. go build+vet+gofmt clean.
+
+### CVE Check
+- Kernel 5.10.134. 4 CVE tracked (watchlist, 0 mới). 0 ảnh hưởng sandbox.
+
+### Validation
+- make test: 10 suites 0 FAIL. test-minictd 56 PASS + 8 SKIP + 0 FAIL. test-web 9/9. Host baseline unchanged.
+
+### Kế tiếp
+- Console xterm attach (dùng PTY endpoint thay line-mode) — issue kế tiếp.
+- MD62 cần verify trên CI runner (kernel 7.x).
+
+=== SDDA REPORT — 2026-11-26 (Phiên 36) ===
+Issue xử lý : #185 (IO charts) + #187 (PTY backend)
+PR mở      : #186 squash d9cbd02 + #188 squash 2da0da8 — CI 6/6 xanh
+CVE check  : 4 tracked, 0 mới
+Escape test: PASS (56+8+0; MD62 SKIP env-gated)
+Host       : unchanged
+Trạng thái : DAY PASS — 2 issue merged, GĐ3 mục 2+3 tiến triển
+================================
