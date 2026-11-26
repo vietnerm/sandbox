@@ -99,6 +99,8 @@ export interface Sandbox {
   command?: string[];
   env?: Record<string, string>;
   resources: { cpus: number; memory_mb: number };
+  pids_limit?: number; // GĐ3 mục 1 (issue #179): from HostConfig.PidsLimit
+  state_notes?: string[]; // GĐ3 mục 1: daemon notes (quota warnings, cgroup fallback, etc.)
   lifecycle: { idle_timeout_secs: number; keep_alive: boolean };
   egress: string[];
   egress_mode?: NetMode;

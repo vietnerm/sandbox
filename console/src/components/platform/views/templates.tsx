@@ -191,14 +191,14 @@ export function TemplatesView() {
                 >
                   <Rocket className="size-3.5" /> {s.base_image === "backup" ? "Restore" : "New sandbox"}
                 </button>
-                {isDemo() && <button
+                <button
                   onClick={() => remove(s)}
                   disabled={busyId === s.id}
                   className={cn(btn, "border-line bg-surface text-gray-400 hover:border-danger/40 hover:text-danger")}
                   aria-label={`Delete template ${s.name}`}
                 >
                   <Trash2 className="size-3.5" />
-                </button>}
+                </button>
               </div>
             </Panel>
           ))}

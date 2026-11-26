@@ -68,6 +68,8 @@ func (s *Server) Handler() http.Handler {
 	// GĐ3 mục 1: read-only artifact lists for the console (#128/#130 residual)
 	mux.HandleFunc("GET /v1/templates", s.handleListTemplates)
 	mux.HandleFunc("GET /v1/backups", s.handleListBackups)
+	mux.HandleFunc("POST /v1/templates/{name}/remove", s.handleRemoveTemplate) // GĐ3 mục 1
+	mux.HandleFunc("POST /v1/backups/{name}/remove", s.handleRemoveBackup)
 
 	api := s.auth(s.requestLog(mux))
 	if s.uiDir == "" {
@@ -318,6 +320,25 @@ func (s *Server) handleListBackups(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"backups": bs})
+}
+
+// handleRemoveTemplate deletes a saved template (GĐ3 mục 1, issue #179).
+// Idempotent: 204 whether the template existed or not.
+func (s *Server) handleRemoveTemplate(w http.ResponseWriter, r *http.Request) {
+	if err := s.store.RemoveTemplate(nameOf(r)); err != nil {
+		mapErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleRemoveBackup deletes a snapshot archive (GĐ3 mục 1, issue #179).
+func (s *Server) handleRemoveBackup(w http.ResponseWriter, r *http.Request) {
+	if err := s.store.RemoveBackup(nameOf(r)); err != nil {
+		mapErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleSaveTemplate(w http.ResponseWriter, r *http.Request) {

@@ -204,7 +204,7 @@ cleanup() {
     # probe block) — clean it too, plus any daemon left on it.
     pkill -TERM -f -- ".minictd-ovl-test" 2>/dev/null || true
     rm -rf "$HOME/.minictd-ovl-test" 2>/dev/null || true
-    for n in md-a md-b md-c md-auto md-t md-f md-oci md-oci-bad md-oci-h md-oci-r md-oci-a md-rl md-s6a md-s6b md-tpl-src md-tpl-dst md-snap-src md-snap-dst md-sec md-sec2 md-sec-dst md-pasta md-pasta-bad1 md-pasta-bad2 md-obs md-mtr md-leak; do
+    for n in md-a md-b md-c md-auto md-t md-f md-oci md-oci-bad md-oci-h md-oci-r md-oci-a md-rl md-s6a md-s6b md-tpl-src md-tpl-dst md-snap-src md-snap-dst md-sec md-sec2 md-sec-dst md-pasta md-pasta-bad1 md-pasta-bad2 md-obs md-mtr md-leak md-del-src; do
         curl -s -m 5 -X POST -H "Authorization: Bearer $TOKEN" \
             "$API/v1/sandboxes/$n/remove" >/dev/null 2>&1 || true
     done
@@ -1693,6 +1693,60 @@ run_case MD57 "D71 gd3-ui: POST / -> 405" pass md57
 run_case MD58 "D71 gd3-ui: API endpoints 401 no-token (UI on)" pass md58
 run_case MD59 "D71 gd3-ui: GET / 401 no-token (no UI, legacy)" pass md59
 run_case MD60 "D71 gd3-ui: --ui-dir no index.html -> daemon exit != 0" pass md60
+
+# ---------- GĐ3 mục 1: API delete template/backup (issue #179, D72) ----------
+#   MD61  POST /v1/templates/{name}/remove + /v1/backups/{name}/remove:
+#         save-template -> remove -> gone; snapshot -> remove -> gone;
+#         idempotent (remove twice -> 204); traversal name -> 400
+md61() {
+    local src="md-del-src"
+    # clean up any leftover
+    api POST /v1/sandboxes/$src/remove >/dev/null 2>&1 || true
+    sleep 0.2
+    # Create + stop a source instance
+    api POST /v1/run "$(cat <<EOF
+{"name":"$src","image":"base","cmd":["/bin/sh","-c","echo del-marker > /tmp/marker; sleep 5"]}
+EOF
+)" >/dev/null || return 1
+    sleep 0.4
+    api POST /v1/sandboxes/$src/stop >/dev/null || return 1
+    sleep 0.4
+    # Save as template
+    api POST /v1/sandboxes/$src/save-template '{"template":"md-del-tpl"}' >/dev/null || return 1
+    # Verify template exists
+    api GET /v1/templates >/dev/null || return 1
+    python3 -I -c "import json,sys; d=json.load(open(sys.argv[1])); assert any(t['name']=='md-del-tpl' for t in d['templates']), 'template not found'" "$WORK/resp" || { echo "template not listed"; return 1; }
+    # Remove template via API
+    local code
+    code=$(curl -s -m 10 -o /dev/null -w '%{http_code}' -X POST         -H "Authorization: Bearer $TOKEN" "$API/v1/templates/md-del-tpl/remove")
+    [[ "$code" == "204" ]] || { echo "remove template: got $code, want 204"; return 1; }
+    # Verify gone
+    api GET /v1/templates >/dev/null
+    python3 -I -c "import json,sys; d=json.load(open(sys.argv[1])); assert not any(t['name']=='md-del-tpl' for t in d['templates']), 'template still listed'" "$WORK/resp" || { echo "template not deleted"; return 1; }
+    # Idempotent: remove again -> 204
+    code=$(curl -s -m 10 -o /dev/null -w '%{http_code}' -X POST         -H "Authorization: Bearer $TOKEN" "$API/v1/templates/md-del-tpl/remove")
+    [[ "$code" == "204" ]] || { echo "idempotent remove: got $code, want 204"; return 1; }
+    # Traversal name -> 400
+    code=$(curl -s -m 10 -o /dev/null -w '%{http_code}' -X POST         -H "Authorization: Bearer $TOKEN" "$API/v1/templates/..%2Fetc/remove")
+    [[ "$code" == "4"* ]] || { echo "traversal name: got $code, want 4xx"; return 1; }
+    # Snapshot -> backup -> remove
+    api POST /v1/sandboxes/$src/start >/dev/null || return 1
+    sleep 0.3
+    api POST /v1/sandboxes/$src/stop >/dev/null || return 1
+    sleep 0.3
+    api POST /v1/sandboxes/$src/snapshot '{"backup":"md-del-bak"}' >/dev/null || return 1
+    api GET /v1/backups >/dev/null
+    python3 -I -c "import json,sys; d=json.load(open(sys.argv[1])); assert any(b['name']=='md-del-bak' for b in d['backups']), 'backup not found'" "$WORK/resp" || { echo "backup not listed"; return 1; }
+    code=$(curl -s -m 10 -o /dev/null -w '%{http_code}' -X POST         -H "Authorization: Bearer $TOKEN" "$API/v1/backups/md-del-bak/remove")
+    [[ "$code" == "204" ]] || { echo "remove backup: got $code, want 204"; return 1; }
+    api GET /v1/backups >/dev/null
+    python3 -I -c "import json,sys; d=json.load(open(sys.argv[1])); assert not any(b['name']=='md-del-bak' for b in d['backups']), 'backup still listed'" "$WORK/resp" || { echo "backup not deleted"; return 1; }
+    # cleanup
+    api POST /v1/sandboxes/$src/remove >/dev/null 2>&1 || true
+    echo "MD61 OK: template+backup remove 204, idempotent, traversal 4xx"
+}
+run_case MD61 "D72 gd3-api: remove template/backup 204 + idempotent + traversal 4xx" pass md61
+
 run_case XSS  "D71 gd3-ui: console source no dangerouslySetInnerHTML/innerHTML" pass md55b_xss
 
 echo "=== summary: PASS=$PASS SKIP=$SKIPPED FAIL=$FAIL ==="

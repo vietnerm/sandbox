@@ -97,6 +97,8 @@ interface ContainerJSON {
   State: { Status: string; Running: boolean; Pid: number };
   Config: { Image: string; Labels: Record<string, string> | null; User: string; Cmd: string[] | null };
   Mounts: { Type: string; Source: string; Destination: string; RW: boolean }[] | null;
+  // GĐ3 mục 1 (issue #179): resource limits from spec.json (docker inspect parity).
+  HostConfig?: { NanoCpus?: number; Memory?: number; PidsLimit?: number };
 }
 
 interface InstanceState {
@@ -153,9 +155,14 @@ async function loadOne(name: string): Promise<Snapshot> {
     status: running ? "running" : "stopped",
     image: cj.Config.Image || "base",
     command: cj.Config.Cmd ?? undefined,
-    // minictd's inspect does not echo the RunSpec limits back; 0 = unknown
-    // (the detail page shows the live cgroup limit from /stats instead)
-    resources: { cpus: 0, memory_mb: 0 },
+    // GĐ3 mục 1 (issue #179): map HostConfig limits from inspect (spec.json).
+    // NanoCpus = cpus * 1e9; Memory in bytes → MB; PidsLimit → pids_limit.
+    resources: {
+      cpus: cj.HostConfig?.NanoCpus ? cj.HostConfig.NanoCpus / 1e9 : 0,
+      memory_mb: cj.HostConfig?.Memory ? Math.round(cj.HostConfig.Memory / (1024 * 1024)) : 0,
+    },
+    pids_limit: cj.HostConfig?.PidsLimit || undefined,
+    state_notes: st?.notes ?? undefined,
     lifecycle: { idle_timeout_secs: 0, keep_alive: false },
     egress: [],
     egress_mode: "none",
@@ -378,6 +385,19 @@ export async function minictdApi<T>(method: string, fullPath: string, body?: unk
     const hit = (await listArtifacts()).find((s) => s.id === id || s.name === id);
     if (!hit) throw new MinictdError(404, "not_found", "Không tìm thấy template");
     return r(hit);
+  }
+  // GĐ3 mục 1 (issue #179): DELETE /v1/snapshots/{id} → remove template/backup.
+  // id = "template:<name>" or "backup:<name>" (same as Artifact.Image).
+  if (seg[0] === "v1" && seg[1] === "snapshots" && seg[2] && method === "DELETE") {
+    const id = decodeURIComponent(seg[2]);
+    const colon = id.indexOf(":");
+    if (colon < 1) throw new MinictdError(400, "bad_id", `id không hợp lệ: ${id}`);
+    const kind = id.slice(0, colon);
+    const name = enc(id.slice(colon + 1));
+    if (kind === "template") await json("POST", `/v1/templates/${name}/remove`);
+    else if (kind === "backup") await json("POST", `/v1/backups/${name}/remove`);
+    else throw new MinictdError(400, "bad_kind", `loại không hỗ trợ: ${kind}`);
+    return r(undefined as void);
   }
 
   // ── fleet views (computed from per-instance stats) ──

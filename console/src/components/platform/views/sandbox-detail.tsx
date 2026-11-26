@@ -361,6 +361,13 @@ export function SandboxDetailView() {
 
       {/* ── facts ────────────────────────────────────────────────── */}
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[2fr_1fr]">
+        {/* GĐ3 mục 1 (issue #179): disk quota warning from daemon state notes */}
+        {sandbox.stateNotes?.some((n) => /quota/i.test(n)) && (
+          <div className="rounded-lg border border-warn/30 bg-warn/10 p-3 text-[11px] leading-relaxed text-warn">
+            <strong>Disk quota:</strong>{" "}
+            {sandbox.stateNotes.filter((n) => /quota/i.test(n)).join("; ")}
+          </div>
+        )}
         <Panel className="p-6">
           <SectionTitle title="Sandbox" vi="Thông tin sandbox" />
           <div className="mt-3">
