@@ -48,6 +48,7 @@ Nhãn theo Track M M1 (manifest §9, D74): `sẵn sàng` = e2e xanh trên CI; `t
 | systemd `--user` unit | thử nghiệm | MD22 chỉ verify cú pháp |
 | Observability (/metrics + log JSON) | sẵn sàng | MD50-52 PASS CI |
 | Web console (Next.js xuất tĩnh) | sẵn sàng | MD55-60+XSS PASS CI |
+| Files view qua execv2 (#208) | thử nghiệm | MD67 PASS; 10 unit parser; giới hạn 1 MB; reset 501 |
 | API xoá template/backup + Inspect HostConfig | sẵn sàng | MD61 PASS CI |
 | Firecracker microVM (GĐ4) | kế hoạch | scaffolding only, cần /dev/kvm |
 | `stack.json` multi-instance (Track M M2) | thử nghiệm | client-side `stack up|down|ps`, ready http/tcp/exec, pasta_ports (#203) |
