@@ -17,6 +17,19 @@
    ──────────────────────────────────────────────────────────────────── */
 
 import type { Sandbox, SnapshotInfo, VolumeInfo } from "./api";
+import {
+  FS_LIST_SCRIPT,
+  FS_MAX_FILE,
+  FS_STAT_ONE_SCRIPT,
+  assertSafeName,
+  assertSafePath,
+  b64ToBytes,
+  bytesToB64,
+  decodeBest,
+  joinPath,
+  parseStatEntries,
+  utf8Bytes,
+} from "@/lib/files-parse";
 
 export class MinictdError extends Error {
   status: number;
@@ -294,13 +307,35 @@ export interface ExecResult {
   timed_out: boolean;
 }
 
-export async function execv2(name: string, cmd: string[], timeoutS = 60): Promise<ExecResult> {
+export async function execv2(name: string, cmd: string[], timeoutS = 60, stdin?: string): Promise<ExecResult> {
+  const payload: Record<string, unknown> = { cmd, timeout_s: timeoutS, max_output_bytes: 1_000_000 };
+  if (stdin !== undefined) payload.stdin = stdin; // Go json: base64 string → []byte (#208)
   const r = await json<{ exit_code: number; stdout?: string; stderr?: string; timed_out?: boolean }>(
     "POST",
     `/v1/sandboxes/${enc(name)}/execv2`,
-    { cmd, timeout_s: timeoutS, max_output_bytes: 1_000_000 },
+    payload,
   );
   return { exit_code: r.exit_code, stdout: r.stdout ?? "", stderr: r.stderr ?? "", timed_out: !!r.timed_out };
+}
+
+/** #208 (D79): stat một path → FsEntry (dùng sau create/upload). */
+async function statEntry(id: string, p: string): Promise<{
+  name: string; path: string; type: "dir" | "file"; size: number; mode: string; mtime: number; owner: string;
+}> {
+  const st = await execv2(id, ["/bin/sh", "-c", FS_STAT_ONE_SCRIPT, "sh", p], 30);
+  if (st.exit_code !== 0) throw new MinictdError(500, "stat_failed", `stat thất bại: ${st.stderr.slice(0, 200)}`);
+  const rcols = st.stdout.trim().split("\t"); // [type, size, mtime, mode]
+  if (rcols.length < 4) throw new MinictdError(500, "stat_failed", `stat trả kết quả lạ: ${st.stdout.slice(0, 80)}`);
+  const [typeCol, sizeS, mtimeS, modeS] = rcols;
+  return {
+    name: p.slice(p.lastIndexOf("/") + 1),
+    path: p,
+    type: typeCol === "directory" ? "dir" : "file",
+    size: Number(sizeS) || 0,
+    mode: modeS ?? "",
+    mtime: Number(mtimeS) || 0,
+    owner: "",
+  };
 }
 
 /* ── router ────────────────────────────────────────────────────────── */
@@ -397,6 +432,90 @@ export async function minictdApi<T>(method: string, fullPath: string, body?: unk
     if (sub === "snapshot" && method === "POST") {
       const name = String((body as { name?: string })?.name ?? "");
       return r(await json("POST", `${base}/snapshot`, { backup: name }));
+    }
+    // ── #208 (D79): Files qua execv2 — daemon không đổi ──
+    // SAFETY: path/name là OPERAND argv (sh -c <CONSTANT> sh <path>), không
+    // ghép vào script; scripts là hằng số trong lib/files-parse.ts.
+    if (sub === "files" && method === "GET") {
+      const dirPath = assertSafePath(q.get("path") ?? "/");
+      const out = await execv2(id, ["/bin/sh", "-c", FS_LIST_SCRIPT, "sh", dirPath], 60);
+      if (out.exit_code !== 0) throw new MinictdError(500, "list_failed", `ls thất bại: ${out.stderr.slice(0, 200)}`);
+      const entries = parseStatEntries(out.stdout).map((e) => ({
+        name: e.name,
+        path: joinPath(dirPath, e.name),
+        type: e.type,
+        size: e.size,
+        mode: e.mode,
+        mtime: e.mtime,
+        owner: "",
+      }));
+      entries.sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name) : a.type === "dir" ? -1 : 1));
+      return r({ path: dirPath, home: "/", entries });
+    }
+    if (sub === "files/read" && method === "GET") {
+      const p = assertSafePath(q.get("path") ?? "/");
+      const st = await execv2(id, ["/bin/sh", "-c", FS_STAT_ONE_SCRIPT, "sh", p], 30);
+      if (st.exit_code !== 0) throw new MinictdError(404, "not_found", `Không đọc được ${p}: ${st.stderr.slice(0, 200)}`);
+      const rcols = st.stdout.trim().split("\t"); // [type, size, mtime, mode]
+      if (rcols.length < 4) throw new MinictdError(500, "read_failed", `stat trả kết quả lạ: ${st.stdout.slice(0, 80)}`);
+      const [typeCol, sizeS, mtimeS, modeS] = rcols;
+      const size = Number(sizeS);
+      if (!Number.isFinite(size)) throw new MinictdError(500, "read_failed", `stat trả kết quả lạ: ${st.stdout.slice(0, 80)}`);
+      if (size > FS_MAX_FILE) {
+        throw new MinictdError(413, "too_large", `File ${p} (${size} bytes) vượt giới hạn đọc ${FS_MAX_FILE} bytes qua execv2 — tải bằng daemon API (phương án 2)`);
+      }
+      const b64 = await execv2(id, ["/bin/sh", "-c", 'base64 "$1"', "sh", p], 60);
+      if (b64.exit_code !== 0) throw new MinictdError(500, "read_failed", `base64 thất bại: ${b64.stderr.slice(0, 200)}`);
+      const { content, encoding } = decodeBest(b64ToBytes(b64.stdout));
+      return r({ path: p, content, encoding, mode: modeS ?? "", mtime: Number(mtimeS) || 0, size });
+    }
+    if (sub === "files/content" && method === "PUT") {
+      const b = (body ?? {}) as { path?: string; content?: string };
+      const p = assertSafePath(b.path);
+      const bytes = utf8Bytes(b.content ?? "");
+      if (bytes.length > FS_MAX_FILE) throw new MinictdError(413, "too_large", `Nội dung ${bytes.length} bytes vượt giới hạn ghi ${FS_MAX_FILE} bytes`);
+      const w = await execv2(id, ["/bin/sh", "-c", 'cat > "$1"', "sh", p], 60, bytesToB64(bytes));
+      if (w.exit_code !== 0) throw new MinictdError(500, "write_failed", `ghi thất bại: ${w.stderr.slice(0, 200)}`);
+      return r({ ok: true, path: p, size: bytes.length });
+    }
+    if (sub === "files" && method === "POST") {
+      const b = (body ?? {}) as { path?: string; type?: string };
+      const p = assertSafePath(b.path);
+      const script = b.type === "dir" ? 'mkdir -p "$1"' : '[ -e "$1" ] || : > "$1"';
+      const c = await execv2(id, ["/bin/sh", "-c", script, "sh", p], 30);
+      if (c.exit_code !== 0) throw new MinictdError(500, "create_failed", `tạo thất bại: ${c.stderr.slice(0, 200)}`);
+      return r(await statEntry(id, p));
+    }
+    if (sub === "files/move" && method === "POST") {
+      const b = (body ?? {}) as { from?: string; to?: string };
+      const from = assertSafePath(b.from);
+      const to = assertSafePath(b.to);
+      const m = await execv2(id, ["/bin/sh", "-c", 'mv "$1" "$2"', "sh", from, to], 60);
+      if (m.exit_code !== 0) throw new MinictdError(500, "move_failed", `mv thất bại: ${m.stderr.slice(0, 200)}`);
+      return r({ ok: true, path: to });
+    }
+    if (sub === "files/upload" && method === "POST") {
+      const b = (body ?? {}) as { path?: string; name?: string; content?: string; encoding?: string };
+      const dir = assertSafePath(b.path ?? "/");
+      const name = assertSafeName(b.name);
+      const full = joinPath(dir, name);
+      let bytes: Uint8Array;
+      if (b.encoding === "base64") bytes = b64ToBytes(String(b.content ?? ""));
+      else bytes = utf8Bytes(String(b.content ?? ""));
+      if (bytes.length > FS_MAX_FILE) throw new MinictdError(413, "too_large", `Upload ${bytes.length} bytes vượt giới hạn ${FS_MAX_FILE} bytes`);
+      const w = await execv2(id, ["/bin/sh", "-c", 'cat > "$1"', "sh", full], 60, bytesToB64(bytes));
+      if (w.exit_code !== 0) throw new MinictdError(500, "upload_failed", `upload thất bại: ${w.stderr.slice(0, 200)}`);
+      return r(await statEntry(id, full));
+    }
+    if (sub === "files" && method === "DELETE") {
+      const p = assertSafePath(q.get("path"));
+      if (p === "/" || p.replace(/\/+$/, "") === "") throw new MinictdError(400, "bad_path", "Từ chối xoá / (workspace gốc)");
+      const d = await execv2(id, ["/bin/sh", "-c", 'rm -rf -- "$1"', "sh", p], 120);
+      if (d.exit_code !== 0) throw new MinictdError(500, "delete_failed", `xoá thất bại: ${d.stderr.slice(0, 200)}`);
+      return r(undefined as void);
+    }
+    if (sub === "files/reset" && method === "POST") {
+      throw new MinictdError(501, "unsupported", "reset workspace qua execv2 không an toàn (rm -rf toàn bộ home) — cần thiết kế daemon-side (phương án 2, chờ owner duyệt)");
     }
     return unsupported(method, path);
   }

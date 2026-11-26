@@ -207,7 +207,7 @@ cleanup() {
     # probe block) — clean it too, plus any daemon left on it.
     pkill -TERM -f -- ".minictd-ovl-test" 2>/dev/null || true
     rm -rf "$HOME/.minictd-ovl-test" 2>/dev/null || true
-    for n in md-a md-b md-c md-auto md-t md-f md-oci md-oci-bad md-oci-h md-oci-r md-oci-a md-rl md-s6a md-s6b md-tpl-src md-tpl-dst md-snap-src md-snap-dst md-sec md-sec2 md-sec-dst md-pasta md-pasta-bad1 md-pasta-bad2 md-obs md-mtr md-leak md-del-src md-pty mdstack-web mdstack-db mdroll-a mddown-live md-stub; do
+    for n in md-a md-b md-c md-auto md-t md-f md-oci md-oci-bad md-oci-h md-oci-r md-oci-a md-rl md-s6a md-s6b md-tpl-src md-tpl-dst md-snap-src md-snap-dst md-sec md-sec2 md-sec-dst md-pasta md-pasta-bad1 md-pasta-bad2 md-obs md-mtr md-leak md-del-src md-pty mdstack-web mdstack-db mdroll-a mddown-live md-stub md-files; do
         curl -s -m 5 -X POST -H "Authorization: Bearer $TOKEN" \
             "$API/v1/sandboxes/$n/remove" >/dev/null 2>&1 || true
     done
@@ -1958,6 +1958,8 @@ run_case MD65 "D76 stack: ready-fail rollback + down skip-missing + removed ch�
 #         fix: 200 giả), body chứa stderr tail, daemon log có stderr_tail.
 #         PTY tốt → MD62 (sau fix host-side openpty PASS cả trên dev 5.10;
 #         nếu host khác vẫn không hỗ trợ, MD62 giữ gate SKIP).
+#   MD67  (#208 D79) files execv2: operand argv injection-safe + stdin write
+#         + list 4 cột (chạy mọi nơi)
 md66() {
     local S6_PORT=$(( 18100 + RANDOM % 200 ))
     local S6_API="http://127.0.0.1:$S6_PORT"
@@ -1994,6 +1996,47 @@ md66() {
     echo "MD66 OK: PTY dead-on-arrival → 5xx + stderr tail (log + body), không 200 giả"
 }
 run_case MD66 "D77 pty: stub-exec dies → POST /terminal 5xx + stderr tail" pass md66
+
+# ---------- #208: files qua execv2 — contract + injection (D79) ----------
+#   MD67  (chạy mọi nơi) đúng contract mà console adapter (#208) gửi:
+#         mọi path là OPERAND argv (sh -c <CONSTANT> sh <path>) — không ghép
+#         chuỗi. Tạo dir/file tên chứa `;`, `$()`, space → TÊN GIỮ NGUYÊN
+#         (không có substitution = không injection), nội dung write qua
+#         stdin (base64 JSON) đọc lại khớp, list stat 4 cột, rm -rf -- sạch.
+md67() {
+    local f="md-files"
+    api POST /v1/sandboxes/$f/remove >/dev/null 2>&1 || true
+    api POST /v1/run '{"name":"md-files","image":"base","cmd":["/bin/sh","-c","sleep 300"]}' >/dev/null || return 1
+    sleep 0.5
+    # (1) create dir tên độc: operand argv — khong ghép chuỗi
+    xv2 $f '{"cmd":["/bin/sh","-c","mkdir -p \"$1\"","sh","/probe;rm -rf /a $(id -u) b"],"timeout_s":10}' || return 1
+    # (2) write file tên độc + nội dung qua stdin (base64 JSON → raw bytes)
+    local wcode
+    wcode=$(curl -s -m 20 -o "$WORK/resp" -w '%{http_code}' -X POST -H "Authorization: Bearer $TOKEN" \
+        -d '{"cmd":["/bin/sh","-c","cat > \"$1\"","sh","/probe;rm -rf /a $(id -u) b/a;$(id -u).txt"],"stdin":"aGVsbG8taW5qZWN0","timeout_s":10}' \
+        "$API/v1/sandboxes/$f/execv2")
+    [[ "$wcode" == 2* ]] || { echo "write stdin: $wcode $(cat "$WORK/resp")"; return 1; }
+    # (3) tên giữ nguyên (không substitution) + nội dung khớp
+    xv2 $f '{"cmd":["/bin/sh","-c","stat -c \"%F\t%s\t%Y\t%a\t%n\" \"$1\" \"$2\"","sh","/probe;rm -rf /a $(id -u) b","/probe;rm -rf /a $(id -u) b/a;$(id -u).txt"],"timeout_s":10}' || return 1
+    local body; body=$(cat "$WORK/resp")
+    echo "$body" | grep -q 'directory' || { echo "dir stat: $body"; return 1; }
+    echo "$body" | grep -q 'a;\$(id -u).txt' || { echo "literal name lost (substitution?): $(echo "$body" | head -3)"; return 1; }
+    xv2 $f '{"cmd":["/bin/sh","-c","base64 \"$1\"","sh","/probe;rm -rf /a $(id -u) b/a;$(id -u).txt"],"timeout_s":10}' || return 1
+    [[ "$(jget 'd["stdout"].strip()')" == "aGVsbG8taW5qZWN0" ]] || { echo "content mismatch: $(jget 'd["stdout"].strip()')"; return 1; }
+    # (4) list 4 cột busybox stat (format mà console parser expect)
+    xv2 $f '{"cmd":["/bin/sh","-c","for f in \"$1\"/* \"$1\"/.[!.]* \"$1\"/..?*; do [ -e \"$f\" ] && stat -c \"%F\t%s\t%Y\t%a\t%n\" \"$f\"; done; true","sh","/probe;rm -rf /a $(id -u) b"],"timeout_s":10}' || return 1
+    local rows; rows=$(jget 'len([l for l in d["stdout"].strip().split("\n") if l and len(l.split(chr(9)))>=4])')
+    [[ "$rows" -ge 1 ]] || { echo "list rows: $rows ($(cat "$WORK/resp" | head -2))"; return 1; }
+    # (5) host sống (rm -rf / KHÔNG chạy) + cleanup sạch
+    api GET /healthz >/dev/null || { echo "host daemon chết?!"; return 1; }
+    [[ -d "/probe;rm -rf /a $(id -u) b" ]] || echo "in-instance dir check qua exec:"
+    xv2 $f '{"cmd":["/bin/sh","-c","[ -d \"$1\" ] && echo yes","sh","/probe;rm -rf /a $(id -u) b"],"timeout_s":10}' || return 1
+    [[ "$(jget 'd["stdout"].strip()')" == "yes" ]] || { echo "dir không tồn tại trong instance"; return 1; }
+    xv2 $f '{"cmd":["/bin/sh","-c","rm -rf -- \"$1\"","sh","/probe;rm -rf /a $(id -u) b"],"timeout_s":10}' || return 1
+    api POST /v1/sandboxes/$f/remove >/dev/null 2>&1 || true
+    echo "MD67 OK: operand argv an toàn (tên độc giữ nguyên), stdin write, list 4 cột"
+}
+run_case MD67 "D79 files execv2: injection-safe operand argv + stdin write + list" pass md67
 
 run_case XSS  "D71 gd3-ui: console source no dangerouslySetInnerHTML/innerHTML" pass md55b_xss
 
