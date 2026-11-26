@@ -48,6 +48,7 @@ func main() {
 		tfDomain   = flag.String("traefik-domain", "localhost", "domain suffix for generated Traefik Host() rules (s-<name>.<domain>, G3)")
 		uiDir      = flag.String("ui-dir", "", "serve the GĐ3 static web console from this directory (console/out after `make console`) on the same listener; static files need no token, every API path still does; empty = UI off")
 		showVer    = flag.Bool("version", false, "print version and exit")
+		backend    = flag.String("backend", "minict", "runtime backend: minict (container, default) or firecracker (microVM, GĐ4 — requires /dev/kvm)")
 		logFormat  = flag.String("log-format", "json", "log format: text or json (default json, GĐ2 mục 7, issue #168). JSON emits one structured line per lifecycle event with time/level/msg/instance/op/result/duration_ms/request_id")
 		metricsLn  = flag.String("metrics-listen", "", "NOT IMPLEMENTED: /metrics is served on the main --listen/--unix-socket with the same token. Any non-empty value is rejected fail-closed (exit 1) so a future loopback-only listener can be added without widening the attack surface today (GĐ2 mục 7c, issue #168)")
 	)
@@ -157,6 +158,7 @@ func main() {
 		CgroupRoot:     *cgRoot,
 		TraefikDir:     *traefikDir,
 		TraefikDomain:  *tfDomain,
+		Backend:        *backend,
 		Log:            log,
 	}
 
