@@ -62,8 +62,8 @@ func (s *Store) CollectMetrics() MetricsSnapshot {
 			InstanceStates: map[string]int{},
 			Version:        contract.Version,
 			BuildInfo: map[string]string{
-				"go_version":   runtime.Version(),
-				"runtime":      runtime.GOOS + "/" + runtime.GOARCH,
+				"go_version": runtime.Version(),
+				"runtime":    runtime.GOOS + "/" + runtime.GOARCH,
 			},
 			RSSBytes: daemonRSSBytes(),
 		},
@@ -188,7 +188,7 @@ func daemonRSSBytes() int64 {
 type promMetric struct {
 	name    string
 	help    string
-	mtype   string       // counter | gauge
+	mtype   string // counter | gauge
 	samples []promSample
 }
 
@@ -305,7 +305,7 @@ func renderPrometheus(snap MetricsSnapshot) []byte {
 			// Use 'g' format to avoid trailing zeros and scientific notation
 			// for typical small integers; Prometheus accepts both but g is
 			// human-readable.
-			b.WriteString(strconv.FormatFloat(s.value, 'g', -1, 64))
+			b.WriteString(strconv.FormatFloat(s.value, 'f', -1, 64))
 			b.WriteByte('\n')
 		}
 	}
