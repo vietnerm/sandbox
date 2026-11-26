@@ -1,0 +1,108 @@
+=== minictd e2e tests (2026-11-26 02:40:24) — api :17650, web :19032 ===
+MD0   seccomp blocklist identical: minict.c vs minict-exec.c       PASS
+MD3   daemon refuses to start without a token                      PASS
+MD1   /healthz with token -> 200                                   PASS
+MD2   request without token -> 401                                 PASS
+MD4   Run + Inspect -> running                                     PASS
+MD5   exec via setns sees spec hostname                            PASS
+MD6   exec shares payload mount ns (/tmp marker visible)           PASS
+MD7   spec env -> payload, request env -> exec                     PASS
+MD8   bind :ro visible and not writable                            PASS
+MD9   seccomp in exec: unshare -U -> EPERM                         PASS
+MD10  daemon env/token NOT leaked into payload or exec             PASS
+MD11  exec timeout -> 124 + timed_out                              PASS
+MD12  exec stdin passthrough                                       PASS
+MD13  execstream NDJSON stdout + single exit frame                 PASS
+MD14  preview webport: host curl -> httpd in netns                 PASS
+MD15  path-traversal name -> 400, outside untouched                PASS
+MD16  Stop -> Start keeps rootfs changes                           PASS
+MD17  symlinked bind target -> Start refused, host untouched       PASS
+MD18  exec on stopped -> 409, unknown -> 404                       PASS
+MD19  Remove -> dir gone, no instance processes                    PASS
+MD20  CLI sandbox round-trip: list/up/inspect/exec/stop/rm         PASS
+MD21  --autostart heals + wake-recreates running-after-reboot      PASS
+MD22  deploy: install.sh renders --user unit, systemd-analyze verify PASS
+MD23  G3 routes: run -> Traefik YAML written; disabled -> no file  PASS
+MD24  G3 routes: stop -> route removed; wake stopped -> 409        PASS
+MD25  G3 routes: start -> route back + wake 200; remove -> 404     PASS
+MD28  crane pinned+sha256-verified (fetch-crane.sh, D51)           PASS
+MD29  ocireg harness + real crane push -> manifest served          PASS
+MD30  boot from oci:<ref> via real crane + exec marker             PASS
+MD31  oci: nonexistent ref -> fail-closed 500, dir wiped           PASS
+MD32  hostile oci: image streamed by crane -> refused, wiped       PASS
+MD34  oci: refusal after >64KB -> 500 fast, no Wait deadlock       PASS
+MD33  opt-in remote pull (MINICTD_OCI_REMOTE_REF)                  SKIP
+      (env-blocked: see case)
+MD26  tar: hostile .. member -> Run fails closed, dir wiped, no escape PASS
+MD27  oci: without crane -> Run fails closed, dir wiped            PASS
+MD35  S4: --unix-socket serves API, socket 0600, dir corrected 0700 PASS
+MD36  S4: unix-only posture, 401 no-token, CLI --socket round-trip PASS
+MD37  S5: exec gets spec rlimits (nofile=64 -> ulimit -n 64)       PASS
+MD38  S6: webport collision -> 409; stop A -> B reuses port        PASS
+MD39  GĐ2 mục 2: save-template (stopped) + run from template (marker seen) PASS
+MD40  GĐ2 mục 3: snapshot (stopped) + restore from backup:md-snap (marker seen) PASS
+MD41  allowlist+exec parity: readlink EPERM, tcp OK (D59)          PASS
+MD42  control: no profile -> readlink works in exec                PASS
+MD43  template:md-tpl-sec carries seccomp_profile (EPERM)          PASS
+ovl-probe: unsupported on this host — MD44-46 SKIP. full output:
+    mount: /tmp/tmp.pfDBGr9rDy/ovlmnt: wrong fs type, bad option, bad superblock on overlay, missing codepage or helper program, or other error.
+           dmesg(1) may have more information after failed mount system call.
+    fs: overlayfs lower | overlayfs work | kernel: 5.10.134-013.15.kangaroo.al8.x86_64
+    apparmor userns: n/a
+    BI1 tmpfs-in-userns: OK
+    BI2 overlay-all-tmpfs-userxattr: OK
+    BI3 lower-ext-upper-tmpfs-userxattr: FAIL
+    BI4 overlay-ext-nouserxattr: FAIL
+    BI5 overlay-ext-userxattr-flags-off: FAIL
+MD44  D66 overlay: boot+exec via upper, base unchanged, thin-provision SKIP
+      (env-blocked: see case)
+MD45  D66 overlay: Stop -> Start keeps upper changes               SKIP
+      (env-blocked: see case)
+MD46  D66 overlay: snapshot/save-template refuse, remove cleans    SKIP
+      (env-blocked: see case)
+pasta gate: no /dev/net/tun or pinned binary — MD47-49 SKIP (env-blocked, D34)
+MD47  D67 pasta config-side forward: host curl -> httpd in netns   SKIP
+      (env-blocked: see case)
+MD48  D67 pasta lifecycle: stop frees host port, start re-attaches SKIP
+      (env-blocked: see case)
+MD49  D67 pasta crash-heal reaps attach; invalid pasta_ports fail-closed SKIP
+      (env-blocked: see case)
+MD50  D68 obs: JSON log schema + lifecycle events + no token leak  PASS
+MD51  D68 obs: /metrics Prometheus format + fail-soft + instance up PASS
+MD52  D68 obs: /metrics 401 no-token + --metrics-listen fail-closed PASS
+=== summary: PASS=46 SKIP=7 FAIL=0 ===
+=== Go unit mutants ===
+M-render-escape: FAIL expected (escape test catches missing escapes) — CAUGHT (rc=1)
+M-render-order: FAIL expected (order test catches unsorted samples) — CAUGHT (rc=1)
+M-no-cgroup-skip: FAIL expected (fail-soft test catches fake 0) — CAUGHT (rc=1)
+M-io-stat-sum: FAIL expected (sum test catches wrong total) — CAUGHT (rc=1)
+
+4/4 mutants caught
+
+=== make test suites ===
+=== summary: PASS=9 FAIL=0 ===
+### suite: test_alpine.sh — OK
+=== summary: PASS=0 FAIL=0 SKIP=1 ===
+### suite: test_debian.sh — OK
+=== summary: PASS=38 FAIL=0 ===
+### suite: test_escape_alpine.sh — OK
+=== summary: PASS=4 FAIL=0 ===
+### suite: test_cve_check.sh — OK
+=== summary: PASS=5 SKIP=6 FAIL=0 ===
+### suite: test_pasta.sh — OK
+=== summary: PASS=8 FAIL=0 SKIP=0 ===
+### suite: test_stack.sh — OK
+=== cg suite: 0 PASS + 6 SKIP (env-gated) + 0 FAIL ===
+### suite: test_cg.sh — OK
+=== run-suites summary: 10 suites, failed: none ===
+
+=== perf ===
+cold_start_ms  :     2.50  (threshold 100)
+rss_kb         :     1204  (threshold 10240)
+disk_base_mb   :     2.05  (threshold 20)
+perf-check: PASS
+
+=== host baseline ===
+21d5de2dc39f2ceb19e33f8cc124b311b57a48aea6d7703a9a98b93079d412bd  /etc/passwd
+223fe8564b60636bc738b6178d3ba9a50ef7d791266b0efae6363bb716e4c47f  /bin/bash
+a59f393bad5037644b89de64fe558ae6d5d1473c25c63022241e7c7019ad2f0c  /usr/bin/sudo
