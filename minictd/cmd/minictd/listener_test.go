@@ -141,3 +141,42 @@ func TestOpenUnixSocketEmptyPath(t *testing.T) {
 		t.Fatal("empty path accepted — must refuse")
 	}
 }
+
+// Issue #119: the socket is CREATED 0600 (umask around bind) — even with a
+// fully open process umask, and the caller's umask is restored afterwards.
+// Mutant twin: drop the Umask call -> socket 0777 &^ 0 = 0777 -> fails here.
+func TestOpenUnixSocketUmaskIndependent(t *testing.T) {
+	prev := syscall.Umask(0)
+	defer syscall.Umask(prev)
+	sock := filepath.Join(t.TempDir(), "minictd.sock")
+	ln, err := openUnixSocket(sock)
+	if err != nil {
+		t.Fatalf("openUnixSocket: %v", err)
+	}
+	defer ln.Close()
+	if got := socketPerm(t, sock); got != 0o600 {
+		t.Fatalf("socket perm = %o, want 600 with umask 0", got)
+	}
+	if cur := syscall.Umask(0); cur != 0 {
+		t.Fatalf("umask not restored: got %o, want 0", cur)
+	}
+}
+
+// Issue #119: bind never follows/replaces an existing path, so a name
+// planted between Remove and bind makes the listener fail closed. Simulated
+// with a dangling symlink at the path AFTER the stale-socket check would run:
+// net.ListenUnix itself must refuse it (EADDRINUSE).
+func TestListenUnixRefusesPlantedSymlink(t *testing.T) {
+	dir := t.TempDir()
+	sock := filepath.Join(dir, "minictd.sock")
+	if err := os.Symlink(filepath.Join(dir, "elsewhere.sock"), sock); err != nil {
+		t.Fatal(err)
+	}
+	if ln, err := net.ListenUnix("unix", &net.UnixAddr{Name: sock, Net: "unix"}); err == nil {
+		ln.Close()
+		t.Fatal("bind over a planted symlink succeeded — #119 TOCTOU argument broken")
+	}
+	if _, err := os.Lstat(filepath.Join(dir, "elsewhere.sock")); err == nil {
+		t.Fatal("bind followed the symlink and created the target")
+	}
+}

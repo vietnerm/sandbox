@@ -26,7 +26,8 @@
 #   (conf.c conf_pasta_ns, passt 2026_10_02). Joining the instance userns
 #   works rootless: pasta's euid == userns owner (single-uid map 0<-1001,
 #   D20) → uid 0 + caps inside → tap + default route. MINICT_PASTA_FWD is
-#   appended verbatim (e.g. "-t 18080:80" = host 18080 → instance 80).
+#   appended word-split, never glob-expanded (e.g. "-t 18080:80" = host
+#   18080 → instance 80; issue #61).
 #   Fail-closed: no /dev/net/tun (dev container, D34) or MINICT_NO_NETNS=1
 #   → error, no silent skip. Host-side metrics: pasta spawn is measured
 #   SEPARATELY from minict cold_start (A/B in tests/test_pasta.sh AB1).
@@ -58,10 +59,28 @@ REPO="$(cd "$HERE/.." && pwd)"
 INST="$REPO/instances"
 BIN="$HERE/minict"
 
+# issue #61: instance names come from the CLI and end up in `rm -rf
+# "$INST/$name"` — same regex as minictd validName (store.go, D26/R1):
+# one path component, no leading dot/dash, no slash (so never `.`/`..`).
+valid_name() { # <name>
+    [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$ ]] || {
+        echo "invalid instance name '$1' (want [A-Za-z0-9][A-Za-z0-9_.-]{0,63})" >&2
+        exit 2
+    }
+}
+
 down_pasta() { # <name> — kill the pasta process of an instance if any
     local name="$1"
     if [[ -f "$INST/$name/pasta-pid" ]]; then
         local ppid="$(cat "$INST/$name/pasta-pid")"
+        # issue #77 (option 2): pasta can die AFTER attach (only the attach
+        # time aliveness check exists) — the instance then had no tap, no
+        # egress and a resolv.conf pointing at a dead --dns-forward. Say so.
+        if ! kill -0 "$ppid" 2>/dev/null; then
+            echo "warning: pasta (pid $ppid) of '$name' had already died before down "\
+                 "— networking/DNS was gone; see $INST/$name/pasta.log" >&2
+            tail -5 "$INST/$name/pasta.log" 2>/dev/null >&2 || true
+        fi
         kill "$ppid" 2>/dev/null || true
         sleep 0.1
         kill -9 "$ppid" 2>/dev/null || true
@@ -106,9 +125,16 @@ spawn_pasta() { # <name> <shim-pid> — attach pasta to the instance netns (D37)
     # Explicit --userns is REQUIRED: `--netns` alone implies --netns-only
     # (passt conf.c conf_pasta_ns) and pasta could not setns into a netns
     # owned by the instance's userns. euid==owner rule makes this rootless.
+    # issue #61: MINICT_PASTA_FWD is split on whitespace ON PURPOSE (several
+    # -t/-u specs) but must never be glob-expanded — read -a splits without
+    # pathname expansion.
+    local FWD_ARGS=()
+    if [[ -n "${MINICT_PASTA_FWD:-}" ]]; then
+        read -r -a FWD_ARGS <<< "$MINICT_PASTA_FWD"
+    fi
     nohup "$PASTA_BIN" --foreground \
         --userns "/proc/$pid/ns/user" --netns "/proc/$pid/ns/net" \
-        --config-net ${DNS_ARGS[@]+"${DNS_ARGS[@]}"} ${MINICT_PASTA_FWD:-} \
+        --config-net ${DNS_ARGS[@]+"${DNS_ARGS[@]}"} ${FWD_ARGS[@]+"${FWD_ARGS[@]}"} \
         </dev/null >"$INST/$name/pasta.log" 2>&1 &
     local ppid=$!
     echo "$ppid" > "$INST/$name/pasta-pid"
@@ -165,6 +191,7 @@ cmd="${1:-help}"
 case "$cmd" in
 up)
     name="${2:?usage: minict.sh up <name> [--pasta] [--rootfs <dir>] [-- payload...]}"
+    valid_name "$name"
     shift 2 2>/dev/null || true
     PASTA_ON=0
     SRC_ROOTFS="$REPO/rootfs"
@@ -294,6 +321,7 @@ HTML
 
 exec)
     name="${2:?usage: minict.sh exec <name> -- cmd...}"
+    valid_name "$name"
     shift 2
     [[ "$1" == "--" ]] && shift
     [[ -d "$INST/$name/rootfs" ]] || { echo "no instance '$name'"; exit 1; }
@@ -301,10 +329,12 @@ exec)
     ;;
 shell)
     name="${2:?usage: minict.sh shell <name>}"
+    valid_name "$name"
     exec "$BIN" "$INST/$name/rootfs" /bin/sh
     ;;
 down)
     name="${2:?usage: minict.sh down <name>}"
+    valid_name "$name"
     down_pasta "$name"
     if [[ -f "$INST/$name/pid" ]]; then
         pid="$(cat "$INST/$name/pid")"
@@ -331,8 +361,12 @@ ps)
         n="$(basename "$d")"
         p="$(cat "$d/pid" 2>/dev/null || echo -)"
         pasta=""
-        if [[ -f "$d/pasta-pid" ]] && kill -0 "$(cat "$d/pasta-pid")" 2>/dev/null; then
-            pasta="  pasta=yes"
+        if [[ -f "$d/pasta-pid" ]]; then
+            if kill -0 "$(cat "$d/pasta-pid")" 2>/dev/null; then
+                pasta="  pasta=yes"
+            else
+                pasta="  pasta=DEAD"   # issue #77: died after attach
+            fi
         fi
         if [[ "$p" != "-" ]] && kill -0 "$p" 2>/dev/null; then
             echo "$n  running  pid=$p  fs=$(du -sh "$d/rootfs" 2>/dev/null | cut -f1)$pasta"
