@@ -1,19 +1,26 @@
 #!/usr/bin/env bash
-# fetch-firecracker.sh — acquire the Firecracker + jailer binaries WITHOUT
-# root, following the pin-and-verify pattern of tools/fetch-crane.sh (D51):
+# fetch-firecracker.sh — acquire the Firecracker binary WITHOUT root, following
+# the pin-and-verify pattern of tools/fetch-crane.sh (D37/D51):
 #
-#   1. PINNED version + sha256 of the release assets, measured at pin time
-#      from the official release page (github.com/firecracker-microvm/
-#      firecracker/releases).
-#   2. Fail-closed: wrong digest aborts BEFORE any install. Binaries land in
-#      tools/bin/ (gitignored, disk budget 20 MB — D34).
-#   3. Firecracker publishes statically-linked release binaries (musl);
-#      the prebuilt release is the same artifact Firecracker CI distributes.
+#   1. PINNED version + sha256, measured from the official release assets
+#      (github.com/firecracker-microvm/firecracker/releases):
+#        - the .tgz archive digest published as .tgz.sha256.txt
+#        - the inner binary digest published as SHA256SUMS inside the archive
+#      Both are verified BEFORE anything is installed.
+#   2. Fail-closed: any digest mismatch aborts BEFORE any install. Binaries
+#      land in tools/bin/ (gitignored, disk budget 20 MB — D34).
+#   3. Firecracker publishes statically-linked release binaries (musl,
+#      static-pie) — no runtime deps.
+#
+# NOTE (D85, issue #231): only the `firecracker` VMM binary is installed.
+# The upstream `jailer` binary is NOT used by minictd — it requires root
+# (chroot, mknod, setuid, cgroup), violating the §0 rootless invariant; the
+# jail role is played by a minict instance (internal/firecracker/jail.go).
 #
 # Usage: tools/fetch-firecracker.sh [FIRECRACKER_VERSION]
 # Env:   FORCE_FC_REBUILD=1 to re-download over the stamp.
 #
-# Result: tools/bin/firecracker + tools/bin/jailer (static ELF x86_64).
+# Result: tools/bin/firecracker (static ELF x86_64).
 # GĐ4 mục 1 (issue #193, precondition #191: /dev/kvm required at RUNTIME,
 # not at FETCH time — the binary itself fetches fine without KVM).
 set -euo pipefail
@@ -22,7 +29,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 BIN_DIR="$HERE/bin"
 STAMP="$BIN_DIR/.firecracker-stamp"
 
-FC_VERSION="${1:-v1.8.0}"
+FC_VERSION="${1:-v1.18.0}"
 ARCH="$(uname -m)"
 case "$ARCH" in
     x86_64)  FC_ARCH="x86_64" ;;
@@ -30,49 +37,54 @@ case "$ARCH" in
     *) echo "fetch-firecracker: unsupported arch $ARCH"; exit 1 ;;
 esac
 
-# sha256 of the release assets (measured from the official release page).
+# sha256 digests, measured from the official release page (2026-11-27, Phiên 45).
 # These MUST be re-measured when FC_VERSION changes.
-FC_SHA256="0cb81f0a5b53c90a3a495b0f0e0b75c7a3a42c2e0637e6c62d3d6e0a9f2a1b3c"
-JAILER_SHA256="1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b"
+#   firecracker-v1.18.0-x86_64.tgz            (published .tgz.sha256.txt)
+#   firecracker-v1.18.0-x86_64 (inner binary, published SHA256SUMS)
+case "${FC_VERSION}-${FC_ARCH}" in
+    v1.18.0-x86_64)
+        TGZ_SHA256="1ac8eec866dd5eea14efecf6323e22b23eea24054545338a5b34bc5bca6623cd"
+        FC_SHA256="b33f46cd6d88834cf6a4f8d184f08f219809c636236bffd286d233a60602a2ba"
+        ;;
+    *) echo "fetch-firecracker: no pinned digest for ${FC_VERSION}-${FC_ARCH} — add one first" >&2; exit 1 ;;
+esac
 
 BASE_URL="https://github.com/firecracker-microvm/firecracker/releases/download/${FC_VERSION}"
 
 mkdir -p "$BIN_DIR"
 
-if [[ -f "$STAMP" && -x "$BIN_DIR/firecracker" && -x "$BIN_DIR/jailer" \
+if [[ -f "$STAMP" && -x "$BIN_DIR/firecracker" \
       && -z "${FORCE_FC_REBUILD:-}" ]]; then
     echo "fetch-firecracker: cached (stamp=$STAMP)"
     exit 0
 fi
 
-echo "fetch-firecracker: downloading v${FC_VERSION} (${FC_ARCH})..."
+echo "fetch-firecracker: downloading ${FC_VERSION} (${FC_ARCH})..."
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-# Firecracker binary
-curl -fsSL -o "$TMP/firecracker" "${BASE_URL}/firecracker-${FC_VERSION}-${FC_ARCH}"
-ACTUAL_FC=$(sha256sum "$TMP/firecracker" | awk '{print $1}')
+# Release archive + its officially published digest (cross-check first).
+curl -fsSL -o "$TMP/fc.tgz" "${BASE_URL}/firecracker-${FC_VERSION}-${FC_ARCH}.tgz"
+ACTUAL_TGZ=$(sha256sum "$TMP/fc.tgz" | awk '{print $1}')
+if [[ "$ACTUAL_TGZ" != "$TGZ_SHA256" ]]; then
+    echo "fetch-firecracker: sha256 mismatch (archive)" >&2
+    echo "  expected: $TGZ_SHA256" >&2
+    echo "  got:      $ACTUAL_TGZ" >&2
+    exit 1
+fi
+
+tar xzf "$TMP/fc.tgz" -C "$TMP"
+INNER="$TMP/release-${FC_VERSION}-${FC_ARCH}/firecracker-${FC_VERSION}-${FC_ARCH}"
+ACTUAL_FC=$(sha256sum "$INNER" | awk '{print $1}')
 if [[ "$ACTUAL_FC" != "$FC_SHA256" ]]; then
-    echo "fetch-firecracker: sha256 mismatch (firecracker)" >&2
+    echo "fetch-firecracker: sha256 mismatch (firecracker binary)" >&2
     echo "  expected: $FC_SHA256" >&2
     echo "  got:      $ACTUAL_FC" >&2
-    echo "  (if this is a new version, update FC_SHA256 in this script)" >&2
     exit 1
 fi
 
-# Jailer binary
-curl -fsSL -o "$TMP/jailer" "${BASE_URL}/jailer-${FC_VERSION}-${FC_ARCH}"
-ACTUAL_JAILER=$(sha256sum "$TMP/jailer" | awk '{print $1}')
-if [[ "$ACTUAL_JAILER" != "$JAILER_SHA256" ]]; then
-    echo "fetch-firecracker: sha256 mismatch (jailer)" >&2
-    echo "  expected: $JAILER_SHA256" >&2
-    echo "  got:      $ACTUAL_JAILER" >&2
-    exit 1
-fi
-
-chmod +x "$TMP/firecracker" "$TMP/jailer"
-mv "$TMP/firecracker" "$BIN_DIR/firecracker"
-mv "$TMP/jailer" "$BIN_DIR/jailer"
+chmod +x "$INNER"
+mv "$INNER" "$BIN_DIR/firecracker"
 echo "$FC_VERSION" > "$STAMP"
-echo "fetch-firecracker: OK v${FC_VERSION} → tools/bin/firecracker + jailer"
+echo "fetch-firecracker: OK ${FC_VERSION} → tools/bin/firecracker"

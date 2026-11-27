@@ -727,6 +727,14 @@
       (userns + mountns + seccomp + pivot_root của minict làm jail; chỉ bind `/dev/kvm` +
       socket API vào). Đo được phần không cần KVM: binary khởi động trong jail, `--version`,
       socket API trả lời `GET /`. Không dùng jailer upstream nếu nó buộc root.
+      → **Xong 2026-11-27 Phiên 45 (#231, D85)**: jail = instance minict (`internal/
+        firecracker/jail.go` — spec + unit test pin argv; `WithKVM` env-gated theo
+        `kvmAvailable()`, KVM probe thật = KVM_GET_API_VERSION ioctl ở CI job `kvm`).
+        MD73 e2e (daemon thật): binary v1.18.0 chạy qua seccomp+pivot_root của minict,
+        `--version` đúng, `GET /` 200 qua unix socket bind ra host, remove không rò
+        process. Kèm fix fetch-firecracker (sha256 placeholder + URL thiếu .tgz từ
+        scaffolding #193 — chưa từng chạy thật; pin lại v1.18.0 với digest đo từ
+        release chính thức). Jailer upstream bị loại (D85).
    b. **Rootfs ext4 rootless**: builder từ template/rootfs hiện có bằng `mkfs.ext4 -d`
       (không mount, không root); kiểm image bằng `e2fsck -n` + `debugfs -R ls`; giới hạn
       kích thước; test MD không cần KVM.
