@@ -115,3 +115,112 @@ Kế tiếp    : #219 (p1 bug) → #218 → #221; owner-review console-test work
 Trạng thái : DAY PASS — security issue chốt trọn vòng đo→fix→assert→SCR/SIA→merge;
              2 lỗi thiết kế của chính agent bị chính harness đo bắt được trước khi land
 ============================================
+
+# Daily Log — 2026-11-27 (tiếp — Phiên 44)
+
+## Phiên 44 — Orchestrator (Bắt đầu 06:00 UTC)
+
+### Pha A — Đồng bộ + kế hoạch nhánh
+- main `6883e08` (ledger Phiên 43) — pull OK (giải 1 conflict untracked
+  journal/branch-report.json — xoá file local, rebase sạch); open PR: 0;
+  open issues: #219/#218/#221 p1 (+#99/#8 cũ).
+- Theo kế hoạch Phiên 43 + chỉ thị owner ("tiếp tục 219") → **#219 là việc của
+  phiên này** (p1 bug, chấm dứt nhanh trước #218 WebSocket PTY và #221 network).
+- SBG MODE=plan: không PR mở đầu phiên; nhánh dự kiến `fix/219-files-bytes-names`.
+- Go toolchain `/home/z/my-project/toolchain/go` hỏng (mất `src/internal`,
+  `src/unsafe` — sandbox recycle) → tái lập từ `go.tgz` còn trong thư mục.
+
+### Pha D — Issue #219 (p1, bug): files bytes-wire + recovery (D83)
+
+## Issue xử lý
+- #219 — fix(console/files): tên file dạng bytes (base64) — mở/đổi tên/xoá
+  được tên không phải UTF-8 + nút recovery — status: **done** (PR #228 squash
+  `ebf0373` @ main, CI 8/8 xanh từng SHA, SCR PASS + SIA PASS audit:pass,
+  mutant 4/4 CAUGHT). Triage: comment repro + label status:in-progress +
+  priority p1 (owner mở p1; label gốc p3 đã cập nhật) + bỏ needs-repro sau
+  khi đo được.
+
+## Research
+- Nguồn 1: PEP 383 (peps.python.org/pep-0383) — surrogateescape: không sống
+  qua Go JSON wire (json.Marshal thay surrogate bằng U+FFFD — đo được) nhưng
+  hợp lệ cho nguyên tắc display strict-fatal.
+- Nguồn 2: git `core.quotepath` (git-scm.com/docs/git-config + issue thực tế
+  buzz#6309) — display-escape, giữ bytes làm nguồn sự thật → wire base64,
+  display placeholder + hex.
+- Chi tiết: `journal/2026-11-27/research.md` (Phiên 44) + D83.
+
+## Development
+- Nhánh: `fix/219-files-bytes-names` (2 commit) → PR #228 → squash `ebf0373`
+- **Repro đo được (bước bắt buộc needs-repro)**: tạo tên byte lỗi qua
+  `$(printf '\341\272')`, list qua script cũ → stdout JSON có U+FFFD; tên
+  newline → 3 rows lệch cột; decode-trick busybox round-trip đúng byte
+  (od x1: `74 e1 ba …`).
+- **Fix adapter-only (0 byte core)**: files-parse.ts — FS_LIST_SCRIPT_B64
+  (6 cột b64), FS_DECODE_SNIPPET(+2), 7 op scripts b64, parseStatEntries
+  mới, assertSafePathB64 trên bytes, joinPathB64/parentB64/crumbsFromB64,
+  decodeFsName (placeholder+hex, cap 24 byte); minictd.ts — mọi files route
+  nhận path_b64, statEntry/displayPathB64/basenameB64 byte-level; api.ts —
+  FsEntry `name_b64`/`path_b64`, API signatures pathB64; sandbox-files.tsx —
+  navigation/breadcrumb/tree/editor byte-level, badge Invalid UTF-8 + nút
+  "Đổi tên an toàn" (rename flow qua assertSafeName), download fallback
+  `invalid-utf8.bin`; demo-mode.ts — decode b64 strict (b64ToText).
+- **2 lỗi của chính agent bị harness bắt trước khi land**:
+  (i) comment block chứa `##*/` đóng comment sớm (tsc ERR) — đổi diễn đạt;
+  (ii) busybox `stat` KHÔNG interpret `\t` (khác printf/tr) → list trả rows
+  3 cột lệch → MD71 đỏ, đổi stat format sang REAL TAB (đo lại trên rootfs).
+- **Fix hỏng sẵn trên main**: `sandbox-files.tsx` `const ome, setHome]`
+  (syntax lỗi @ `6883e08`, console build đỏ trên main) — kèm trong PR này.
+- Mutant U-M3 (bỏ check NUL) thoát ở vòng đầu vì assert `a\0` bị che bởi
+  check tuyệt đối → fix assert `/a\0` + `/NUL/` @ `c3aa40a` → CAUGHT (SCR).
+
+## CVE Check
+- Kernel: 5.10.134-013.15.kangaroo.al8.x86_64
+- CVE mới: 0 ngoài watchlist (cve-check rc=0; files
+  `journal/2026-11-27/cve/files-bytes-names.{md,json}`); cve-kernel
+  --discover timeout NVD ở dev (giống Phiên 41/43) — live dựa cve-daily CI.
+
+## Validation "không bị nhiễm"
+- `make test`: 10 suites failed: none (debian rootfs fetch SKIP mạng; cg 6
+  SKIP env-gated) · `make test-web`: 9/9 · `make test-minictd`: **65 PASS +
+  9 SKIP + 0 FAIL** (MD71 mới; runner CI job build-test cùng SHA xanh) ·
+  `make console-test`: 15/0 · `tsc --noEmit` + `next build` sạch.
+- Clean-room SCR (`/tmp/scr228`, uid 1001): build từ đầu + rootfs 2.0M,
+  ×3 runs minictd 65/9/0 — MD71 stable_pass không flaky; mutant U-M1/U-M2/
+  U-M3/E-M1 CAUGHT; host baseline unchanged; leftover process dọn sạch.
+- Bằng chứng: `journal/2026-11-27/evidence/files-bytes-names.txt` + comment
+  SCR/SIA trên PR #228.
+
+## PR
+- #228 — fix(console/files) bytes-wire (#219/D83) — draft→ready→merged —
+  CI 8/8 xanh @ `c3aa40a` — Merge: CÓ (squash `ebf0373`; #219 auto-close)
+- SCR: RETEST PASS · SIA: PASS audit:pass — 3 low (NUL assert đã fix trong
+  PR; daily-log ở ledger; download fallback tên).
+
+### Pha E — Kết phiên (SBG apply)
+- Nhánh agent đã xoá: `fix/219-files-bytes-names` (remote + local, squash
+  `ebf0373`); remote chỉ còn main + nhánh owner (KEEP `fix/console-utf8-files-stage1`).
+- Ledger qua PR `chore(branches): ledger 2026-11-27 Phien 44`.
+
+## Kế hoạch kế tiếp
+- 2 issue p1 còn lại: #218 (WebSocket PTY hai chiều — lớn, cần thiết kế
+  binary frame + fallback SSE) → #221 (network none|egress + firewall —
+  lớn nhất). Mỗi phiên bắt đầu bằng repro/đo được.
+- Residual: `make console-test` vào workflow ci (G7 — chờ owner); triage
+  #99/#8 khi còn quota; console build đỏ trên main trước `ebf0373` — đã
+  heal bởi PR này (ghi chú owner nếu nhánh cũ vẫn cache bundle).
+
+=== SDDA REPORT — 2026-11-27 (Phiên 44) ===
+Issue xử lý : #219 — fix(console/files) bytes-wire + recovery (D83) — p1 bug
+PR mở      : 0 (đã gộp: #228 squash ebf0373) — CI 8/8 xanh từng SHA
+CVE check  : 0 mới ngoài watchlist (kernel-discover dev timeout → CI cve-daily)
+Escape test: PASS (make test 10 suites none failed; minictd 65/9/0 ×3 runs;
+             console-test 15/0; mutant 4/4 CAUGHT)
+Host       : unchanged
+Perf       : adapter-only — không đụng hot path; perf-guard PASS từng SHA
+Daily-log  : journal/2026-11-27/daily-log.md (mục Phiên 44)
+Kế tiếp    : #218 (WebSocket PTY) → #221 (network none|egress); console-test
+             workflow G7 chờ owner
+Trạng thái : DAY PASS — 1 issue p1 trọn vòng repro→fix→assert→mutant→SCR/SIA
+             →merge; 2 lỗi của agent bị harness bắt trước khi land; kèm heal
+             console build hỏng sẵn trên main
+============================================
