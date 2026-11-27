@@ -328,12 +328,15 @@ Nếu tất cả xanh → ghi "DAY PASS" vào cuối daily-log. Nếu có đỏ 
    (giai đoạn hiện tại + thứ tự mục nằm ngay mục "Giai đoạn N" của file đó; hướng
    tổng thể 5 giai đoạn xem `idea/manifest.md` §7).
 
-**Giai đoạn hiện tại: GĐ4 — Backend microVM Firecracker** (owner mở 2026-11-26; manifest §8).
-GĐ4 đang research-only vì chưa có host `/dev/kvm` (#191): mục code GĐ4 bị chặn môi
-trường, nên việc kế tiếp lấy theo **Track M** trong `docs/roadmap.md` (manifest §9, D74),
-mục thấp nhất chưa xong. Mục nào ghi "chờ owner duyệt" thì chỉ làm phần tài liệu/thiết
-kế, không code, không tự coi là đã được duyệt. Mỗi PR thêm tính năng ghi câu trả lời
-hai phép thử "còn nhẹ không / bỏ đi core còn hữu dụng không" (manifest §3).
+**Giai đoạn hiện tại: GĐ4 — Backend microVM Firecracker — ƯU TIÊN SỐ 1** (owner mở 2026-11-26,
+chốt ưu tiên 2026-11-27; manifest §8). Thứ tự chọn việc:
+1. `type:security` p0/p1 (hiện: #220 pasta).
+2. `docs/roadmap.md` "Giai đoạn 4" mục **1b** (làm được khi chưa có KVM), theo thứ tự a→g;
+   phần cần `/dev/kvm` thì env-gated SKIP, không giả lập kết quả.
+3. Có host KVM → mục 1 + 2 (code thật + benchmark).
+Mọi việc khác (#218, #219, #221, Track M3e/M4/M5, desktop GUI) **hoãn tới sau GĐ4**: không
+nhận dù issue còn mở. Mục nào ghi "chờ owner duyệt" thì chỉ làm tài liệu thiết kế. Mỗi PR
+thêm tính năng ghi câu trả lời hai phép thử manifest §3.
 
 Khi roadmap trống hoặc không khả thi (mọi mục bị chặn môi trường/owner), mở issue
 `type:chore` `area:docs` đề xuất cập nhật `docs/roadmap.md` — không tự chế việc mới

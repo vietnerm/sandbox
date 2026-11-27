@@ -685,6 +685,29 @@
    f. Tests: env-gated SKIP khi no /dev/kvm (pattern overlay D66 / pasta D67); PASS thật
       trên KVM-capable host.
    g. Budget: daemon RSS +~5 MB (management code); per-microVM Firecracker ~10-20 MB.
+1b. **Làm được khi CHƯA có KVM** (owner chốt 2026-11-27 GĐ4 ưu tiên số 1; SDDA làm theo
+   thứ tự, mỗi mục có test chạy không cần `/dev/kvm`, phần cần KVM thì env-gated SKIP):
+   a. **Jail không cần root**: jailer của Firecracker cần root (chroot, đổi uid, cgroup).
+      Nghiên cứu + decision file: chạy `firecracker` **bên trong một instance minict**
+      (userns + mountns + seccomp + pivot_root của minict làm jail; chỉ bind `/dev/kvm` +
+      socket API vào). Đo được phần không cần KVM: binary khởi động trong jail, `--version`,
+      socket API trả lời `GET /`. Không dùng jailer upstream nếu nó buộc root.
+   b. **Rootfs ext4 rootless**: builder từ template/rootfs hiện có bằng `mkfs.ext4 -d`
+      (không mount, không root); kiểm image bằng `e2fsck -n` + `debugfs -R ls`; giới hạn
+      kích thước; test MD không cần KVM.
+   c. **Mạng microVM rootless**: TAP tạo trong netns do userns của daemon sở hữu (có
+      CAP_NET_ADMIN trong netns đó), pasta gắn vào netns ấy như instance minict (áp mặc định
+      fail-closed của #220). Test tạo/xoá TAP trong userns netns, không cần KVM.
+   d. **Guest agent cho exec/terminal/files**: microVM không `setns` được như container.
+      Thiết kế agent tối giản trong guest (init PID 1 tĩnh, nói qua **vsock**: exec, PTY,
+      đọc/ghi file theo bytes) để API/console hiện có dùng chung cho cả hai backend. Tài
+      liệu thiết kế + agent build tĩnh + test giao thức bằng socket giả (không cần KVM).
+   e. **API client + backend**: hoàn thiện `internal/firecracker` (boot-source, drives,
+      machine-config, network-interfaces, vsock, InstanceStart, shutdown) với test bằng unix
+      socket giả lập; `--backend firecracker` fail-closed rõ ràng khi thiếu KVM (MD63 giữ).
+   f. **Host có KVM cho CI**: chờ owner chọn (VPS có `/dev/kvm`, self-hosted runner, hoặc
+      GitHub larger runner). Workflow chạm `.github` → owner duyệt.
+   g. Console: chọn backend khi tạo + badge "microVM"; API không đổi.
 2. **Benchmark** microVM vs container:
    - cold_start_ms: minict ~2 ms vs Firecracker ~125 ms (Firecracker measured upstream).
    - RSS: minict ~1.2 MB wrapper vs Firecracker ~10-20 MB VMM + guest memory.
@@ -698,7 +721,32 @@
    kiện tiên quyết (pasta, cgroup delegation, quyền /dev/kvm); control plane chạy dưới user đó.
 2. Health + update tối thiểu; tài liệu từ máy trắng. (Chi tiết khi GĐ4 xong.)
 
+## GĐ3 — gia cố sau DoD (owner dùng thật, 2026-11-26/27)
+
+> Lỗi và nhu cầu owner gặp khi dùng console thật. **Owner chốt 2026-11-27: GĐ4 microVM
+> làm trước.** Trong mục này chỉ **#220 (security)** còn được làm ngay; #218, #219, #221
+> **hoãn tới sau GĐ4** (đã hạ `priority:p3`). Lý do: GUI, firewall, terminal WS đều cần
+> chạy được workload không tin cậy một cách an toàn, mà manifest §3 chỉ cho phép điều đó
+> sau GĐ4.
+
+- Xong: #206 PTY fail-closed (PR #210, D77) · #208 Files qua execv2 (PR #212, D79) ·
+  #209 uptime + heal stale state (PR #213, D80) · bản sửa của owner, gồm TAB thật trong
+  `stat -c`, bật trang Files, input UTF-8 gửi tuần tự, locale PTY (PR #217).
+1. **#220 (security)**: pasta mặc định `auto` (UDP inbound, bind 0.0.0.0, sandbox gọi vào
+   127.0.0.1 của host). Đo rồi mới sửa; mặc định fail-closed (`-u none -T none -U none`,
+   forward bind 127.0.0.1, công khai phải opt-in). Tới khi xong, manifest §6 "chỉ mở port
+   khai báo" chưa được coi là đúng.
+2. **#218**: WebSocket PTY binary (stdlib RFC 6455, auth bằng frame đầu, kiểm `Origin`,
+   64 KB/frame); SSE+POST giữ làm fallback.
+3. **#219**: Files dùng tên/path base64 hai chiều (adapter-only) + recovery tên không
+   phải UTF-8.
+4. **#221 phần 1**: `network: none|egress` + công tắc "Cho phép Internet" trên console.
+   **Phần 2** (tường lửa vào/ra + tab Network giám sát): **chỉ tài liệu thiết kế, chờ owner
+   duyệt**. Nếu được duyệt thì cần sửa manifest §4/§6 trước khi code.
+
 ## Track M — Mở rộng ngoài core (manifest §9, D74, từ 2026-11-26)
+
+> **Tạm dừng tới sau GĐ4** (owner chốt 2026-11-27). M1–M3 đã xong; M3e, M4, M5 chờ.
 
 > Không phải giai đoạn mới. SDDA lấy mục thấp nhất chưa xong ở đây **chỉ khi** mọi
 > mục còn lại của giai đoạn hiện tại bị chặn (môi trường hoặc chờ owner); hiện GĐ4
@@ -738,6 +786,8 @@
         → rollback các instance đã chạy). Env-gated như MD47–49 nếu cần pasta.
      i. Cập nhật README dòng `stack.yaml` → `stack.json`, nhãn `thử nghiệm` (M1), thêm
         `examples/` một stack.json mẫu.
+   → **d–i xong 2026-11-26 Phiên 40 (#203, PR #204, D76)**: `pasta_ports`, ready `exec`
+     qua execv2, http timeout + validate port, down error policy, MD e2e, `examples/04-stack`.
 3. **M3 — Registry template tĩnh.**
    a. Định dạng: `index.json` (name, version, sha256, size, created) + `<name>-<ver>.tar.zst`.
    b. `sandbox template push <name> --out DIR`: sinh file tĩnh từ template local.
@@ -757,6 +807,14 @@
      push từ chối symlink tuyệt đối (D70). 14 unit test (httptest) + **MD69**
      e2e (static server, tamper fail-closed, evil tar `../` bị chặn dù index
      xác nhận sha).
+   e. **Còn thiếu (owner review 2026-11-27)**: sha256 trong `index.json` chỉ chứng minh
+      blob khớp index **trên cùng server**. Server bị chiếm thì kẻ tấn công sửa được cả
+      hai. Cần thêm: (1) pin khi pull `name:ver@sha256:<digest>` (digest lấy ngoài băng,
+      vd. ghi trong `stack.json`/Git); (2) tuỳ chọn ký `index.json` bằng ed25519 (Go
+      stdlib, zero-dep): `push --sign-key`, `pull --trust-key`; có `--trust-key` thì thiếu
+      chữ ký hoặc chữ ký sai đều fail-closed; (3) giới hạn tổng dung lượng/số entry khi giải
+      nén (chống tar/gzip bomb làm đầy disk); (4) README nhắc lại manifest §3: template
+      kéo về vẫn chỉ dành cho workload **tin cậy** cho tới khi GĐ4 xong.
 4. **M4 — Lớp cluster nhiều VPS** (mục tiêu owner 2026-11-17).
    a. **Chỉ tài liệu thiết kế, chờ owner duyệt trước khi code**: công cụ riêng (tên
       đề xuất), danh sách node + token, kết nối node qua SSH tunnel/WireGuard (`minictd`
@@ -772,6 +830,11 @@
    `stack.yaml`. Không viết nền tảng deploy riêng.
 
 ## Hướng xa (chưa thuộc giai đoạn nào, chưa duyệt)
+
+- **Desktop GUI trong sandbox + noVNC trên console** (owner hỏi 2026-11-27): template
+  "desktop" (Xvnc + WM nhẹ, không GPU), tunnel cổng VNC qua WebSocket của #218 (không mở
+  port host), tab Desktop dùng noVNC đóng gói tĩnh. Làm **sau GĐ4** (cần microVM để chạy
+  trình duyệt/nội dung lạ an toàn) và sau #218.
 
 - **arm64**: port `minict` (seccomp filter theo arch, syscall số khác) — cần runner arm64.
 - **Runtime cho K3s/K8s (CRI shim)**: ngược non-goal manifest §4 "không Kubernetes API";
