@@ -1,0 +1,24 @@
+{
+  "date": "2026-11-25",
+  "mode": "apply",
+  "halted": false,
+  "halt_reason": "",
+  "branches": [
+    {"name": "feat/165-pasta-portforward-config", "head_sha": "04f51db1c2ffbde08f78960ad4ae506b881a8ad6",
+     "decision": "MERGE", "reason": "G1-G8 PASS @ 04f51db — issue #165 (GD2 muc 4, D67); SCR PASS + SIA PASS cung SHA (run 45590685583); 6/6 mutant caught; squash d7cb8a3",
+     "pr": 166, "issue": 165, "gates": {"G1": true, "G2": true, "G3": true, "G4": true, "G5": true, "G6": true, "G7": true, "G8": true},
+     "archive_tag": "", "done": true, "error": ""},
+    {"name": "feat/165-pasta-portforward-config", "head_sha": "04f51db1c2ffbde08f78960ad4ae506b881a8ad6",
+     "decision": "DELETE_MERGED", "reason": "da gop tron vao main (squash d7cb8a3) — xoa sau xac minh, khong can archive tag",
+     "pr": 166, "issue": 165, "gates": {}, "archive_tag": "", "done": true, "error": ""},
+    {"name": "chore/ledger-2026-11-25-p32", "head_sha": "ledger branch head (docs/journal only)",
+     "decision": "MERGE", "reason": "Miễn G3/G4/G6 (docs/branch-ledger.md + journal/** only) — G1/G2/G5/G7 PASS; CI xanh; squash 77a2f35",
+     "pr": 167, "issue": 0, "gates": {"G1": true, "G2": true, "G5": true, "G7": true},
+     "archive_tag": "", "done": true, "error": ""},
+    {"name": "chore/ledger-2026-11-25-p32", "head_sha": "(this PR)",
+     "decision": "DELETE_MERGED", "reason": "ledger da gop — xoa sau xac minh",
+     "pr": 167, "issue": 0, "gates": {}, "archive_tag": "", "done": true, "error": ""}
+  ],
+  "remaining_branches": ["main"],
+  "main_ci_after": "success"
+}
