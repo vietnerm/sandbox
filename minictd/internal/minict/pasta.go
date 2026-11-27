@@ -204,13 +204,16 @@ func pastaArgs(shimPID int, fwds []pastaFwd, gw string) []string {
 	}
 	// One pasta flag applies ONE listen address to its WHOLE comma list
 	// (fwd_rule_parse → parse_addrifname consumes "ADDR/" before the spec),
-	// so the loopback group and the public group need separate flags. The
-	// "auto" entry rides the loopback spec (FWD_SCAN + loopback bind).
+	// and FWD_SCAN is a per-SPEC flag — an "auto" entry in the same spec
+	// poisons every explicit entry with it (measured: "TCP [127.0.0.1]:p
+	// => 8080 (auto-scan)" never activated because the scan looks for the
+	// LISTEN port bound in the namespace, not the target). So the auto
+	// entry MUST be its own flag; flags accumulate (fwd_rule_parse adds
+	// rules, only "none" must stand alone).
 	if len(tcpLocal) > 0 {
-		args = append(args, "-t", "127.0.0.1/"+strings.Join(tcpLocal, ",")+",auto")
-	} else {
-		args = append(args, "-t", "127.0.0.1/auto")
+		args = append(args, "-t", "127.0.0.1/"+strings.Join(tcpLocal, ","))
 	}
+	args = append(args, "-t", "127.0.0.1/auto")
 	if len(tcpPublic) > 0 {
 		args = append(args, "-t", strings.Join(tcpPublic, ","))
 	}
