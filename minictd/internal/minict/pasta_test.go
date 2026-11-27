@@ -20,17 +20,23 @@ import (
 )
 
 func TestParsePastaPortsValid(t *testing.T) {
-	fwds, err := parsePastaPorts([]string{"18080:8080", "tcp/18081:8081", "udp/15353:53"})
+	fwds, err := parsePastaPorts([]string{
+		"18080:8080", "tcp/18081:8081", "udp/15353:53",
+		"public/18082:8082", "tcp/public/18083:8083", "udp/public/15354:54",
+	})
 	if err != nil {
 		t.Fatalf("valid entries rejected: %v", err)
 	}
-	if len(fwds) != 3 {
-		t.Fatalf("want 3 forwards, got %d: %v", len(fwds), fwds)
+	if len(fwds) != 6 {
+		t.Fatalf("want 6 forwards, got %d: %v", len(fwds), fwds)
 	}
 	want := []pastaFwd{
 		{Proto: pastaTCP, Host: 18080, NS: 8080},
 		{Proto: pastaTCP, Host: 18081, NS: 8081},
 		{Proto: pastaUDP, Host: 15353, NS: 53},
+		{Proto: pastaTCP, Host: 18082, NS: 8082, Public: true},
+		{Proto: pastaTCP, Host: 18083, NS: 8083, Public: true},
+		{Proto: pastaUDP, Host: 15354, NS: 54, Public: true},
 	}
 	for i, w := range want {
 		if fwds[i] != w {
@@ -61,6 +67,9 @@ func TestParsePastaPortsInvalid(t *testing.T) {
 		"same host two protos":  {"18080:80", "udp/18080:53"}, // valid! different proto
 		"range not supported":   {"18080-18090:80"},
 		"bad protocol":          {"sctp/18080:80"},
+		"unknown scope":         {"lan/18080:80"},
+		"unknown scope w/proto": {"tcp/inet/18080:80"},
+		"empty scope":           {"/18080:80"},
 		"spaces in spec":        {"18080 : 8080"},
 		"too many entries 17th": make17(),
 	}
@@ -102,8 +111,11 @@ func TestPastaArgs(t *testing.T) {
 		"--netns", "/proc/4242/ns/net",
 		"--config-net",
 		"--dns-forward", "172.17.0.1",
-		"-t", "18080:8080,18081:8081",
-		"-u", "15353:53",
+		"-t", "127.0.0.1/18080:8080,18081:8081",
+		"-u", "127.0.0.1/15353:53",
+		"-T", "none",
+		"-U", "none",
+		"--no-map-gw",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("argv length %d, want %d: %v", len(got), len(want), got)
@@ -120,6 +132,67 @@ func TestPastaArgs(t *testing.T) {
 	}
 	if !hasArg(got, "-t") {
 		t.Errorf("tcp forward missing: %v", got)
+	}
+}
+
+// TestPastaArgsFailClosed (#220/D82): with NO forwards declared the argv
+// must still pin every pasta default that was measured as a hole: TCP/UDP
+// auto forwarding killed (-t/-u none), ns→host killed (-T/-U none),
+// gateway mapping killed (--no-map-gw).
+func TestPastaArgsFailClosed(t *testing.T) {
+	got := pastaArgs(7, nil, "")
+	want := []string{
+		"--foreground",
+		"--userns", "/proc/7/ns/user",
+		"--netns", "/proc/7/ns/net",
+		"--config-net",
+		"-t", "none",
+		"-u", "none",
+		"-T", "none",
+		"-U", "none",
+		"--no-map-gw",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("argv length %d, want %d: %v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("argv[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// TestPastaArgsPublicOptIn (#220/D82): "public/" entries must land in their
+// OWN flag without the loopback prefix (one pasta flag binds ONE address
+// for its whole comma list), local entries keep 127.0.0.1/, and UDP
+// explicit spec must NOT carry an auto entry (explicit = scan disabled).
+func TestPastaArgsPublicOptIn(t *testing.T) {
+	fwds := []pastaFwd{
+		{Proto: pastaTCP, Host: 18080, NS: 8080},
+		{Proto: pastaTCP, Host: 9090, NS: 80, Public: true},
+		{Proto: pastaUDP, Host: 15353, NS: 53},
+		{Proto: pastaUDP, Host: 15354, NS: 54, Public: true},
+	}
+	got := pastaArgs(7, fwds, "")
+	var flags []string
+	for i, a := range got {
+		if a == "-t" || a == "-u" {
+			flags = append(flags, a, got[i+1])
+		}
+	}
+	want := []string{
+		"-t", "127.0.0.1/18080:8080",
+		"-t", "9090:80",
+		"-u", "127.0.0.1/15353:53",
+		"-u", "15354:54",
+	}
+	if len(flags) != len(want) {
+		t.Fatalf("forward flags %v, want %v", flags, want)
+	}
+	for i := range want {
+		if flags[i] != want[i] {
+			t.Errorf("flags[%d] = %q, want %q", i, flags[i], want[i])
+		}
 	}
 }
 
@@ -219,6 +292,10 @@ func TestPastaFwdString(t *testing.T) {
 	}
 	if got := pastaFwdList([]pastaFwd{{Proto: pastaTCP, Host: 18080, NS: 8080}, f}); got != "tcp/18080->8080, udp/15353->53" {
 		t.Errorf("pastaFwdList = %q", got)
+	}
+	p := pastaFwd{Proto: pastaTCP, Host: 9090, NS: 80, Public: true}
+	if p.String() != "tcp/9090->80[public]" {
+		t.Errorf("public String() = %q", p.String())
 	}
 }
 

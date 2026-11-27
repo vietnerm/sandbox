@@ -42,7 +42,7 @@ Nhãn theo Track M M1 (manifest §9, D74): `sẵn sàng` = e2e xanh trên CI; `t
 | Seccomp allowlist theo template | sẵn sàng | MD41-43 PASS CI (4 profile đo sẵn) |
 | Overlayfs rootless (zero-copy rootfs) | sẵn sàng | MD44-46 PASS CI kernel 7.x |
 | Landlock LSM (ro-root + fail-closed) | sẵn sàng | LL1-3 PASS CI kernel 7.x |
-| Port-forward pasta config-side | thử nghiệm | MD47-49 env-gated /dev/net/tun |
+| Port-forward pasta config-side | thử nghiệm | MD47-49 + MD70 env-gated /dev/net/tun; mặc định fail-closed: bind 127.0.0.1, auto forwarding bỏ (chỉ `pasta_ports`), ns→host + gateway mapping chặn (`public/` opt-in) (#220) |
 | cgroups v2 quota (memory/cpu/pids) | thử nghiệm | CG0-5 cần sudo bootstrap CI |
 | PTY terminal (vi/top/REPL) | thử nghiệm | host-side PTY + ready handshake (#206 D77); MD62 PASS dev 5.10 + runner; giữ `thử nghiệm` tới khi MD62 xanh ổn định trên CI |
 | systemd `--user` unit | thử nghiệm | MD22 chỉ verify cú pháp |
@@ -134,6 +134,7 @@ docs/branch-ledger.md   sổ gộp/xoá nhánh (append-only)
 
 ## Known Limitations
 
+
 Mỗi dòng là một câu và một link tới bằng chứng; chi tiết nằm ở link, không chép lại
 ở đây. `tools/check-docs.sh` (CI) chặn dòng không có link và các câu đã lỗi thời.
 
@@ -147,6 +148,7 @@ Mỗi dòng là một câu và một link tới bằng chứng; chi tiết nằm
 - systemd `--user` unit mới được kiểm cú pháp, chưa chạy thật dưới user manager có lingering ([daemon-service](journal/2026-11-20/decisions/daemon-service.md)).
 - Image `oci:`/`tar:` có symlink target tuyệt đối (vd. `/bin/busybox`) bị từ chối fail-closed (D50 `secureUnpack` — reject, không sanitize). Image builder phải dùng **symlink tương đối** (vd. `ln -s busybox` thay vì `ln -s /bin/busybox`) hoặc copies (`busybox --install` không `-s`). Rootfs `base` nội bộ không qua đường này (copy, không `secureUnpack`) nên `mkrootfs.sh --install -s` vẫn dùng được ([D70](journal/2026-11-26/decisions/issue-109-symlink.md), [crane-e2e](journal/2026-11-21/decisions/crane-e2e.md)).
 - Chỉ kiểm trên x86_64: bảng syscall seccomp và `mkrootfs-alpine.sh` là của x86_64 ([alpine-rootfs](journal/2026-11-17/decisions/alpine-rootfs.md)).
+- Port-forward pasta mặc định **fail-closed**: forward khai báo bind `127.0.0.1` (trước đây mở mọi interface — đo được `*:18024`), auto forwarding (D42) bỏ hẳn — chỉ `pasta_ports` tường minh là đường inbound (UDP auto đo được mở `0.0.0.0:5353` từ ns bind; TCP auto range-scan conflict với forward tường minh), ns→host và gateway→host chặn (đo được sandbox chạm API minictd qua gateway). Muốn mở công khai phải khai `public/<host>:<ns>` tường minh ([#220 D82](journal/2026-11-27/decisions/pasta-failclosed.md)); port preview/wake vẫn qua webproxy bridge D16, không đổi.
 
 ## Quy trình hằng ngày
 A Research → B Develop → C CVE check → D No-Compromise Validation → daily-log.

@@ -1,0 +1,31 @@
+# evidence — sec/220-pasta-failclosed (D82) — 2026-11-27 04:19 UTC
+kernel: 5.10.134-013.15.kangaroo.al8.x86_64
+
+== PRE-FIX measurement (runner CI, commit 896c769, artifact md70-measure.txt) ==
+# MD70 measurement @ 2026-11-27 03:52:32 UTC — P2PORT=18024 GW=10.0.128.1 (daemon path, pastaArgs)
+P1_declared_bind       : *:18024
+P2_udp_auto_count_5353 : 1   (0 = closed, >0 = UDP auto inbound OPEN)
+P3_ns_to_host_API_out  : HTTP/1.0 401 Unauthorized\r\nContent-Type: application/json\r\nDate: Fri, 27 Nov 2026 03:52:32 GMT\r\nContent-Length: 25\r\n\r\n{"error":"unauthorized"}\n   (HTTP 401 = ns→host hole open)
+
+== POST-fix (dev, MD70 SKIP env-gated — assertions chạy trên runner) ==
+make test: 10 suites 0 FAIL (test_pasta 5 PASS + 6 SKIP env)
+make test-web: 9/9
+make test-minictd: 64 PASS + 9 SKIP + 0 FAIL (MD70 SKIP dev; runner sẽ assert)
+unit go test ./... (minict): ok — TestPastaArgsFailClosed + TestPastaArgsPublicOptIn + grammar v2
+
+== make perf-check ==
+cold_start_ms  :     1.78  (threshold 100)
+rss_kb         :     1192  (threshold 10240)
+disk_base_mb   :     2.05  (threshold 20)
+perf-check: PASS
+
+== host baseline ==
+21d5de2dc39f2ceb19e33f8cc124b311b57a48aea6d7703a9a98b93079d412bd  /etc/passwd
+223fe8564b60636bc738b6178d3ba9a50ef7d791266b0efae6363bb716e4c47f  /bin/bash
+a59f393bad5037644b89de64fe558ae6d5d1473c25c63022241e7c7019ad2f0c  /usr/bin/sudo
+(khớp Phiên 40/42 — unchanged)
+
+== CVE ==
+| CVE-2026-31431 | kernel | CVSS: 7.8 HIGH | from cve-watchlist.md: 7.8 HIGH (NVD) | 6.18.22+/6.19.12+ (advisory) | |
+| CVE-2025-39964 | kernel | CVSS: 7.8 HIGH | from cve-watchlist.md: 7.8 HIGH (NVD) | sau stable point | unverified  |
+(0 CVE mới ngoài watchlist)
