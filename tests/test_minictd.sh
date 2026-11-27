@@ -2206,7 +2206,7 @@ for l in b[1:]:
         h = f[2]
         print('.'.join(str(int(h[i:i+2], 16)) for i in (6, 4, 2, 0)))
         break")
-    echo "  [meas] GW=$GW P2PORT=$P2PORT shim=$shim"
+    echo "  [meas] GW=$gw P2PORT=$P2PORT shim=$shim"
     echo "  [meas] P1 declared-bind : $(ss -tln 2>/dev/null | grep -E ":$P2PORT[[:space:]]" | head -1 | awk '{print $4}')"
     echo "  [meas] P2 udp-auto-count: $(ss -lnu 2>/dev/null | grep -cE ':5353[[:space:]]')"
     local p3=""
