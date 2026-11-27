@@ -2236,7 +2236,7 @@ for l in b[1:]:
     p4rc=$(jget 'd.get("stdout","").strip()')
     [[ "$p4rc" -ge 1 ]] || { echo "P4 egress broken (grep Example = $p4rc)"; return 1; }
     # P5' positive control: opt-in public/ bind lại mọi interface
-    api POST /v1/run "{\"name\":\"md-sec220b\",\"image\":\"base\",\"pasta_ports\":[\"public/$P2PORT2:8080\"],\"cmd\":[\"/bin/sh\",\"-c\",\"mkdir -p /www && echo p220b-ok > /www/index.html && httpd -p 8080 -h /www\"]}" > /dev/null || { echo "run md-sec220b failed: $(head -c 200 "$WORK/resp")"; return 1; }
+    api POST /v1/run "{\"name\":\"md-sec220b\",\"image\":\"base\",\"pasta_ports\":[\"public/$P2PORT2:8080\"],\"cmd\":[\"/bin/sh\",\"-c\",\"mkdir -p /www && echo p220b-ok > /www/index.html && httpd -f -p 8080 -h /www\"]}" > /dev/null || { echo "run md-sec220b failed: $(head -c 200 "$WORK/resp")"; return 1; }
     sleep 2
     ss -tln 2>/dev/null | grep -qE "(0\.0\.0\.0|\*|\[::\]):$P2PORT2[[:space:]]" || { echo "P5 public/ did not bind wildcard"; ss -tln | grep "$P2PORT2" || true; return 1; }
     curl -s -m 5 "http://127.0.0.1:$P2PORT2/" | grep -q p220b-ok || { echo "P5 public forward dead"; return 1; }
