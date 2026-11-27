@@ -112,7 +112,9 @@ async function rawText(method: string, path: string, body: string): Promise<void
   h["Content-Type"] = "text/plain; charset=utf-8";
   let res: Response;
   try {
-    res = await fetch(path, { method, headers: h, body, credentials: "omit", cache: "no-store" });
+    // Make the wire encoding explicit; this is important for IME text and
+    // prevents browser string/body coercion from replacing UTF-8 characters.
+    res = await fetch(path, { method, headers: h, body: new TextEncoder().encode(body), credentials: "omit", cache: "no-store" });
   } catch {
     throw new MinictdError(0, "unreachable", "minictd unreachable");
   }
@@ -440,15 +442,19 @@ export async function minictdApi<T>(method: string, fullPath: string, body?: unk
       const dirPath = assertSafePath(q.get("path") ?? "/");
       const out = await execv2(id, ["/bin/sh", "-c", FS_LIST_SCRIPT, "sh", dirPath], 60);
       if (out.exit_code !== 0) throw new MinictdError(500, "list_failed", `ls thất bại: ${out.stderr.slice(0, 200)}`);
-      const entries = parseStatEntries(out.stdout).map((e) => ({
-        name: e.name,
-        path: joinPath(dirPath, e.name),
-        type: e.type,
-        size: e.size,
-        mode: e.mode,
-        mtime: e.mtime,
-        owner: "",
-      }));
+      const entries = parseStatEntries(out.stdout).map((e) => {
+        // stat %n returns the full operand path; the UI entry name must be its basename.
+        const name = e.name.slice(e.name.lastIndexOf("/") + 1) || e.name;
+        return {
+          name,
+          path: joinPath(dirPath, name),
+          type: e.type,
+          size: e.size,
+          mode: e.mode,
+          mtime: e.mtime,
+          owner: "",
+        };
+      });
       entries.sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name) : a.type === "dir" ? -1 : 1));
       return r({ path: dirPath, home: "/", entries });
     }

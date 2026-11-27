@@ -171,6 +171,9 @@ export function TerminalView({ id }: { id: string }) {
   const liveWsRef = useRef(false);
   const ptySidRef = useRef<string | null>(null); // GĐ3 mục 2: PTY session id
   const ptyCleanupRef = useRef<(() => void) | null>(null);
+  // POST input requests must be serialized; concurrent key chunks can arrive
+  // out of order, which corrupts UTF-8/IME text in the PTY.
+  const ptyInputQueueRef = useRef<Promise<void>>(Promise.resolve());
 
   const running = (sandbox?.status ?? "Running") === "Running";
 
@@ -262,8 +265,15 @@ export function TerminalView({ id }: { id: string }) {
       term.onData((d) => {
         if (liveWsRef.current && wsRef.current?.readyState === WebSocket.OPEN) wsRef.current.send(d);
         else if (ptySidRef.current) {
-          // GĐ3 mục 2: PTY mode — POST input (raw text, fire-and-forget)
-          post(`/v1/sandboxes/${id}/terminal/${ptySidRef.current}/input`, d).catch(() => {});
+          // GĐ3 mục 2: PTY mode — serialize raw input POSTs so IME/UTF-8
+          // chunks cannot overtake one another on the network.
+          const sid = ptySidRef.current;
+          ptyInputQueueRef.current = ptyInputQueueRef.current
+            .catch(() => {})
+            .then(async () => {
+              if (ptySidRef.current === sid) await post(`/v1/sandboxes/${id}/terminal/${sid}/input`, d);
+            })
+            .catch(() => {});
         } else shellRef.current?.handleData(d);
       });
       term.onResize(({ cols, rows }) => {
@@ -339,11 +349,12 @@ export function TerminalView({ id }: { id: string }) {
           const { session_id: sid } = await post<{ session_id: string }>(`/v1/sandboxes/${id}/terminal`);
           if (sid) {
             ptySidRef.current = sid;
+            ptyInputQueueRef.current = Promise.resolve();
             setConn("live");
             let gotFirstFrame = false;
             const stop = sse(
               `/v1/sandboxes/${id}/terminal/${sid}/stream`,
-              (data) => { gotFirstFrame = true; try { termWrite(JSON.parse(data) as string); } catch { /* partial */ } },
+              (data) => { gotFirstFrame = true; termWrite(data); },
               () => {
                 if (disposed) return;
                 // session is gone either way — stop routing input to it

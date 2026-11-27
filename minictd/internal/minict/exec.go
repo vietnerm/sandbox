@@ -393,6 +393,26 @@ func (s *Store) PrepareTerminal(name string) (pid int, envFile string, err error
 	if err != nil {
 		return 0, "", err
 	}
+	// Keep interactive PTY output UTF-8 aware. BusyBox uses the active locale
+	// when deciding whether filename bytes are printable; with an empty/C
+	// locale Vietnamese UTF-8 bytes are rendered as question marks. Respect an
+	// explicitly configured value from the sandbox spec.
+	hasLang, hasLCAll := false, false
+	for _, entry := range env {
+		key, _, _ := strings.Cut(entry, "=")
+		switch key {
+		case "LANG":
+			hasLang = true
+		case "LC_ALL":
+			hasLCAll = true
+		}
+	}
+	if !hasLang {
+		env = append(env, "LANG=C.UTF-8")
+	}
+	if !hasLCAll {
+		env = append(env, "LC_ALL=C.UTF-8")
+	}
 
 	execDir := filepath.Join(s.dir(name), "exec-env")
 	_ = os.MkdirAll(execDir, 0o700)

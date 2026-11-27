@@ -215,6 +215,9 @@ export function FileManagerView({ id }: { id: string }) {
   const [prompt, setPrompt] = useState<{ kind: "file" | "dir" | "rename"; value: string; from?: string } | null>(null);
 
   const uploadRef = useRef<HTMLInputElement>(null);
+  // Ignore out-of-order list responses when navigation/refresh is fast.
+  const loadSeqRef = useRef(0);
+  const readSeqRef = useRef(0);
 
   const sorted = useMemo(() => {
     const list = entries.filter((e) => showHidden || !e.name.startsWith("."));
@@ -229,17 +232,20 @@ export function FileManagerView({ id }: { id: string }) {
 
   const load = useCallback(
     async (p: string) => {
+      const seq = ++loadSeqRef.current;
+      readSeqRef.current += 1;
       setLoading(true);
       setError("");
       try {
         const r = await listFiles(id, p);
+        if (seq !== loadSeqRef.current) return;
         setEntries(r.entries);
         setPath(r.path);
         if (r.home) setHome(r.home);
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
+        if (seq === loadSeqRef.current) setError(e instanceof Error ? e.message : String(e));
       } finally {
-        setLoading(false);
+        if (seq === loadSeqRef.current) setLoading(false);
       }
     },
     [id],
@@ -266,9 +272,11 @@ export function FileManagerView({ id }: { id: string }) {
   /* live re-poll of the current dir */
   useEffect(() => {
     if (!live) return;
+    const pollSeq = loadSeqRef.current;
     const t = setInterval(() => {
       listFiles(id, path)
         .then((r) => {
+          if (pollSeq !== loadSeqRef.current) return;
           setEntries(r.entries);
           setPath(r.path);
         })
@@ -305,11 +313,13 @@ export function FileManagerView({ id }: { id: string }) {
 
   const openFile = useCallback(
     async (e: FsEntry) => {
+      const seq = ++readSeqRef.current;
       try {
         const r = await readFile(id, e.path);
+        if (seq !== readSeqRef.current) return;
         setEd({ path: r.path, content: r.content, orig: r.content, encoding: r.encoding, size: r.size, mode: r.mode, mtime: r.mtime });
       } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
+        if (seq === readSeqRef.current) setError(err instanceof Error ? err.message : String(err));
       }
     },
     [id],

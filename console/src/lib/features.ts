@@ -11,5 +11,5 @@ export function viewSupported(v: ViewKey): boolean {
   return isDemo() || MINICTD_VIEWS.has(v);
 }
 
-/** the per-sandbox file manager needs a files API minictd does not have */
-export const filesSupported = () => isDemo();
+/** minictd serves the file manager through the console adapter's execv2 bridge. */
+export const filesSupported = () => true;

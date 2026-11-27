@@ -29,10 +29,10 @@ export const FS_STAT_FMT = "%F\\t%s\\t%Y\\t%a\\t%n";
  * races a removal does not fail the listing.
  */
 export const FS_LIST_SCRIPT =
-  'for f in "$1"/* "$1"/.[!.]* "$1"/..?*; do [ -e "$f" ] && stat -c "%F\\t%s\\t%Y\\t%a\\t%n" "$f"; done; true';
+  'for f in "$1"/* "$1"/.[!.]* "$1"/..?*; do [ -e "$f" ] && stat -c "%F\t%s\t%Y\t%a\t%n" "$f"; done; true';
 
 /** stat -c "%s\t%Y\t%a" <path> — size, epoch mtime, octal mode. */
-export const FS_STAT_ONE_SCRIPT = 'stat -c "%F\t%s\\t%Y\\t%a" "$1"';
+export const FS_STAT_ONE_SCRIPT = 'stat -c "%F\t%s\t%Y\t%a" "$1"';
 
 /** Hard cap for one readFile/writeFile round-trip (daemon maxBodyBytes is 16 MB). */
 export const FS_MAX_FILE = 1_000_000;
