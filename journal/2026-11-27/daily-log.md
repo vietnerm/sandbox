@@ -224,3 +224,143 @@ Trạng thái : DAY PASS — 1 issue p1 trọn vòng repro→fix→assert→muta
              →merge; 2 lỗi của agent bị harness bắt trước khi land; kèm heal
              console build hỏng sẵn trên main
 ============================================
+
+## Phiên 45 — Orchestrator (Bắt đầu 09:33 UTC)
+
+### Pha A — Đồng bộ + kế hoạch nhánh
+- main `6501d15` (PR #230 WS-PTY #218/D84 của phiên song song, merged 08:54Z)
+  — pull OK; open PR: 0. Go toolchain tái dùng `/home/z/my-project/toolchain/go`
+  (phát hiện extract dở từ phiên trước — re-extract `go.tgz` trước khi build).
+- SBG MODE=plan → `journal/2026-11-27/branch/plan.md` (mục Phiên 45): phát hiện
+  3 nhánh agent sót trên remote (Phiên 44 báo chỉ còn main + nhánh owner):
+  `docs/roadmap-review-2026-11-27` (#223 MERGED), `docs/gd4-ci-kvm-platform`
+  (#226 MERGED) → DELETE_MERGED ngay ở Pha A; `probe/kvm-runner` (#225 closed
+  không merge) → DROP ở Pha E; `fix/console-utf8-files-stage1` → KEEP (owner).
+- CI main 4/4 xanh @ `6501d15` — không dừng.
+
+### Pha B/C — PR đang mở
+- Không có PR mở đầu phiên (PR #232 của phiên này đi Pha B/C ngay dưới).
+
+### Pha D — Issue #231 (GĐ4 1b.a): jail Firecracker không cần root (D85)
+- Theo PROMPT §8: security p0/p1 không còn (#220 merged) → mục thấp nhất chưa
+  xong của GĐ4 1b là **1b.a**. Tạo issue #231 với deliverables từ roadmap.
+- **Research** (2 nguồn chính fetch thật: firecracker docs/jailer.md — jailer
+  làm chroot+mknod+setuid+cgroup, phải root; pandastack jailer-explained —
+  "VMM does not need root at runtime"; phụ: ZHAW, GHSA-36j2-f825-qvgc) →
+  `journal/2026-11-27/research.md` Phiên 45.
+- **Đo trước khi sửa**: firecracker v1.18.0 trên host uid 1001 không KVM —
+  `--version` exit 0; API socket nghe; `GET /` → 200
+  `{"state":"Not started","vmm_version":"1.18.0"}`. Đo trong jail qua daemon thật
+  (MD73) — tất cả giữ đúng.
+- **Phát hiện bug thật trong scaffolding #193**: `tools/fetch-firecracker.sh`
+  có sha256 PLACEHOLDER (`1a2b3c4d…`) + URL asset thiếu `.tgz` — chưa từng chạy
+  được. Fix: pin v1.18.0, digest đo từ release chính thức (tgz khớp
+  `.tgz.sha256.txt`, binary khớp SHA256SUMS trong archive), verify trước install.
+- **Develop** (nhánh `feat/231-gd4-jail-rootless`, commit `d752138`): D85 —
+  `internal/firecracker/jail.go` (JailSpec → RunSpec, bind tools/bin ro +
+  state dir + /dev/kvm env-gated) + `jail_test.go` (3 test) + **MD73** e2e +
+  docs (roadmap 1b.a Xong, minictd README GĐ4, Makefile help 72 case).
+- **Hai sự cố của chính agent bị bắt/fix trong phiên**:
+  (i) Tool edit tương tác biến REAL TAB thành spaces ở dòng
+  `stat -c "%F\t%s\t%Y\t%a"` của MD71 (fix #228) → MD71 đỏ ×2 run → restore từ
+  HEAD + insert bằng script Python byte-exact (bài học: file có TAB ngữ nghĩa
+  phải sửa bằng script, không qua Read/Edit tương tác);
+  (ii) kvm CI job đỏ @ `d752138`: TestJailSpecRunSpec pin 2 volumes thiếu bind
+  /dev/kvm của host KVM (log: got 3 want 2) — chính TestJailSpecKVMDevice PASS
+  thật (ioctl KVM_GET_API_VERSION=12); fix `93f4115` pin theo đúng gate
+  WithKVM + assert bind bắt buộc trong spec WithKVM-forced.
+- **Mutant**: A (e2e phá state bind) → MD73 FAIL "API socket never appeared"
+  CAUGHT; B (unit --api-sock-BROKEN) → TestJailSpecRunSpec FAIL CAUGHT.
+- **CVE Check**: kernel 5.10.134; cve-check rc=0 — 0 CVE mới ngoài watchlist
+  (19 entry; `journal/2026-11-27/cve/gd4-jail-rootless.{md,json}`); cve-kernel
+  --discover-days 2 rc=0 — CRITICAL 0 hits, HIGH 22 → 0 listed.
+- **Validation**: `make test-escape` 10 suites failed:none; `make test-web`
+  9/9; `make test-minictd` 67/9/0; perf 2.20ms/1152kB/2.05MB PASS; host
+  baseline unchanged (3/3 khớp p40, listeners cùng bộ 6). Bằng chứng:
+  `journal/2026-11-27/evidence/gd4-jail-rootless.txt`.
+
+### Pha B/C — PR #232 đi trọn vòng trong phiên
+- B1 sync main: không cần (nhánh từ `6501d15` = main hiện tại).
+- B2 SCR (clean-room `/tmp/scr232`, git archive @ `93f4115`, uid 1001):
+  build từ đầu OK; `make test` ×2 + `test-web` ×2 + `test-minictd` ×2 —
+  tất cả xanh, MD73 stable_pass ×2, MD71 stable_pass ×2; perf 1.82ms/1164kB/
+  2.05MB; host unchanged; 1 comment SCR đăng trên PR.
+- B3 SIA: hợp đồng 10/11 OK + 1 N/A (daily-log ở ledger); claim sai 0; test
+  rỗng 0; security 0/0/0 (3 low); label `audit:pass`; 1 comment đăng.
+- B4: verdict pass (3 low — ghi "Việc để gỡ", không chặn).
+- C (SBG apply): G1–G8 PASS → squash `cb21bf2` (match-head `93f4115`);
+  **#231 auto-close**; CI main sau merge: kiểm ở Pha E.
+
+### Pha E — Kết phiên (SBG apply)
+- Nhánh đã xoá: `feat/231-gd4-jail-rootless` (squash `cb21bf2` vào main),
+  `docs/roadmap-review-2026-11-27` + `docs/gd4-ci-kvm-platform`
+  (DELETE_MERGED, Pha A), `probe/kvm-runner` (DROP — archive tag
+  `archive/probe-kvm-runner/2026-11-27` push + verify deref `49b7469` khớp
+  branch head trước khi xoá; restore:
+  `git push origin archive/probe-kvm-runner/2026-11-27:refs/heads/probe/kvm-runner`).
+- KEEP: `fix/console-utf8-files-stage1` (owner).
+- Ledger qua PR `chore(branches): ledger 2026-11-27 Phien 45`.
+
+## Issue xử lý
+- #231 — feat(gd4): jail Firecracker không cần root (1b.a) — status: done
+  (PR #232 squash `cb21bf2`, auto-close).
+
+## Research
+- firecracker docs/jailer.md — jailer = chroot+mknod+setuid+cgroup+rlimit,
+  buộc root; VMM runtime chỉ cần file staged + /dev/kvm + API socket.
+- pandastack jailer-explained — "VMM does not need root at runtime"; jailer
+  chỉ cần root cho setup; bổ sung minict thay trọn bộ setup đó rootless.
+- Chi tiết: `journal/2026-11-27/research.md` (Phiên 45) + D85.
+
+## Development
+- Nhánh: `feat/231-gd4-jail-rootless` (2 commit: d752138 + 93f4115) → PR #232
+  → squash `cb21bf2`.
+- Tóm tắt thay đổi: jail.go (JailSpec→RunSpec + unit test + KVM env-gated),
+  MD73 e2e, fetch-firecracker fix pin thật v1.18.0, docs roadmap/README/
+  Makefile, D85 + research + cve + evidence.
+- Perf: cold_start=2.20 ms, rss=1152 KB, disk=2.05 MB (không đụng hot path —
+  jail.go là thư viện spec, wire vào Store ở 1b.e).
+
+## CVE Check
+- Kernel: 5.10.134-013.15.kangaroo.al8.x86_64
+- CVE mới: 0 ngoài watchlist (cve-check rc=0 + kernel discover rc=0)
+- Ảnh hưởng sandbox: không
+- Hành động: không cần (watchlist giữ nguyên)
+
+## Validation "không bị nhiễm"
+- `make test-escape`: PASS (10 suites, failed: none)
+- `make test-web`: PASS 9/9
+- `make test-minictd`: PASS 67 + SKIP 9 + FAIL 0 (dev) / 75+1+0 (runner)
+- Host baseline: unchanged (3/3 sha256 khớp p40)
+- Bằng chứng: `journal/2026-11-27/evidence/gd4-jail-rootless.txt`
+
+## PR
+- #232 — feat(gd4) jail rootless (#231/D85) — draft→ready→merged — CI 5/5
+  xanh @ `93f4115` (kvm đỏ vòng 1 đã fix) — Merge: CÓ (squash `cb21bf2`)
+- SCR: RETEST PASS ×2 clean-room · SIA: PASS audit:pass — 3 low (jail.go ID
+  validName khi wire 1b.e; MD73 version pin coupling; md-stub leftover
+  pre-existing → issue đề xuất)
+
+## Kế hoạch kế tiếp
+- GĐ4 1b tiếp theo theo thứ tự a→g: **1b.b Rootfs ext4 rootless**
+  (`mkfs.ext4 -d`, e2fsck -n + debugfs -R ls, không mount không root) — mỗi
+  phiên 1 issue, repro/đo được trước khi sửa.
+- 3 low của SIA: chuyển thành issue `from-audit` nếu còn quota (md-stub
+  cleanup; validName khi wire 1b.e).
+- Residual cũ còn mở: `make console-test` vào workflow ci (G7 chờ owner).
+
+=== SDDA REPORT — 2026-11-27 (Phiên 45) ===
+Issue xử lý : #231 — GĐ4 1b.a jail Firecracker không cần root (D85)
+PR mở      : 0 (đã gộp: #232 squash cb21bf2) — CI 5/5 xanh @93f4115
+CVE check  : 0 mới ngoài watchlist (cve-check rc=0; kernel discover rc=0)
+Escape test: PASS (10 suites none; minictd 67/9/0 dev + 75/1/0 runner ×2
+             clean-room; test-web 9/9; mutant A/B CAUGHT)
+Host       : unchanged
+Perf       : cold_start=2.20 ms | rss=1152 KB | disk=2.05 MB — PASS
+Daily-log  : journal/2026-11-27/daily-log.md (mục Phiên 45)
+Kế tiếp    : GĐ4 1b.b rootfs ext4 rootless (mkfs.ext4 -d, không KVM)
+Trạng thái : DAY PASS — 1 issue GĐ4 trọn vòng research→develop→mutant→
+             SCR/SIA→merge; 2 sự cố tự phát hiện+fix (tab-corruption MD71,
+             kvm job pin volume); 3 nhánh rác dọn sạch (2 DELETE_MERGED +
+             1 DROP có archive tag)
+============================================
