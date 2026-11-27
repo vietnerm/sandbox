@@ -22,11 +22,16 @@ package minict
 //     pasta default (every interface) — one pasta flag applies ONE listen
 //     address to its whole comma list (fwd_rule_parse), so public entries
 //     need their own flag;
-//   - TCP "auto" (D42: namespace-bound ports forwarded back for preview)
-//     stays ON but is bound to loopback via the same prefixed spec;
-//   - UDP "auto" was a hole (measured: a namespace UDP bind opened host
-//     0.0.0.0:5353) — an explicit spec disables the scan and with no UDP
-//     forwards we pass "none" outright;
+//   - pasta "auto" forwarding (D42: namespace-bound ports forwarded back
+//     on the same host port) is DROPPED: (a) UDP auto was a measured hole
+//     (ns bind → host 0.0.0.0:5353); (b) the scan range conflicts with any
+//     explicit loopback forward on the same address (measured: "Forwarding
+//     configuration conflict: TCP [127.0.0.1]:1-32767 (auto-scan) versus
+//     TCP [127.0.0.1]:18854 => 8080 — Unable to add rule"); (c) no test or
+//     feature depends on it — wake/preview ports are served by the D16
+//     unix-socket webproxy bridge, not pasta. Deterministic pasta_ports
+//     are now the ONLY inbound path (podman-parity: "none" when nothing
+//     published);
 //   - ns→host forwarding (-T/-U) and gateway→host mapping (--no-map-gw)
 //     are pure exposure (measured: the sandbox reached the token-gated
 //     minictd API over the gateway address) — killed unconditionally.
@@ -204,23 +209,22 @@ func pastaArgs(shimPID int, fwds []pastaFwd, gw string) []string {
 	}
 	// One pasta flag applies ONE listen address to its WHOLE comma list
 	// (fwd_rule_parse → parse_addrifname consumes "ADDR/" before the spec),
-	// and FWD_SCAN is a per-SPEC flag — an "auto" entry in the same spec
-	// poisons every explicit entry with it (measured: "TCP [127.0.0.1]:p
-	// => 8080 (auto-scan)" never activated because the scan looks for the
-	// LISTEN port bound in the namespace, not the target). So the auto
-	// entry MUST be its own flag; flags accumulate (fwd_rule_parse adds
-	// rules, only "none" must stand alone).
+	// so the loopback group and the public group need separate flags. No
+	// "auto" entry anywhere: the scan range conflicts with explicit loopback
+	// forwards (measured, see package comment) and the scan itself was the
+	// UDP hole. Nothing declared → "none" outright (podman parity).
 	if len(tcpLocal) > 0 {
 		args = append(args, "-t", "127.0.0.1/"+strings.Join(tcpLocal, ","))
+	} else if len(tcpPublic) == 0 {
+		args = append(args, "-t", "none")
 	}
-	args = append(args, "-t", "127.0.0.1/auto")
 	if len(tcpPublic) > 0 {
 		args = append(args, "-t", strings.Join(tcpPublic, ","))
 	}
-	// An explicit -u spec disables the UDP scan entirely (no "auto" entry);
-	// with nothing declared we pass "none" — both kill the measured UDP-auto
-	// inbound hole. "none" must appear alone for its protocol (conf.c dies on
-	// a previous rule), hence the split below.
+	// Explicit -u specs declare the only UDP forwards; with nothing declared
+	// we pass "none" (the auto scan was the measured UDP hole). "none" must
+	// appear alone for its protocol (conf.c dies on a previous rule), hence
+	// the split below.
 	if len(udpLocal) > 0 {
 		args = append(args, "-u", "127.0.0.1/"+strings.Join(udpLocal, ","))
 	}

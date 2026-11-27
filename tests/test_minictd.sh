@@ -2171,7 +2171,10 @@ run_case MD69 "D81 template registry: push/pull + gate + sha fail-closed + evil 
 #         chứng đo TRƯỚC fix (commit 896c769, run CI 45935460401 — artifact
 #         md70-measure.txt): P1 "*:18024" (mọi interface); P2 UDP auto mở
 #         host 5353 (count=1); P3 sandbox -> API minictd qua gateway mapping
-#         = HTTP/1.0 401. Sau fix (D82) các assert fail-closed dưới đây:
+#         = HTTP/1.0 401. Hai lần sửa tiếp theo đo được trên runner: spec
+#         gộp auto+explicit kế thừa FWD_SCAN (rule điều kiện, không bao giờ
+#         kích hoạt) và range scan auto CONFLICT với forward tường minh
+#         cùng địa chỉ → D82 bỏ hẳn auto (podman-parity). Assert sau fix:
 #         P1' bind 127.0.0.1, không wildcard; P2' UDP auto đóng (count=0);
 #         P3' ns→host BLOCKED; P4' egress vẫn chạy (wget example.com);
 #         P5' opt-in "public/" bind lại mọi interface (positive control) —

@@ -109,7 +109,6 @@ func TestPastaArgs(t *testing.T) {
 		"--config-net",
 		"--dns-forward", "172.17.0.1",
 		"-t", "127.0.0.1/18080:8080,18081:8081",
-		"-t", "127.0.0.1/auto",
 		"-u", "127.0.0.1/15353:53",
 		"-T", "none",
 		"-U", "none",
@@ -134,8 +133,8 @@ func TestPastaArgs(t *testing.T) {
 }
 
 // TestPastaArgsFailClosed (#220/D82): with NO forwards declared the argv
-// must still pin every pasta default that was measured as a hole: TCP auto
-// loopback-bound, UDP auto killed (-u none), ns→host killed (-T/-U none),
+// must still pin every pasta default that was measured as a hole: TCP/UDP
+// auto forwarding killed (-t/-u none), ns→host killed (-T/-U none),
 // gateway mapping killed (--no-map-gw).
 func TestPastaArgsFailClosed(t *testing.T) {
 	got := pastaArgs(7, nil, "")
@@ -144,7 +143,7 @@ func TestPastaArgsFailClosed(t *testing.T) {
 		"--userns", "/proc/7/ns/user",
 		"--netns", "/proc/7/ns/net",
 		"--config-net",
-		"-t", "127.0.0.1/auto",
+		"-t", "none",
 		"-u", "none",
 		"-T", "none",
 		"-U", "none",
@@ -180,7 +179,6 @@ func TestPastaArgsPublicOptIn(t *testing.T) {
 	}
 	want := []string{
 		"-t", "127.0.0.1/18080:8080",
-		"-t", "127.0.0.1/auto",
 		"-t", "9090:80",
 		"-u", "127.0.0.1/15353:53",
 		"-u", "15354:54",

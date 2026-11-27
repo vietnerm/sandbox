@@ -56,6 +56,12 @@ sha256-pinned D37) xác nhận `fwd_rule_parse` áp MỘT addr cho toàn bộ co
 
 - Unit: TestPastaArgsFailClosed + TestPastaArgsPublicOptIn + grammar v2
   (public/ 3 dạng, unknown scope, empty scope) — package PASS.
+- 2 vòng đo trên runner giữa chừng đã bắt 2 lỗi thiết kế của chính agent:
+  (i) spec gộp `...,auto` kế thừa FWD_SCAN → rule điều kiện không kích hoạt
+  (md47-pasta.txt: "TCP [127.0.0.1]:18833 => 8080 (auto-scan)" + ns bind 8080);
+  (ii) `-t 127.0.0.1/auto` riêng cũng conflict range với explicit
+  ("Unable to add rule TCP [127.0.0.1]:1-32767 (auto-scan)") — cả hai dẫn tới
+  quyết định bỏ auto.
 - MD70 assert (runner, env-gated tun): P1' `127.0.0.1:$P2PORT` + không wildcard
   + forward sống; P2' count=0; P3' BLOCKED; P4' wget example.com ≥1 match;
   P5' `public/` bind wildcard + curl ok (quyền năng chuyển sang tường minh).
