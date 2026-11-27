@@ -18,15 +18,25 @@
 
 import type { Sandbox, SnapshotInfo, VolumeInfo } from "./api";
 import {
-  FS_LIST_SCRIPT,
+  FS_DELETE_SCRIPT_B64,
+  FS_LIST_SCRIPT_B64,
   FS_MAX_FILE,
-  FS_STAT_ONE_SCRIPT,
+  FS_MKDIR_SCRIPT_B64,
+  FS_MOVE_SCRIPT_B64,
+  FS_READ_SCRIPT_B64,
+  FS_STAT_ONE_SCRIPT_B64,
+  FS_TOUCH_SCRIPT_B64,
+  FS_WRITE_SCRIPT_B64,
   assertSafeName,
-  assertSafePath,
+  assertSafePathB64,
   b64ToBytes,
+  b64ToText,
   bytesToB64,
+  crumbsFromB64,
   decodeBest,
-  joinPath,
+  decodeFsName,
+  encodePathB64,
+  joinPathB64,
   parseStatEntries,
   utf8Bytes,
 } from "@/lib/files-parse";
@@ -320,18 +330,42 @@ export async function execv2(name: string, cmd: string[], timeoutS = 60, stdin?:
   return { exit_code: r.exit_code, stdout: r.stdout ?? "", stderr: r.stderr ?? "", timed_out: !!r.timed_out };
 }
 
-/** #208 (D79): stat một path → FsEntry (dùng sau create/upload). */
-async function statEntry(id: string, p: string): Promise<{
-  name: string; path: string; type: "dir" | "file"; size: number; mode: string; mtime: number; owner: string;
+/* ── #219 (D83) display helpers — name/path are DERIVATES of the raw bytes ── */
+
+/** Last byte segment of a base64 path (byte level — never via a JS string). */
+function basenameB64(pathB64: string): string {
+  const b = b64ToBytes(pathB64);
+  for (let i = b.length - 1; i > 0; i--) {
+    if (b[i] === 0x2f /* / */) return bytesToB64(b.subarray(i + 1));
+  }
+  return pathB64;
+}
+
+/** Display form of a base64 path: "/" + decoded labels joined by "/".
+ *  Invalid-UTF-8 segments collapse to the placeholder (decodeFsName). */
+function displayPathB64(pathB64: string): string {
+  const crumbs = crumbsFromB64(pathB64);
+  if (crumbs.length === 0) return "/";
+  return "/" + crumbs.map((c) => c.label).join("/");
+}
+
+/** #219 (D83): stat một path_b64 → FsEntry (name/path chỉ để hiển thị,
+ *  name_b64/path_b64 là nguồn thật; dùng sau create/upload). */
+async function statEntry(id: string, pathB64: string): Promise<{
+  name: string; path: string; name_b64: string; path_b64: string;
+  type: "dir" | "file"; size: number; mode: string; mtime: number; owner: string;
 }> {
-  const st = await execv2(id, ["/bin/sh", "-c", FS_STAT_ONE_SCRIPT, "sh", p], 30);
+  const st = await execv2(id, ["/bin/sh", "-c", FS_STAT_ONE_SCRIPT_B64, "sh", pathB64], 30);
   if (st.exit_code !== 0) throw new MinictdError(500, "stat_failed", `stat thất bại: ${st.stderr.slice(0, 200)}`);
   const rcols = st.stdout.trim().split("\t"); // [type, size, mtime, mode]
   if (rcols.length < 4) throw new MinictdError(500, "stat_failed", `stat trả kết quả lạ: ${st.stdout.slice(0, 80)}`);
   const [typeCol, sizeS, mtimeS, modeS] = rcols;
+  const nameD = decodeFsName(basenameB64(pathB64));
   return {
-    name: p.slice(p.lastIndexOf("/") + 1),
-    path: p,
+    name: nameD.display,
+    path: displayPathB64(pathB64),
+    name_b64: basenameB64(pathB64),
+    path_b64: pathB64,
     type: typeCol === "directory" ? "dir" : "file",
     size: Number(sizeS) || 0,
     mode: modeS ?? "",
@@ -435,19 +469,22 @@ export async function minictdApi<T>(method: string, fullPath: string, body?: unk
       const name = String((body as { name?: string })?.name ?? "");
       return r(await json("POST", `${base}/snapshot`, { backup: name }));
     }
-    // ── #208 (D79): Files qua execv2 — daemon không đổi ──
-    // SAFETY: path/name là OPERAND argv (sh -c <CONSTANT> sh <path>), không
-    // ghép vào script; scripts là hằng số trong lib/files-parse.ts.
+    // ── #208 (D79) + #219 (D83): Files qua execv2 — daemon không đổi ──
+    // SAFETY: path đi qua wire dạng base64 của RAW BYTES, là OPERAND argv
+    // (sh -c <CONSTANT> sh <path_b64>), script decode trong sandbox và vẫn
+    // dùng "$p" quoted — không ghép vào script, không round-trip qua JS
+    // string (Go json.Marshal hỏng byte không phải UTF-8: đo được #219).
     if (sub === "files" && method === "GET") {
-      const dirPath = assertSafePath(q.get("path") ?? "/");
-      const out = await execv2(id, ["/bin/sh", "-c", FS_LIST_SCRIPT, "sh", dirPath], 60);
+      const dirB64 = assertSafePathB64(q.get("path_b64") ?? encodePathB64("/"));
+      const out = await execv2(id, ["/bin/sh", "-c", FS_LIST_SCRIPT_B64, "sh", dirB64], 60);
       if (out.exit_code !== 0) throw new MinictdError(500, "list_failed", `ls thất bại: ${out.stderr.slice(0, 200)}`);
       const entries = parseStatEntries(out.stdout).map((e) => {
-        // stat %n returns the full operand path; the UI entry name must be its basename.
-        const name = e.name.slice(e.name.lastIndexOf("/") + 1) || e.name;
+        const nameD = decodeFsName(e.name_b64);
         return {
-          name,
-          path: joinPath(dirPath, name),
+          name: nameD.display,
+          path: displayPathB64(e.path_b64),
+          name_b64: e.name_b64,
+          path_b64: e.path_b64,
           type: e.type,
           size: e.size,
           mode: e.mode,
@@ -456,67 +493,68 @@ export async function minictdApi<T>(method: string, fullPath: string, body?: unk
         };
       });
       entries.sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name) : a.type === "dir" ? -1 : 1));
-      return r({ path: dirPath, home: "/", entries });
+      return r({ path: displayPathB64(dirB64), path_b64: dirB64, home: "/", home_b64: encodePathB64("/"), entries });
     }
     if (sub === "files/read" && method === "GET") {
-      const p = assertSafePath(q.get("path") ?? "/");
-      const st = await execv2(id, ["/bin/sh", "-c", FS_STAT_ONE_SCRIPT, "sh", p], 30);
-      if (st.exit_code !== 0) throw new MinictdError(404, "not_found", `Không đọc được ${p}: ${st.stderr.slice(0, 200)}`);
+      const p = assertSafePathB64(q.get("path_b64"));
+      const st = await execv2(id, ["/bin/sh", "-c", FS_STAT_ONE_SCRIPT_B64, "sh", p], 30);
+      if (st.exit_code !== 0) throw new MinictdError(404, "not_found", `Không đọc được file: ${st.stderr.slice(0, 200)}`);
       const rcols = st.stdout.trim().split("\t"); // [type, size, mtime, mode]
       if (rcols.length < 4) throw new MinictdError(500, "read_failed", `stat trả kết quả lạ: ${st.stdout.slice(0, 80)}`);
-      const [typeCol, sizeS, mtimeS, modeS] = rcols;
+      const [, sizeS, mtimeS, modeS] = rcols;
       const size = Number(sizeS);
       if (!Number.isFinite(size)) throw new MinictdError(500, "read_failed", `stat trả kết quả lạ: ${st.stdout.slice(0, 80)}`);
       if (size > FS_MAX_FILE) {
-        throw new MinictdError(413, "too_large", `File ${p} (${size} bytes) vượt giới hạn đọc ${FS_MAX_FILE} bytes qua execv2 — tải bằng daemon API (phương án 2)`);
+        throw new MinictdError(413, "too_large", `File (${size} bytes) vượt giới hạn đọc ${FS_MAX_FILE} bytes qua execv2 — tải bằng daemon API (phương án 2)`);
       }
-      const b64 = await execv2(id, ["/bin/sh", "-c", 'base64 "$1"', "sh", p], 60);
+      const b64 = await execv2(id, ["/bin/sh", "-c", FS_READ_SCRIPT_B64, "sh", p], 60);
       if (b64.exit_code !== 0) throw new MinictdError(500, "read_failed", `base64 thất bại: ${b64.stderr.slice(0, 200)}`);
       const { content, encoding } = decodeBest(b64ToBytes(b64.stdout));
-      return r({ path: p, content, encoding, mode: modeS ?? "", mtime: Number(mtimeS) || 0, size });
+      return r({ path: displayPathB64(p), path_b64: p, content, encoding, mode: modeS ?? "", mtime: Number(mtimeS) || 0, size });
     }
     if (sub === "files/content" && method === "PUT") {
-      const b = (body ?? {}) as { path?: string; content?: string };
-      const p = assertSafePath(b.path);
+      const b = (body ?? {}) as { path_b64?: string; content?: string };
+      const p = assertSafePathB64(b.path_b64);
       const bytes = utf8Bytes(b.content ?? "");
       if (bytes.length > FS_MAX_FILE) throw new MinictdError(413, "too_large", `Nội dung ${bytes.length} bytes vượt giới hạn ghi ${FS_MAX_FILE} bytes`);
-      const w = await execv2(id, ["/bin/sh", "-c", 'cat > "$1"', "sh", p], 60, bytesToB64(bytes));
+      const w = await execv2(id, ["/bin/sh", "-c", FS_WRITE_SCRIPT_B64, "sh", p], 60, bytesToB64(bytes));
       if (w.exit_code !== 0) throw new MinictdError(500, "write_failed", `ghi thất bại: ${w.stderr.slice(0, 200)}`);
-      return r({ ok: true, path: p, size: bytes.length });
+      return r({ ok: true, path: displayPathB64(p), size: bytes.length });
     }
     if (sub === "files" && method === "POST") {
-      const b = (body ?? {}) as { path?: string; type?: string };
-      const p = assertSafePath(b.path);
-      const script = b.type === "dir" ? 'mkdir -p "$1"' : '[ -e "$1" ] || : > "$1"';
+      const b = (body ?? {}) as { path_b64?: string; type?: string };
+      const p = assertSafePathB64(b.path_b64);
+      const script = b.type === "dir" ? FS_MKDIR_SCRIPT_B64 : FS_TOUCH_SCRIPT_B64;
       const c = await execv2(id, ["/bin/sh", "-c", script, "sh", p], 30);
       if (c.exit_code !== 0) throw new MinictdError(500, "create_failed", `tạo thất bại: ${c.stderr.slice(0, 200)}`);
       return r(await statEntry(id, p));
     }
     if (sub === "files/move" && method === "POST") {
-      const b = (body ?? {}) as { from?: string; to?: string };
-      const from = assertSafePath(b.from);
-      const to = assertSafePath(b.to);
-      const m = await execv2(id, ["/bin/sh", "-c", 'mv "$1" "$2"', "sh", from, to], 60);
+      const b = (body ?? {}) as { from_b64?: string; to_b64?: string };
+      const from = assertSafePathB64(b.from_b64);
+      const to = assertSafePathB64(b.to_b64);
+      const m = await execv2(id, ["/bin/sh", "-c", FS_MOVE_SCRIPT_B64, "sh", from, to], 60);
       if (m.exit_code !== 0) throw new MinictdError(500, "move_failed", `mv thất bại: ${m.stderr.slice(0, 200)}`);
-      return r({ ok: true, path: to });
+      return r({ ok: true, path: displayPathB64(to) });
     }
     if (sub === "files/upload" && method === "POST") {
-      const b = (body ?? {}) as { path?: string; name?: string; content?: string; encoding?: string };
-      const dir = assertSafePath(b.path ?? "/");
+      const b = (body ?? {}) as { path_b64?: string; name?: string; content?: string; encoding?: string };
+      const dir = assertSafePathB64(b.path_b64 ?? encodePathB64("/"));
       const name = assertSafeName(b.name);
-      const full = joinPath(dir, name);
+      const full = joinPathB64(dir, name);
       let bytes: Uint8Array;
       if (b.encoding === "base64") bytes = b64ToBytes(String(b.content ?? ""));
       else bytes = utf8Bytes(String(b.content ?? ""));
       if (bytes.length > FS_MAX_FILE) throw new MinictdError(413, "too_large", `Upload ${bytes.length} bytes vượt giới hạn ${FS_MAX_FILE} bytes`);
-      const w = await execv2(id, ["/bin/sh", "-c", 'cat > "$1"', "sh", full], 60, bytesToB64(bytes));
+      const w = await execv2(id, ["/bin/sh", "-c", FS_WRITE_SCRIPT_B64, "sh", full], 60, bytesToB64(bytes));
       if (w.exit_code !== 0) throw new MinictdError(500, "upload_failed", `upload thất bại: ${w.stderr.slice(0, 200)}`);
       return r(await statEntry(id, full));
     }
     if (sub === "files" && method === "DELETE") {
-      const p = assertSafePath(q.get("path"));
-      if (p === "/" || p.replace(/\/+$/, "") === "") throw new MinictdError(400, "bad_path", "Từ chối xoá / (workspace gốc)");
-      const d = await execv2(id, ["/bin/sh", "-c", 'rm -rf -- "$1"', "sh", p], 120);
+      const p = assertSafePathB64(q.get("path_b64"));
+      // root guard on the DECODED bytes (never on a display string)
+      if (b64ToBytes(p).length <= 1) throw new MinictdError(400, "bad_path", "Từ chối xoá / (workspace gốc)");
+      const d = await execv2(id, ["/bin/sh", "-c", FS_DELETE_SCRIPT_B64, "sh", p], 120);
       if (d.exit_code !== 0) throw new MinictdError(500, "delete_failed", `xoá thất bại: ${d.stderr.slice(0, 200)}`);
       return r(undefined as void);
     }
