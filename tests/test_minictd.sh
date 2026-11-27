@@ -2207,12 +2207,24 @@ for l in b[1:]:
         print('.'.join(str(int(h[i:i+2], 16)) for i in (6, 4, 2, 0)))
         break")
     echo "  [meas] GW=$gw P2PORT=$P2PORT shim=$shim"
-    echo "  [meas] P1 declared-bind : $(ss -tln 2>/dev/null | grep -E ":$P2PORT[[:space:]]" | head -1 | awk '{print $4}')"
-    echo "  [meas] P2 udp-auto-count: $(ss -lnu 2>/dev/null | grep -cE ':5353[[:space:]]')"
+    local p1bind p2cnt p3out
+    p1bind=$(ss -tln 2>/dev/null | grep -E ":$P2PORT[[:space:]]" | head -1 | awk '{print $4}')
+    p2cnt=$(ss -lnu 2>/dev/null | grep -cE ':5353[[:space:]]')
+    echo "  [meas] P1 declared-bind : $p1bind"
+    echo "  [meas] P2 udp-auto-count: $p2cnt"
     local p3=""
     xv2 md-sec220 "{\"cmd\":[\"/bin/sh\",\"-c\",\"echo -e 'GET /healthz HTTP/1.0\\r\\n' | nc -w 2 $gw $API_PORT\"],\"timeout_s\":10}" || p3="(execv2 error)"
     p3=$(jget 'repr(d.get("stdout","")).strip()[1:-1]')
     echo "  [meas] P3 ns-to-host-API stdout: ${p3:-(empty = BLOCKED)}"
+    # run_case nuốt stdout của case PASS → ghi file cho artifact CI
+    # (upload-artifact: ci-evidence/*.txt) — evidence đo được bền vững.
+    mkdir -p "$REPO/ci-evidence"
+    cat > "$REPO/ci-evidence/md70-measure.txt" <<EOF
+# MD70 measurement @ $(date -u '+%F %T UTC') — P2PORT=$P2PORT GW=$gw (daemon path, pastaArgs)
+P1_declared_bind       : ${p1bind:-none}
+P2_udp_auto_count_5353 : $p2cnt   (0 = closed, >0 = UDP auto inbound OPEN)
+P3_ns_to_host_API_out  : ${p3:-(empty = BLOCKED)}   (HTTP 401 = ns→host hole open)
+EOF
     api POST /v1/sandboxes/md-sec220/remove >/dev/null 2>&1 || true
     echo "MD70 OK (diagnostic run — see [meas] lines above)"
 }
