@@ -80,3 +80,31 @@ như roadmap chữ — decision sửa cho khớp thực tế, roadmap cập nh�
   exec binary) — đổi daemon, quá lớn; (b) locale giả lập trong guest — không kiểm
   soát được rootfs user; (c) **base64 chỉ ở argv/stdout của các op files, script
   decode trong sandbox** — 0 byte core (hai phép thử manifest §3), chọn (c).
+
+## Phiên 45 — #218 WebSocket PTY hai chiều (binary frames)
+
+- **Nguồn 1: RFC 6455** (rfc-editor.org/info/rfc6455, Fette & Melnikov 2011):
+  §5.3 client→server frames **BẮT BUỘC mask** (chống malicious script kiểm
+  soát byte sequence qua cache poisoning — không phải bảo mật nội dung; server
+  frames không mask); §1.6 security model = origin-based → CSWSH (Cross-Site
+  WebSocket Hijacking) là mối đe dọa chính vì trình duyệt GỬI cookie/token
+  ambient cùng origin — đúng lý do issue bắt check Origin=Host; §7 closing
+  handshake (close frame + status code 1002 protocol error / 1009 too big /
+  4xxx app). **Áp dụng cho minict:** server tự viết stdlib — reject frame
+  không mask (1002), reject RSV bits (chưa negotiate extension — permessage-
+  deflate phải bị từ chối ở handshake), cap payload 64 KB (1009), close 4401
+  (auth) là mã 4xxx hợp lệ cho app-level.
+- **Nguồn 2: MDN WebSocket API — binaryType + Writing WebSocket servers**
+  (developer.mozilla.org): `binaryType = "arraybuffer"` để nhận byte thô
+  (mặc định Blob — decode qua string sẽ phá UTF-8 split giữa chunk); browser
+  **tự động trả pong** ở tầng protocol (JS không gửi trực tiếp ping/pong được)
+  → server chỉ cần gửi ping định kỳ và đo "không thấy pong/bất kỳ frame nào
+  trong 60s" là đủ liveness; `send(Uint8Array)` = binary frame. **Áp dụng:**
+  output PTY đi binary nguyên vẹn (không JSON-encode như SSE), xterm
+  `term.write(Uint8Array)`; liveness = pong timeout 60s (browser auto-pong
+  miễn phí).
+- **Trade-off đã cân nhắc:** (a) lib gorilla/websocket/nhooyr — thêm dep,
+  vi phạm manifest §3 "mặc định tối thiểu" + go.mod zero-dep hiện có; (b)
+  giữ SSE+POST vĩnh viễn — mỗi phím 1 POST, IME/paste dài vẫn nhiều HTTP
+  round-trip (đo được trong repro); (c) **RFC 6455 minimal stdlib tự viết
+  (~350 dòng, chỉ text/binary/close/ping/pong, không extension)** — chọn (c).

@@ -50,6 +50,7 @@ func main() {
 		showVer    = flag.Bool("version", false, "print version and exit")
 		backend    = flag.String("backend", "minict", "runtime backend: minict (container, default) or firecracker (microVM, GĐ4 — requires /dev/kvm)")
 		logFormat  = flag.String("log-format", "json", "log format: text or json (default json, GĐ2 mục 7, issue #168). JSON emits one structured line per lifecycle event with time/level/msg/instance/op/result/duration_ms/request_id")
+		wsOrigin   = flag.String("ws-origin", "", "#218/D84: extra Origin host[:port] accepted by the WebSocket PTY endpoint (comma-separated; for proxied deployments where the listener Host is 127.0.0.1:port but the browser Origin carries the public domain). Empty → strict Origin==Host")
 		metricsLn  = flag.String("metrics-listen", "", "NOT IMPLEMENTED: /metrics is served on the main --listen/--unix-socket with the same token. Any non-empty value is rejected fail-closed (exit 1) so a future loopback-only listener can be added without widening the attack surface today (GĐ2 mục 7c, issue #168)")
 	)
 	flag.Parse()
@@ -172,6 +173,14 @@ func main() {
 	}
 
 	srv := server.New(store, *token, log)
+	// #218/D84: extra WS Origin allow-list (proxied deployments); empty → strict.
+	var wsAllow []string
+	for _, o := range strings.Split(*wsOrigin, ",") {
+		if o = strings.TrimSpace(o); o != "" {
+			wsAllow = append(wsAllow, o)
+		}
+	}
+	srv.SetWSOriginAllow(wsAllow)
 	if *uiDir != "" {
 		if err := srv.SetUIDir(*uiDir); err != nil {
 			fatal(log, "%v", err)
