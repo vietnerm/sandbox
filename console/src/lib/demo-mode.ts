@@ -36,6 +36,15 @@ import {
   normalizePath,
   resetFs,
 } from "@/lib/demo-fs";
+import { b64ToText } from "@/lib/files-parse";
+
+/* #219 (D83): the view sends file paths as base64-of-raw-bytes. Demo paths
+ * are in-browser strings (always valid UTF-8), so decode strictly here. */
+const demoPath = (b64: string | null | undefined, fallback?: string): string => {
+  if (b64) return b64ToText(b64);
+  if (fallback !== undefined) return fallback;
+  throw new DemoApiError(400, "bad_request", "path_b64 required");
+};
 
 type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
@@ -712,52 +721,52 @@ export function demoApi(method: Method, path: string, body?: unknown): { status:
         try {
           /* list */
           if (seg.length === 3 && method === "GET") {
-            const p = normalizePath(q.get("path") || home);
+            const p = normalizePath(demoPath(q.get("path_b64"), q.get("path") || home));
             return ok({ path: p, home, entries: fsList(id, p) });
           }
           /* create file / directory */
           if (seg.length === 3 && method === "POST") {
-            const b = body as { path?: string; type?: "file" | "dir" };
-            if (!b?.path) throw new DemoApiError(400, "bad_request", "path required");
-            const entry = b.type === "dir" ? fsMkdir(id, b.path) : fsTouch(id, b.path);
+            const b = body as { path_b64?: string; type?: "file" | "dir" };
+            const p = demoPath(b?.path_b64);
+            const entry = b.type === "dir" ? fsMkdir(id, p) : fsTouch(id, p);
             fsAudit(b.type === "dir" ? "fs.mkdir" : "fs.create", entry.path);
             return ok(entry, 201);
           }
           /* delete */
           if (seg.length === 3 && method === "DELETE") {
-            const p = q.get("path");
-            if (!p) throw new DemoApiError(400, "bad_request", "path required");
+            const p = demoPath(q.get("path_b64"));
             fsRemove(id, p, true);
             fsAudit("fs.delete", p);
             return ok(undefined, 204);
           }
           /* read */
           if (seg[3] === "read" && method === "GET") {
-            const p = normalizePath(q.get("path") || "");
+            const p = normalizePath(demoPath(q.get("path_b64"), ""));
             const { node } = fsRead(id, p);
             const size = node.encoding === "base64" ? Math.round((node.content?.length ?? 0) * 0.75) : node.content?.length ?? 0;
             return ok({ path: p, content: node.content ?? "", encoding: node.encoding ?? "utf8", mode: node.mode, mtime: node.mtime, size });
           }
           /* write (save in the editor) */
           if (seg[3] === "content" && method === "PUT") {
-            const b = body as { path?: string; content?: string };
-            if (!b?.path) throw new DemoApiError(400, "bad_request", "path required");
-            const entry = fsWrite(id, b.path, b.content ?? "");
+            const b = body as { path_b64?: string; content?: string };
+            const entry = fsWrite(id, demoPath(b?.path_b64), b.content ?? "");
             return ok({ ok: true, path: entry.path, size: entry.size });
           }
           /* rename / move */
           if (seg[3] === "move" && method === "POST") {
-            const b = body as { from?: string; to?: string };
-            if (!b?.from || !b?.to) throw new DemoApiError(400, "bad_request", "from and to are required");
-            const entry = fsMove(id, b.from, b.to, true);
-            fsAudit("fs.move", `${b.from} → ${entry.path}`);
+            const b = body as { from_b64?: string; to_b64?: string };
+            const from = demoPath(b?.from_b64);
+            const to = demoPath(b?.to_b64);
+            const entry = fsMove(id, from, to, true);
+            fsAudit("fs.move", `${from} → ${entry.path}`);
             return ok({ ok: true, path: entry.path });
           }
           /* upload (text or base64 payload) */
           if (seg[3] === "upload" && method === "POST") {
-            const b = body as { path?: string; name?: string; content?: string; encoding?: "utf8" | "base64" };
-            if (!b?.path || !b?.name) throw new DemoApiError(400, "bad_request", "path and name are required");
-            const target = normalizePath(`${b.path}/${b.name}`);
+            const b = body as { path_b64?: string; name?: string; content?: string; encoding?: "utf8" | "base64" };
+            const dir = demoPath(b?.path_b64);
+            if (!b?.name) throw new DemoApiError(400, "bad_request", "name required");
+            const target = normalizePath(`${dir}/${b.name}`);
             const entry = fsWrite(id, target, b.content ?? "", b.encoding ?? "utf8");
             fsAudit("fs.upload", entry.path);
             return ok(entry, 201);

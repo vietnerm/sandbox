@@ -2256,6 +2256,60 @@ EOF
 }
 run_case MD70 "#220/D82 pasta fail-closed: loopback bind + no UDP auto + no ns→host + egress" skip md70
 
+# ---------- #219: files bytes-wire (base64) — contract của console adapter (D83) ----------
+#   MD71  (chạy mọi nơi) đúng contract mà console adapter (#219/D83) gửi:
+#         path là OPERAND argv dạng base64-of-raw-bytes; script decode trong
+#         sandbox (`p=$(printf %s "$1" | base64 -d; echo x); p=${p%x}`) và mọi
+#         truy cập vẫn `"$p"` quoted. List in `type\tsize\tmtime\tmode\tpath_b64
+#         \tname_b64` — base64 không chứa tab/newline nên tên chứa newline/byte
+#         lỗi KHÔNG còn vỡ hàng, và Go JSON không thể đổi byte lỗi thành U+FFFD
+#         (vì wire chỉ có ASCII). Byte thật được assert bằng latin-1 decode.
+md71() {
+    local f="md-files219"
+    api POST /v1/sandboxes/$f/remove >/dev/null 2>&1 || true
+    api POST /v1/run '{"name":"md-files219","image":"base","cmd":["/bin/sh","-c","sleep 300"]}' >/dev/null || return 1
+    sleep 0.5
+    # (1) tạo bộ tên thật trong sandbox — byte lỗi, newline+TAB, UTF-8 3 byte, emoji 4 byte.
+    #     LƯU Ý busybox ash: `"\341"` trong double-quote là LITERAL — phải qua `$(printf ...)`.
+    xv2 $f '{"cmd": ["/bin/sh", "-c", "mkdir -p /probe219 && printf hello > \"/probe219/t$(printf \"\\341\\272\")ext.txt\" && printf world > \"/probe219/a$(printf \"\\n\\t\")b;literal.txt\" && printf utf8 > \"/probe219/ti$(printf \"\\341\\272\\277\")ng.txt\" && printf emoji > \"/probe219/$(printf \"\\360\\237\\230\\200\").txt\""], "timeout_s": 15}' || { echo "xv2 step 1 FAILED — resp: $(head -c 240 "$WORK/resp" 2>/dev/null)"; return 1; }
+    [[ "$(jget 'd["exit_code"]')" == "0" ]] || { echo "create byte names failed: $(cat "$WORK/resp" | head -2)"; return 1; }
+    # (2) LIST script mới (nguyên văn adapter #219) với operand = base64("/probe219")
+    local DIRB64; DIRB64=$(printf %s "/probe219" | base64 | tr -d '\n')
+    local LIST='p=$(printf %s "$1" | base64 -d; echo x); p=${p%x}; for f in "$p"/* "$p"/.[!.]* "$p"/..?*; do [ -e "$f" ] || continue; m=$(stat -c "%F	%s	%Y	%a" "$f") || continue; pb=$(printf %s "$f" | base64 | tr -d '"'"'\n'"'"'); nb=$(printf %s "${f##*/}" | base64 | tr -d '"'"'\n'"'"'); printf '"'"'%s\t%s\t%s\n'"'"' "$m" "$pb" "$nb"; done; true'
+    xv2 $f "{\"cmd\":[\"/bin/sh\",\"-c\",$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$LIST"),\"sh\",\"$DIRB64\"],\"timeout_s\":15}" || { echo "xv2 step 2 FAILED — resp: $(head -c 240 "$WORK/resp" 2>/dev/null)"; return 1; }
+    [[ "$(jget 'd["exit_code"]')" == "0" ]] || { echo "list failed: $(cat "$WORK/resp" | head -2)"; return 1; }
+    # (3) 4 rows × đúng 6 cột + tên byte chính xác (latin-1 để soi byte thô)
+    # (3) 4 rows × đúng 6 cột + tên byte chính xác — assert ngay trong python
+    # (latin-1 decode == literal byte; grep trên repr là so UTF-8 → sai cách đo)
+    [[ "$(jget 'sum(1 for l in d["stdout"].strip().split("\n") if l and len(l.split(chr(9)))==6 and __import__("base64").b64decode(l.split(chr(9))[5]).decode("latin-1")=="t\xe1\xbaext.txt")')" == "1" ]] || { echo "invalid-byte name NOT found byte-exact"; return 1; }
+    [[ "$(jget 'sum(1 for l in d["stdout"].strip().split("\n") if l and len(l.split(chr(9)))==6 and __import__("base64").b64decode(l.split(chr(9))[5]).decode("latin-1")=="a\n\tb;literal.txt")')" == "1" ]] || { echo "newline/tab name NOT found byte-exact"; return 1; }
+    [[ "$(jget 'sum(1 for l in d["stdout"].strip().split("\n") if l and len(l.split(chr(9)))==6 and __import__("base64").b64decode(l.split(chr(9))[5]).decode("latin-1")=="ti\xe1\xba\xbfng.txt")')" == "1" ]] || { echo "utf8 name NOT found byte-exact"; return 1; }
+    [[ "$(jget 'sum(1 for l in d["stdout"].strip().split("\n") if l and len(l.split(chr(9)))==6 and __import__("base64").b64decode(l.split(chr(9))[5]).decode("latin-1")=="\xf0\x9f\x98\x80.txt")')" == "1" ]] || { echo "emoji name NOT found byte-exact"; return 1; }
+    local rows; rows=$(jget 'len([l for l in d["stdout"].strip().split("\n") if l])')
+    [[ "$rows" -eq 4 ]] || { echo "row count: $rows (newline-name must NOT split rows)"; return 1; }
+    # (4) READ qua decode-prefix: nội dung đúng (operand = base64 path byte-lỗi)
+    local PB64; PB64=$(python3 -c 'import base64,sys; sys.stdout.write(base64.b64encode(b"/probe219/t\xe1\xbaext.txt").decode())')
+    xv2 $f "{\"cmd\":[\"/bin/sh\",\"-c\",\"p=\$(printf %s \\\"\$1\\\" | base64 -d; echo x); p=\${p%x}; base64 \\\"\$p\\\"\",\"sh\",\"$PB64\"],\"timeout_s\":10}" || { echo "xv2 step 3 FAILED — resp: $(head -c 240 "$WORK/resp" 2>/dev/null)"; return 1; }
+    [[ "$(jget 'd["stdout"].strip()')" == "$(printf %s hello | base64 | tr -d '\n')" ]] || { echo "read content mismatch: $(jget 'd["stdout"].strip()')"; return 1; }
+    # (5) MOVE (2 operand b64): byte-lỗi → text-recovered.txt (recovery flow #219)
+    local TOB64; TOB64=$(python3 -c 'import base64,sys; sys.stdout.write(base64.b64encode(b"/probe219/text-recovered.txt").decode())')
+    xv2 $f "{\"cmd\":[\"/bin/sh\",\"-c\",\"p=\$(printf %s \\\"\$1\\\" | base64 -d; echo x); p=\${p%x}; q=\$(printf %s \\\"\$2\\\" | base64 -d; echo x); q=\${q%x}; mv \\\"\$p\\\" \\\"\$q\\\"\",\"sh\",\"$PB64\",\"$TOB64\"],\"timeout_s\":10}" || { echo "xv2 step 4 FAILED — resp: $(head -c 240 "$WORK/resp" 2>/dev/null)"; return 1; }
+    [[ "$(jget 'd["exit_code"]')" == "0" ]] || { echo "move failed: $(cat "$WORK/resp" | head -2)"; return 1; }
+    xv2 $f "{\"cmd\":[\"/bin/sh\",\"-c\",\"[ -e \\\"/probe219/text-recovered.txt\\\" ] && echo yes\"],\"timeout_s\":10}" || { echo "xv2 step 5 FAILED — resp: $(head -c 240 "$WORK/resp" 2>/dev/null)"; return 1; }
+    [[ "$(jget 'd["stdout"].strip()')" == "yes" ]] || { echo "recovered file missing"; return 1; }
+    # (6) DELETE qua decode-prefix + rm -rf -- "$p"
+    xv2 $f "{\"cmd\":[\"/bin/sh\",\"-c\",\"p=\$(printf %s \\\"\$1\\\" | base64 -d; echo x); p=\${p%x}; rm -rf -- \\\"\$p\\\"\",\"sh\",\"$TOB64\"],\"timeout_s\":10}" || { echo "xv2 step 6 FAILED — resp: $(head -c 240 "$WORK/resp" 2>/dev/null)"; return 1; }
+    xv2 $f '{"cmd":["/bin/sh","-c","[ -e \"/probe219/text-recovered.txt\" ] && echo yes || echo no"],"timeout_s":10}' || { echo "xv2 step 7 FAILED — resp: $(head -c 240 "$WORK/resp" 2>/dev/null)"; return 1; }
+    [[ "$(jget 'd["stdout"].strip()')" == "no" ]] || { echo "delete failed"; return 1; }
+    # (7) host sống (không injection thoát ra ngoài) + cleanup
+    api GET /healthz >/dev/null || { echo "host daemon chết?!"; return 1; }
+    xv2 $f '{"cmd":["/bin/sh","-c","ls /probe219 | wc -l"],"timeout_s":10}' || { echo "xv2 step 8 FAILED — resp: $(head -c 240 "$WORK/resp" 2>/dev/null)"; return 1; }
+    [[ "$(jget 'd["stdout"].strip()')" == "3" ]] || { echo "probe219 leftover: $(jget 'd["stdout"].strip()')"; return 1; }
+    api POST /v1/sandboxes/$f/remove >/dev/null 2>&1 || true
+    echo "MD71 OK: bytes-wire list/read/move/delete — byte lỗi + newline giữ nguyên qua JSON, recovery mv OK"
+}
+run_case MD71 "#219/D83 files bytes-wire: b64 operand argv, list 6 cột, recovery mv" pass md71
+
 run_case XSS  "D71 gd3-ui: console source no dangerouslySetInnerHTML/innerHTML" pass md55b_xss
 
 echo "=== summary: PASS=$PASS SKIP=$SKIPPED FAIL=$FAIL ==="

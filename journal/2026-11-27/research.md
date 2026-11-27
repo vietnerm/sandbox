@@ -56,3 +56,27 @@ như roadmap chữ — decision sửa cho khớp thực tế, roadmap cập nh�
    bên đích → rename; MỌI lỗi giữa chừng xoá temp (không để lại file).
 5. Template registry chỉ dùng symlink RELATIVE (D70: absolute target bị từ chối
    khi giải nén — busybox applet pattern không roundtrip qua registry, ghi rõ).
+
+## Phiên 44 — #219 tên file dạng bytes (base64)
+
+- **Nguồn 1: PEP 383 — Non-decodable Bytes in System Character Interfaces** (peps.python.org/pep-0383, 2009):
+  POSIX filename = bytes tùy ý; Python giải bằng `surrogateescape` — byte lỗi
+  decode thành surrogate U+DCxx, encode ngược trả byte gốc, `os.listdir` không
+  còn bỏ im tên lỗi. **Áp dụng cho minict:** hướng surrogate KHÔNG sống qua wire
+  của ta — execv2 stdout là JSON Go, và Go `json.Marshal` thay mọi byte/surrogate
+  không phải UTF-8 hợp lệ bằng U+FFFD (đo được: `t\xe1\xbaext.txt` → `t\ufffd\ufffdext.txt`,
+  mất thông tin vĩnh viễn). PEP 383 vẫn hợp lệ cho **phần hiển thị**: decode
+  strict-fatal, tên lỗi → hiển thị placeholder + hex (nguyên tắc "không bao giờ
+  decode-lén-lúc"), còn **wire phải giữ bytes nguyên vẹn** → base64 (ASCII) là
+  lựa chọn duy nhất đúng cho execv2.
+- **Nguồn 2: git `core.quotepath`** (git-scm.com/docs/git-config; issuebuzz #6309
+  làm ví dụ thực tế): mặc định git octal-escape mọi byte ≥ 0x80 khi hiển thị path
+  (`\341\272`) — đường "display-escape, giữ bytes gốc trong lõi" giống hệt bài toán
+  ta. **Áp dụng:** `name`/`path` trong FsEntry chỉ là display (UTF-8 hợp lệ → text;
+  lỗi → `<tên không phải UTF-8>` + `hex: …`), `name_b64`/`path_b64` là nguồn thật
+  cho mọi thao tác — parity với triết lý git: bytes là sự thật, chuỗi hiển thị là
+  suy diễn có thể mất.
+- **Trade-off đã cân nhắc:** (a) toàn bộ wire chuyển sang bytes-framing (như kubectl
+  exec binary) — đổi daemon, quá lớn; (b) locale giả lập trong guest — không kiểm
+  soát được rootfs user; (c) **base64 chỉ ở argv/stdout của các op files, script
+  decode trong sandbox** — 0 byte core (hai phép thử manifest §3), chọn (c).

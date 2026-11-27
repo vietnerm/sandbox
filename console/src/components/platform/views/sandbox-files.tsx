@@ -44,16 +44,53 @@ import {
 import { navigate as go } from "@/console/ui";
 import { usePlatform } from "@/lib/platform-store";
 import { cn } from "@/lib/utils";
+import {
+  assertSafeName,
+  b64ToBytes,
+  crumbsFromB64,
+  decodeFsName,
+  encodePathB64,
+  joinPathB64,
+  parentB64,
+} from "@/lib/files-parse";
 import { Mono, Panel, SectionTitle } from "../primitives";
 
 /* FTP-style workspace manager per sandbox (/sandboxes/<id>/files).
    Browse the container filesystem, open text files in an editor and
    save straight back into the sandbox — plus create / rename / delete /
    upload / download. In demo mode this is the same in-browser workspace
-   the terminal's demo shell operates on, so both stay in sync. */
+   the terminal's demo shell operates on, so both stay in sync.
+
+   #219 (D83): every path is handled in its base64-of-raw-bytes wire form
+   (path_b64) — display strings are derivates and never used as paths, so
+   filenames that are not valid UTF-8 stay openable/renamable/deletable. */
 
 const btn =
   "inline-flex items-center justify-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40 disabled:pointer-events-none";
+
+const ROOT_B64 = "Lw=="; // base64("/") — the listing boot path
+
+/** ops path of an entry: the real bytes when present, else the (always
+ *  valid) demo display path encoded on the fly. */
+function entryB64(e: FsEntry): string {
+  return e.path_b64 ?? encodePathB64(e.path);
+}
+
+/** display form of an entry name (valid → text; else placeholder + hex). */
+function entryName(e: FsEntry): { display: string; valid: boolean; hex: string } {
+  if (e.name_b64) return decodeFsName(e.name_b64);
+  return { display: e.name, valid: true, hex: "" };
+}
+
+/** BYTE-level prefix test (#219): base64 strings have no prefix property,
+ *  so `current` is under `dir` only if the decoded bytes say so. */
+function b64IsPrefix(dirB64: string, pathB64: string): boolean {
+  const d = b64ToBytes(dirB64);
+  const p = b64ToBytes(pathB64);
+  if (p.length < d.length) return false;
+  for (let i = 0; i < d.length; i++) if (d[i] !== p[i]) return false;
+  return d.length === p.length || d[d.length - 1] === 0x2f || p[d.length] === 0x2f;
+}
 
 function fmtBytes(n: number): string {
   if (!n) return "0 B";
@@ -83,26 +120,24 @@ function FileGlyph({ entry, className }: { entry: FsEntry; className?: string })
   return <FileIcon className={cls} />;
 }
 
-/** parent chain for the breadcrumb, home-aware */
-function crumbs(path: string, home: string): Array<{ label: string; path: string }> {
-  const out: Array<{ label: string; path: string }> = [];
-  const homeLabel = home.slice(home.lastIndexOf("/") + 1) || home;
-  if (path === home || path.startsWith(home + "/")) {
-    out.push({ label: homeLabel, path: home });
-    const rest = path.slice(home.length).replace(/^\//, "");
-    let acc = home;
-    for (const seg of rest.split("/").filter(Boolean)) {
-      acc += "/" + seg;
-      out.push({ label: seg, path: acc });
-    }
-    return out;
+/** parent chain for the breadcrumb — BYTE level (#219): the path travels
+ *  as base64 and segments may be invalid UTF-8; labels are best-effort. */
+function crumbs(pathB64: string, homeB64: string): Array<{ label: string; path: string }> {
+  const all = crumbsFromB64(pathB64);
+  const homeCrumbs = crumbsFromB64(homeB64);
+  const underHome =
+    homeCrumbs.length > 0 &&
+    homeCrumbs.length <= all.length &&
+    homeCrumbs.every((c, i) => all[i].b64 === c.b64);
+  if (underHome) {
+    // one crumb for the workspace root, then the segments under it
+    const homeLabel = homeCrumbs[homeCrumbs.length - 1].label || homeCrumbs[homeCrumbs.length - 1].b64;
+    return [
+      { label: homeLabel === "/" ? "/" : homeLabel, path: homeB64 },
+      ...all.slice(homeCrumbs.length).map((c) => ({ label: c.label, path: c.b64 })),
+    ];
   }
-  let acc = "";
-  for (const seg of path.split("/").filter(Boolean)) {
-    acc += "/" + seg;
-    out.push({ label: seg, path: acc });
-  }
-  return out;
+  return all.map((c) => ({ label: c.label, path: c.b64 }));
 }
 
 /* ── lazy directory tree (left pane / mobile drawer) ───────────────── */
@@ -119,7 +154,9 @@ function TreeBranch({
   onEnter,
 }: {
   id: string;
+  /** base64 of this branch path (#219) */
   path: string;
+  /** best-effort display label */
   name: string;
   depth: number;
   current: string;
@@ -130,7 +167,7 @@ function TreeBranch({
 }) {
   const isOpen = expanded.has(path);
   const children = kids[path];
-  const active = current === path || current.startsWith(path + "/");
+  const active = b64IsPrefix(path, current);
   return (
     <div>
       <div
@@ -159,10 +196,10 @@ function TreeBranch({
           .filter((e) => e.type === "dir")
           .map((e) => (
             <TreeBranch
-              key={e.path}
+              key={entryB64(e)}
               id={id}
-              path={e.path}
-              name={e.name}
+              path={entryB64(e)}
+              name={entryName(e).display}
               depth={depth + 1}
               current={current}
               expanded={expanded}
@@ -194,8 +231,12 @@ export function FileManagerView({ id }: { id: string }) {
   const me = usePlatform((s) => s.me);
   const canWrite = me?.role === "admin" || me?.role === "operator";
 
-  const [path, setPath] = useState("/home/sandbox");
-  const [home, setHome] = useState("/home/sandbox");
+  // #219 (D83): the navigation state is base64-of-raw-bytes (source of
+  // truth); the display strings are derivates kept only for the status bar.
+  const [pathB64, setPathB64] = useState(ROOT_B64);
+  const [path, setPath] = useState("/");
+  const [homeB64, setHomeB64] = useState(ROOT_B64);
+  const [home, setHome] = useState("/");
   const [entries, setEntries] = useState<FsEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -208,11 +249,11 @@ export function FileManagerView({ id }: { id: string }) {
   const [dragOver, setDragOver] = useState(false);
 
   // editor
-  const [ed, setEd] = useState<{ path: string; content: string; orig: string; encoding: "utf8" | "base64"; size: number; mode: string; mtime: number } | null>(null);
+  const [ed, setEd] = useState<{ pathB64: string; pathDisplay: string; content: string; orig: string; encoding: "utf8" | "base64"; size: number; mode: string; mtime: number } | null>(null);
   const [saving, setSaving] = useState(false);
 
-  // prompts
-  const [prompt, setPrompt] = useState<{ kind: "file" | "dir" | "rename"; value: string; from?: string } | null>(null);
+  // prompts — rename carries the SOURCE path as base64 (#219 recovery)
+  const [prompt, setPrompt] = useState<{ kind: "file" | "dir" | "rename"; value: string; fromB64?: string } | null>(null);
 
   const uploadRef = useRef<HTMLInputElement>(null);
   // Ignore out-of-order list responses when navigation/refresh is fast.
@@ -220,12 +261,12 @@ export function FileManagerView({ id }: { id: string }) {
   const readSeqRef = useRef(0);
 
   const sorted = useMemo(() => {
-    const list = entries.filter((e) => showHidden || !e.name.startsWith("."));
+    const list = entries.filter((e) => showHidden || !(entryName(e).display.startsWith(".") || e.name.startsWith(".")));
     list.sort((a, b) => {
       if (a.type !== b.type) return a.type === "dir" ? -1 : 1;
       if (sort === "size") return b.size - a.size;
       if (sort === "mtime") return b.mtime - a.mtime;
-      return a.name.localeCompare(b.name);
+      return entryName(a).display.localeCompare(entryName(b).display);
     });
     return list;
   }, [entries, sort, showHidden]);
@@ -240,8 +281,12 @@ export function FileManagerView({ id }: { id: string }) {
         const r = await listFiles(id, p);
         if (seq !== loadSeqRef.current) return;
         setEntries(r.entries);
+        setPathB64(r.path_b64 ?? encodePathB64(r.path));
         setPath(r.path);
-        if (r.home) setHome(r.home);
+        if (r.home) {
+          setHome(r.home);
+          setHomeB64(r.home_b64 ?? encodePathB64(r.home));
+        }
       } catch (e) {
         if (seq === loadSeqRef.current) setError(e instanceof Error ? e.message : String(e));
       } finally {
@@ -256,12 +301,13 @@ export function FileManagerView({ id }: { id: string }) {
     let dead = false;
     (async () => {
       try {
-        const r = await listFiles(id, "/");
+        const r = await listFiles(id, ROOT_B64);
         if (dead) return;
         setHome(r.home);
-        await load(r.home);
+        setHomeB64(r.home_b64 ?? encodePathB64(r.home));
+        await load(r.home_b64 ?? encodePathB64(r.home));
       } catch {
-        if (!dead) await load("/home/sandbox");
+        if (!dead) await load(ROOT_B64);
       }
     })();
     return () => {
@@ -274,16 +320,17 @@ export function FileManagerView({ id }: { id: string }) {
     if (!live) return;
     const pollSeq = loadSeqRef.current;
     const t = setInterval(() => {
-      listFiles(id, path)
+      listFiles(id, pathB64)
         .then((r) => {
           if (pollSeq !== loadSeqRef.current) return;
           setEntries(r.entries);
+          setPathB64(r.path_b64 ?? encodePathB64(r.path));
           setPath(r.path);
         })
         .catch(() => {});
     }, 4000);
     return () => clearInterval(t);
-  }, [live, id, path]);
+  }, [live, id, pathB64]);
 
   /* tree expansion loads children */
   const toggleTree = useCallback(
@@ -315,9 +362,18 @@ export function FileManagerView({ id }: { id: string }) {
     async (e: FsEntry) => {
       const seq = ++readSeqRef.current;
       try {
-        const r = await readFile(id, e.path);
+        const r = await readFile(id, entryB64(e));
         if (seq !== readSeqRef.current) return;
-        setEd({ path: r.path, content: r.content, orig: r.content, encoding: r.encoding, size: r.size, mode: r.mode, mtime: r.mtime });
+        setEd({
+          pathB64: r.path_b64 ?? entryB64(e),
+          pathDisplay: r.path,
+          content: r.content,
+          orig: r.content,
+          encoding: r.encoding,
+          size: r.size,
+          mode: r.mode,
+          mtime: r.mtime,
+        });
       } catch (err) {
         if (seq === readSeqRef.current) setError(err instanceof Error ? err.message : String(err));
       }
@@ -329,15 +385,15 @@ export function FileManagerView({ id }: { id: string }) {
     if (!ed || ed.encoding === "base64") return;
     setSaving(true);
     try {
-      await writeFile(id, ed.path, ed.content);
+      await writeFile(id, ed.pathB64, ed.content);
       setEd({ ...ed, orig: ed.content, mtime: Date.now() });
-      await load(path);
+      await load(pathB64);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setSaving(false);
     }
-  }, [ed, id, load, path]);
+  }, [ed, id, load, pathB64]);
 
   /* Ctrl+S in the editor */
   useEffect(() => {
@@ -356,7 +412,7 @@ export function FileManagerView({ id }: { id: string }) {
     async (e: FsEntry) => {
       if (e.type === "dir") return;
       try {
-        const r = await readFile(id, e.path);
+        const r = await readFile(id, entryB64(e));
         let blob: Blob;
         if (r.encoding === "base64") {
           const bin = atob(r.content);
@@ -368,7 +424,9 @@ export function FileManagerView({ id }: { id: string }) {
         }
         const a = document.createElement("a");
         a.href = URL.createObjectURL(blob);
-        a.download = e.name;
+        const n = entryName(e);
+        // display name for valid names; a safe ASCII fallback otherwise
+        a.download = n.valid && n.display ? n.display : "invalid-utf8.bin";
         a.click();
         URL.revokeObjectURL(a.href);
       } catch (err) {
@@ -380,20 +438,27 @@ export function FileManagerView({ id }: { id: string }) {
 
   const remove = useCallback(
     async (e: FsEntry) => {
-      if (!confirm(`Delete ${e.type === "dir" ? "folder" : "file"} ${e.path}? (recursively — the demo workspace can be reseeded)`)) return;
+      const n = entryName(e);
+      if (!confirm(`Delete ${e.type === "dir" ? "folder" : "file"} ${n.valid ? n.display : n.hex || "(invalid UTF-8 name)"}? (recursively — the demo workspace can be reseeded)`)) return;
       try {
-        await deleteFsEntry(id, e.path);
-        await load(path);
+        await deleteFsEntry(id, entryB64(e));
+        await load(pathB64);
         setKids((k) => {
           const nk: Record<string, FsEntry[]> = {};
-          for (const [p, v] of Object.entries(k)) if (!p.startsWith(e.path)) nk[p] = v;
+          // byte-level subtree prune (#219): b64 strings are not prefix-ordered
+          const gone = b64ToBytes(entryB64(e));
+          for (const [p, v] of Object.entries(k)) {
+            const pb = b64ToBytes(p);
+            const under = pb.length > gone.length && gone.every((b, i) => pb[i] === b) && pb[gone.length] === 0x2f;
+            if (!under) nk[p] = v;
+          }
           return nk;
         });
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       }
     },
-    [id, load, path],
+    [id, load, pathB64],
   );
 
   /* keep the tree cache of `p` in sync */
@@ -411,22 +476,24 @@ export function FileManagerView({ id }: { id: string }) {
     const name = prompt.value.trim();
     if (!name) return;
     try {
-      if (prompt.kind === "rename" && prompt.from) {
-        const to = path + "/" + name;
-        await moveFsEntry(id, prompt.from, to);
-        void refreshKids(path);
+      if (prompt.kind === "rename" && prompt.fromB64) {
+        // #219: source = raw bytes (path_b64); target = safe user name joined
+        // at byte level. Recovery of an invalid-UTF-8 name is exactly this flow.
+        assertSafeName(name);
+        await moveFsEntry(id, prompt.fromB64, joinPathB64(pathB64, name));
+        void refreshKids(pathB64);
       } else if (prompt.kind === "dir") {
-        await createFsEntry(id, path + "/" + name, "dir");
-        void refreshKids(path);
+        await createFsEntry(id, joinPathB64(pathB64, name), "dir");
+        void refreshKids(pathB64);
       } else {
-        await createFsEntry(id, path + "/" + name, "file");
+        await createFsEntry(id, joinPathB64(pathB64, name), "file");
       }
       setPrompt(null);
-      await load(path);
+      await load(pathB64);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
-  }, [prompt, id, path, load, refreshKids]);
+  }, [prompt, id, pathB64, load, refreshKids]);
 
   const uploadFiles = useCallback(
     async (files: FileList | File[]) => {
@@ -436,7 +503,7 @@ export function FileManagerView({ id }: { id: string }) {
           const isText = /\.(txt|md|log|csv|tsv|json|yaml|yml|toml|ini|cfg|env|ts|tsx|js|jsx|py|rs|go|sh|html|css|xml|gitignore|lock|ipynb)$/i.test(f.name) || f.type.startsWith("text/") || f.type === "application/json";
           if (isText && f.size < 2_000_000) {
             const content = await f.text();
-            await uploadFsFile(id, path, f.name, content, "utf8");
+            await uploadFsFile(id, pathB64, f.name, content, "utf8");
           } else {
             const b64 = await new Promise<string>((res, rej) => {
               const r = new FileReader();
@@ -444,15 +511,15 @@ export function FileManagerView({ id }: { id: string }) {
               r.onerror = () => rej(new Error(`cannot read ${f.name}`));
               r.readAsDataURL(f);
             });
-            await uploadFsFile(id, path, f.name, b64, "base64");
+            await uploadFsFile(id, pathB64, f.name, b64, "base64");
           }
         } catch (err) {
           setError(`upload ${f.name}: ${err instanceof Error ? err.message : String(err)}`);
         }
       }
-      await load(path);
+      await load(pathB64);
     },
-    [id, path, load],
+    [id, pathB64, load],
   );
 
   const resetWorkspace = useCallback(async () => {
@@ -461,11 +528,11 @@ export function FileManagerView({ id }: { id: string }) {
       await resetFs(id);
       setExpanded(new Set());
       setKids({});
-      await load(home);
+      await load(homeB64);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
-  }, [id, home, load]);
+  }, [id, homeB64, load]);
 
   const totalSize = entries.reduce((a, e) => a + (e.type === "file" ? e.size : 0), 0);
   const dirty = !!ed && ed.content !== ed.orig;
@@ -504,7 +571,7 @@ export function FileManagerView({ id }: { id: string }) {
           >
             <span className={cn("size-1.5 rounded-full", live ? "bg-neon dot-live" : "bg-gray-500")} /> Live
           </button>
-          <button onClick={() => void load(path)} className={cn(btn, "border-line bg-surface text-gray-300 hover:bg-fg/5")} disabled={loading} title="Refresh">
+          <button onClick={() => void load(pathB64)} className={cn(btn, "border-line bg-surface text-gray-300 hover:bg-fg/5")} disabled={loading} title="Refresh">
             <RefreshCw className={cn("size-3.5", loading && "animate-spin")} /> <span className="hidden sm:inline">Refresh</span>
           </button>
           {canWrite && (
@@ -540,10 +607,10 @@ export function FileManagerView({ id }: { id: string }) {
           <div className="px-3 pb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-gray-600">Workspace tree</div>
           <TreeBranch
             id={id}
-            path={home}
-            name={home.slice(home.lastIndexOf("/") + 1)}
+            path={homeB64}
+            name={crumbsFromB64(homeB64).at(-1)?.label ?? home}
             depth={0}
-            current={path}
+            current={pathB64}
             expanded={expanded}
             kids={kids}
             onToggle={toggleTree}
@@ -563,16 +630,16 @@ export function FileManagerView({ id }: { id: string }) {
               <ListTree className="size-4" />
             </button>
             <button
-              onClick={() => enter(path.replace(/\/[^/]+$/, "") || "/")}
+              onClick={() => enter(parentB64(pathB64))}
               className="grid size-8 place-items-center rounded-md border border-line text-gray-400 outline-none transition-colors hover:text-gray-200 focus-visible:ring-2 focus-visible:ring-ring"
               aria-label="Parent directory"
-              disabled={path === "/"}
+              disabled={pathB64 === ROOT_B64}
             >
               <ChevronRight className="size-4 -rotate-90" />
             </button>
             <nav className="flex min-w-0 flex-1 basis-full flex-wrap items-center gap-0.5 font-mono text-xs sm:basis-auto" aria-label="Breadcrumb">
-              {path === home && <FolderOpen className="mr-1 size-3.5 text-info" />}
-              {crumbs(path, home).map((c, i, arr) => (
+              {pathB64 === homeB64 && <FolderOpen className="mr-1 size-3.5 text-info" />}
+              {crumbs(pathB64, homeB64).map((c, i, arr) => (
                 <span key={c.path} className="flex items-center">
                   <button
                     onClick={() => enter(c.path)}
@@ -641,48 +708,74 @@ export function FileManagerView({ id }: { id: string }) {
                     </tr>
                   ))}
                 {!loading &&
-                  sorted.map((e) => (
-                    <tr
-                      key={e.path}
-                      onClick={() => (e.type === "dir" ? enter(e.path) : void openFile(e))}
-                      className="group cursor-pointer border-b border-line-soft last:border-0 transition-colors hover:bg-line/40"
-                    >
-                      <td className="px-4 py-2.5">
-                        <div className="flex items-center gap-2.5">
-                          <FileGlyph entry={e} />
-                          <span className={cn("max-w-[320px] truncate text-[13px]", e.type === "dir" ? "font-medium text-gray-100" : "text-gray-200")} title={e.name}>{e.name}</span>
-                          {e.name.startsWith(".") && <span className="rounded border border-line px-1 font-mono text-[9px] text-gray-600">dot</span>}
-                        </div>
-                      </td>
-                      <td className="hidden px-3 py-2.5 font-mono text-xs text-gray-500 md:table-cell">{e.type === "dir" ? "—" : fmtBytes(e.size)}</td>
-                      <td className="hidden px-3 py-2.5 font-mono text-xs text-gray-500 lg:table-cell">{modeRwx(e.mode, e.type === "dir")}</td>
-                      <td className="hidden px-3 py-2.5 font-mono text-xs text-gray-500 md:table-cell">{fmtMtime(e.mtime)}</td>
-                      <td className="px-3 py-2.5" onClick={(ev) => ev.stopPropagation()}>
-                        <div className="flex items-center justify-end gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 max-md:opacity-100">
-                          {e.type === "file" && (
-                            <>
-                              <button onClick={() => void openFile(e)} className="rounded-md p-1.5 text-gray-500 outline-none transition-colors hover:bg-fg/5 hover:text-neon focus-visible:ring-2 focus-visible:ring-ring" title="View & edit">
-                                <Pencil className="size-3.5" />
-                              </button>
-                              <button onClick={() => void download(e)} className="rounded-md p-1.5 text-gray-500 outline-none transition-colors hover:bg-fg/5 hover:text-info focus-visible:ring-2 focus-visible:ring-ring" title="Download">
-                                <Download className="size-3.5" />
-                              </button>
-                            </>
-                          )}
-                          {canWrite && (
-                            <>
-                              <button onClick={() => setPrompt({ kind: "rename", value: e.name, from: e.path })} className="rounded-md p-1.5 text-gray-500 outline-none transition-colors hover:bg-fg/5 hover:text-warn focus-visible:ring-2 focus-visible:ring-ring" title="Rename">
-                                <SquarePen className="size-3.5" />
-                              </button>
-                              <button onClick={() => void remove(e)} className="rounded-md p-1.5 text-gray-500 outline-none transition-colors hover:bg-fg/5 hover:text-danger focus-visible:ring-2 focus-visible:ring-ring" title="Delete">
-                                <Trash2 className="size-3.5" />
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                  sorted.map((e) => {
+                    const n = entryName(e);
+                    return (
+                      <tr
+                        key={entryB64(e)}
+                        onClick={() => (e.type === "dir" ? enter(entryB64(e)) : void openFile(e))}
+                        className="group cursor-pointer border-b border-line-soft last:border-0 transition-colors hover:bg-line/40"
+                      >
+                        <td className="px-4 py-2.5">
+                          <div className="flex items-center gap-2.5">
+                            <FileGlyph entry={e} />
+                            <span className={cn("max-w-[320px] truncate text-[13px]", e.type === "dir" ? "font-medium text-gray-100" : "text-gray-200")} title={n.valid ? e.name : n.hex}>
+                              {n.display}
+                            </span>
+                            {!n.valid && (
+                              <span
+                                className="rounded border border-warn/40 bg-warn/10 px-1 font-mono text-[9px] text-warn"
+                                title={n.hex}
+                              >
+                                Invalid UTF-8
+                              </span>
+                            )}
+                            {n.valid && e.name.startsWith(".") && <span className="rounded border border-line px-1 font-mono text-[9px] text-gray-600">dot</span>}
+                          </div>
+                        </td>
+                        <td className="hidden px-3 py-2.5 font-mono text-xs text-gray-500 md:table-cell">{e.type === "dir" ? "—" : fmtBytes(e.size)}</td>
+                        <td className="hidden px-3 py-2.5 font-mono text-xs text-gray-500 lg:table-cell">{modeRwx(e.mode, e.type === "dir")}</td>
+                        <td className="hidden px-3 py-2.5 font-mono text-xs text-gray-500 md:table-cell">{fmtMtime(e.mtime)}</td>
+                        <td className="px-3 py-2.5" onClick={(ev) => ev.stopPropagation()}>
+                          <div className="flex items-center justify-end gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 max-md:opacity-100">
+                            {e.type === "file" && (
+                              <>
+                                <button onClick={() => void openFile(e)} className="rounded-md p-1.5 text-gray-500 outline-none transition-colors hover:bg-fg/5 hover:text-neon focus-visible:ring-2 focus-visible:ring-ring" title="View & edit">
+                                  <Pencil className="size-3.5" />
+                                </button>
+                                <button onClick={() => void download(e)} className="rounded-md p-1.5 text-gray-500 outline-none transition-colors hover:bg-fg/5 hover:text-info focus-visible:ring-2 focus-visible:ring-ring" title="Download">
+                                  <Download className="size-3.5" />
+                                </button>
+                              </>
+                            )}
+                            {canWrite && (
+                              <>
+                                {!n.valid && (
+                                  <button
+                                    onClick={() => setPrompt({ kind: "rename", value: "text-recovered.txt", fromB64: entryB64(e) })}
+                                    className="rounded-md border border-warn/40 bg-warn/10 px-1.5 py-0.5 text-[10px] font-medium text-warn outline-none transition-colors hover:bg-warn/20 focus-visible:ring-2 focus-visible:ring-ring"
+                                    title={`Đổi tên an toàn từ bytes gốc (${n.hex})`}
+                                  >
+                                    Đổi tên an toàn
+                                  </button>
+                                )}
+                                <button
+                                  onClick={() => setPrompt({ kind: "rename", value: n.valid ? e.name : "text-recovered.txt", fromB64: entryB64(e) })}
+                                  className="rounded-md p-1.5 text-gray-500 outline-none transition-colors hover:bg-fg/5 hover:text-warn focus-visible:ring-2 focus-visible:ring-ring"
+                                  title="Rename"
+                                >
+                                  <SquarePen className="size-3.5" />
+                                </button>
+                                <button onClick={() => void remove(e)} className="rounded-md p-1.5 text-gray-500 outline-none transition-colors hover:bg-fg/5 hover:text-danger focus-visible:ring-2 focus-visible:ring-ring" title="Delete">
+                                  <Trash2 className="size-3.5" />
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 {!loading && sorted.length === 0 && (
                   <tr>
                     <td colSpan={5} className="px-4 py-14 text-center">
@@ -710,7 +803,7 @@ export function FileManagerView({ id }: { id: string }) {
             <span>
               {entries.length} entries · {fmtBytes(totalSize)} in files · {path}
             </span>
-            <span className="hidden sm:block">execv2-backed · paths là argv operand (#208)</span>
+            <span className="hidden sm:block">execv2-backed · paths là operand base64 bytes (#219)</span>
           </div>
         </div>
       </Panel>
@@ -724,10 +817,10 @@ export function FileManagerView({ id }: { id: string }) {
           <div className="px-2 pb-4">
             <TreeBranch
               id={id}
-              path={home}
-              name={home.slice(home.lastIndexOf("/") + 1)}
+              path={homeB64}
+              name={crumbsFromB64(homeB64).at(-1)?.label ?? home}
               depth={0}
-              current={path}
+              current={pathB64}
               expanded={expanded}
               kids={kids}
               onToggle={toggleTree}
@@ -744,8 +837,8 @@ export function FileManagerView({ id }: { id: string }) {
             <>
               <DialogHeader className="border-b border-line px-5 py-3.5">
                 <DialogTitle className="flex flex-wrap items-center gap-2 font-mono text-sm text-ink">
-                  <FileGlyph entry={{ name: ed.path, path: ed.path, type: "file", size: ed.size, mode: ed.mode, mtime: ed.mtime, owner: "sandbox" }} />
-                  <span className="break-all">{ed.path}</span>
+                  <FileGlyph entry={{ name: ed.pathDisplay, path: ed.pathDisplay, type: "file", size: ed.size, mode: ed.mode, mtime: ed.mtime, owner: "sandbox" }} />
+                  <span className="break-all">{ed.pathDisplay}</span>
                   {dirty && <span className="rounded border border-warn/40 bg-warn/10 px-1.5 py-0.5 text-[10px] font-medium text-warn">unsaved</span>}
                 </DialogTitle>
                 <DialogDescription className="font-mono text-[11px] text-gray-500">
@@ -758,7 +851,7 @@ export function FileManagerView({ id }: { id: string }) {
                     <Download className="mx-auto size-8 text-gray-500" />
                     <p className="mt-3 text-sm text-gray-300">Binary file — editing is disabled.</p>
                     <p className="mt-1 text-xs text-gray-500">Tải về để xem — file nhị phân không sửa trực tiếp được.</p>
-                    <button onClick={() => void download({ name: ed.path.split("/").pop() ?? "file", path: ed.path, type: "file", size: ed.size, mode: ed.mode, mtime: ed.mtime, owner: "sandbox" })} className={cn(btn, "mt-4 border-neon/40 bg-neon/10 text-neon hover:bg-neon/20")}>
+                    <button onClick={() => void download({ name: ed.pathDisplay.split("/").pop() ?? "file", path: ed.pathDisplay, path_b64: ed.pathB64, type: "file", size: ed.size, mode: ed.mode, mtime: ed.mtime, owner: "sandbox" })} className={cn(btn, "mt-4 border-neon/40 bg-neon/10 text-neon hover:bg-neon/20")}>
                       <Download className="size-3.5" /> Download
                     </button>
                   </div>
@@ -769,7 +862,7 @@ export function FileManagerView({ id }: { id: string }) {
                   onChange={(e) => setEd({ ...ed, content: e.target.value })}
                   spellCheck={false}
                   className="min-h-0 flex-1 resize-none bg-sunken px-4 py-3 font-mono text-[12.5px] leading-relaxed text-gray-200 outline-none focus-visible:ring-inset focus-visible:ring-1 focus-visible:ring-ring"
-                  aria-label={`Edit ${ed.path}`}
+                  aria-label={`Edit ${ed.pathDisplay}`}
                 />
               )}
               <DialogFooter className="flex flex-wrap items-center justify-between gap-3 border-t border-line px-5 py-3">
@@ -801,10 +894,12 @@ export function FileManagerView({ id }: { id: string }) {
             <>
               <DialogHeader>
                 <DialogTitle className="text-ink">
-                  {prompt.kind === "rename" ? "Rename" : prompt.kind === "dir" ? "New folder" : "New file"}
+                  {prompt.kind === "rename" ? (prompt.value === "text-recovered.txt" ? "Đổi tên an toàn (recovery)" : "Rename") : prompt.kind === "dir" ? "New folder" : "New file"}
                 </DialogTitle>
                 <DialogDescription>
-                  {prompt.kind === "rename" ? `Renaming ${prompt.from} — enter the new name.` : `Created inside ${path}.`}
+                  {prompt.kind === "rename"
+                    ? `Renaming the raw-bytes path (${prompt.fromB64}) — enter the new name (valid UTF-8, one segment).`
+                    : `Created inside ${path}.`}
                 </DialogDescription>
               </DialogHeader>
               <input

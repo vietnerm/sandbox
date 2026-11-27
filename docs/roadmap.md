@@ -25,11 +25,28 @@
    alpine 9 + debian 9 + escape-alpine 35 + cve-check tool 4 + pasta 11 + stack 8 + cg 6 = 149,
    pipefail thật — issue #14; cg suite từ #4/D48 2026-11-20, env-gated cgroups v2;
    seccomp 25 từ #139/D59 2026-11-23 (SE1-4 allowlist); dev: 136 PASS + 13 SKIP env-blocked)
-   + `make test-web` + `make test-minictd` (47, MD0–MD46 — MD44–46 overlay D66 env-gated kernel ≥5.11) + lưu evidence vào
+   + `make test-web` + `make test-minictd` (74, MD0–MD71 + XSS — MD44–46 overlay D66, MD64/MD70 pasta/stack env-gated, MD71 bytes-wire #219 chạy mọi nơi) + lưu evidence vào
    `journal/YYYY-MM-DD/evidence/` + integrity check host
 5. Ghi `journal/YYYY-MM-DD/daily-log.md` (quy tắc thư mục: PROMPT.MD §10)
 
 ## Đã xong
+- [x] 2026-11-27 (phiên 44, SDDA): **#219 — files bytes-wire: tên file dạng bytes
+  (base64) + recovery (D83)**. Bug đo được: Go `json.Marshal` thay byte không phải
+  UTF-8 bằng U+FFFD trên stdout JSON của execv2 (`t\xe1\xbaext.txt` → `t\ufffd\ufffdext.txt`)
+  + tên chứa newline vỡ hàng list (hạn chế v1). Fix adapter-only (0 byte core — hai
+  phép thử manifest §3): path đi qua wire dạng base64-of-raw-bytes làm ARGV OPERAND,
+  script decode trong sandbox (`p=$(printf %s "$1" | base64 -d; echo x); p=${p%x}`),
+  mọi truy cập vẫn `"$p"` quoted; list in `type\tsize\tmtime\tmode\tpath_b64\tname_b64`
+  (base64 không chứa tab/newline → tên newline không còn vỡ hàng); `FsEntry` thêm
+  `name_b64`/`path_b64` (nguồn thật), `name`/`path` chỉ display (UTF-8 lỗi →
+  `<tên không phải UTF-8>` + hex, git quotepath philosophy); guard `assertSafePathB64`
+  trên BYTES (tuyệt đối, không NUL, ≤4096); UI: badge "Invalid UTF-8" + nút "Đổi tên
+  an toàn" (mv từ path_b64 gốc, `assertSafeName`); demo-mode decode b64 strict.
+  Lưu ý busybox: `stat` KHÔNG interpret `\t` (khác printf/tr) → format dùng REAL TAB
+  (bắt được nhờ MD71 đỏ trước khi land). MD71 (chạy mọi nơi) + 15 unit tests
+  (console-test) + tsc/next build sạch; kèm fix syntax hỏng sẵn ở main
+  (`sandbox-files.tsx` `const [home, setHome]`). Perf không đổi (không đụng runtime).
+  (#219)
 - [x] 2026-11-26 (phiên 34, SDDA): **GĐ2 mục 8 — daemon idle RSS ≤ 30 MB gate +
   destroy no-leak e2e (issue #171, D69)**. MD53: Run(webport) → Stop+Remove → 0 process
   leak (pgrep) + 0 mount leak (mountinfo grep) + dir gone. MD54: daemon idle RSS

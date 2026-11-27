@@ -1,0 +1,57 @@
+# Evidence — #219/D83 files bytes-wire (phiên 44, 2026-11-27)
+
+== make test-minictd (MD71 + toàn suite) ==
+MD67  D79 files execv2: injection-safe operand argv + stdin write + list PASS
+MD68  D80 stale-state: kill -9 → heal note + finished_at + reconcile log PASS
+MD69  D81 template registry: push/pull + gate + sha fail-closed + evil tar PASS
+MD70  #220/D82 pasta fail-closed: ... SKIP (env-gated tun)
+MD71  #219/D83 files bytes-wire: b64 operand argv, list 6 cột, recovery mv PASS
+MD71 OK: bytes-wire list/read/move/delete — byte lỗi + newline giữ nguyên qua JSON, recovery mv OK
+=== summary: PASS=65 SKIP=9 FAIL=0 ===
+
+== MD71 chi tiết đo được (replay payload thật) ==
+step 2 list stdout (4 rows × 6 cột, byte decode latin-1):
+  a\n\tb;literal.txt   (newline+TAB giữ nguyên, không vỡ hàng)
+  ti\xe1\xba\xbfng.txt  (UTF-8 3-byte)
+  t\xe1\xbaext.txt      (byte lỗi 0xE1 0xBA — GIỮ NGUYÊN qua JSON wire)
+  \xf0\x9f\x98\x80.txt (emoji 4-byte)
+step 3 read (decode-prefix): aGVsbG8= = base64("hello") OK
+step 4 mv 2-operand b64 → text-recovered.txt OK
+step 6 rm qua decode-prefix → gone OK
+step 8 leftover count = 3 OK; host daemon alive OK (không injection thoát host)
+
+== make console-test ==
+15 pass / 0 fail (node --test, files-parse.test.ts #219/D83)
+
+== make test (10 suites) ==
+test_isolation.sh OK · test_seccomp.sh OK · test_netns.sh OK · test_alpine.sh OK
+test_debian.sh OK (SKIP: rootfs-debian fetch failed — network to pinned source)
+test_escape_alpine.sh OK · test_cve_check.sh OK · test_pasta.sh OK
+test_stack.sh OK · test_cg.sh OK (0 PASS + 6 SKIP env-gated)
+=== run-suites summary: 10 suites, failed: none ===
+
+== make test-web ==
+=== summary: PASS=9 FAIL=0 ===
+
+== console build ==
+npx tsc --noEmit → sạch
+NEXT_TELEMETRY_DISABLED=1 npx next build → ○ / ○ /_not-found — prerendered static OK
+(kèm fix syntax hỏng sẵn trên main 6883e08: sandbox-files.tsx `const ome, setHome]`)
+
+== CVE check (Bước 6) ==
+kernel: 5.10.134-013.15.kangaroo.al8.x86_64
+tools/cve-check.py rc=0 — 0 CVE mới ngoài watchlist
+  (mọi entry "from cve-watchlist.md"; files journal/2026-11-27/cve/files-bytes-names.{md,json})
+tools/cve-kernel.py --discover-days 2: TIMEOUT NVD ở dev (giống phiên 41/43) —
+  phần live dựa workflow cve-daily trên CI.
+
+== host baseline (Bước 7) ==
+21d5de2d... /etc/passwd   (không đổi trong phiên)
+223fe856... /bin/bash     (không đổi trong phiên)
+a59f393b... /usr/bin/sudo (không đổi trong phiên)
+(/etc/shadow không đọc được quyền trong container — unchanged so với các phiên trước)
+listeners: chỉ infra sẵn có (12600/19001/12700/19005/19006/81) — không listener lạ
+
+== perf ==
+Adapter-only: không đụng runtime hot path (argv builder + parser console-side).
+Perf-guard CI sẽ đo lại; kỳ vọng không đổi (giống #224 phiên 43).

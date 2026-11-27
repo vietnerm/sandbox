@@ -395,10 +395,20 @@ export const getMonitoring = (range: Range = "8m") =>
 
 // --- sandbox workspace files (FTP manager + terminal) ----------------------
 
-/** one row of a directory listing (workspace file browser) */
+/**
+ * one row of a directory listing (workspace file browser).
+ * #219 (D83): `name`/`path` are DISPLAY-ONLY derivates (invalid UTF-8 shows
+ * a placeholder); `name_b64`/`path_b64` carry the RAW bytes (base64) and are
+ * the source of truth for every operation. Demo entries have no `_b64`
+ * fields — the view falls back to encoding the (always valid) demo strings.
+ */
 export interface FsEntry {
   name: string;
   path: string;
+  /** raw basename bytes, base64 (#219) — present on real (execv2) entries */
+  name_b64?: string;
+  /** raw full-path bytes, base64 (#219) — present on real (execv2) entries */
+  path_b64?: string;
   type: "dir" | "file";
   size: number;
   mode: string;
@@ -408,13 +418,19 @@ export interface FsEntry {
 
 export interface FsListResp {
   path: string;
+  /** raw bytes of the listed dir, base64 (#219) */
+  path_b64?: string;
   /** the sandbox home the UI treats as "root" of the workspace */
   home: string;
+  /** raw bytes of home, base64 (#219) */
+  home_b64?: string;
   entries: FsEntry[];
 }
 
 export interface FsReadResp {
   path: string;
+  /** raw bytes of the opened path, base64 (#219) */
+  path_b64?: string;
   content: string;
   encoding: "utf8" | "base64";
   mode: string;
@@ -425,26 +441,27 @@ export interface FsReadResp {
 const filesPath = (id: string, qs: Record<string, string>) =>
   `/v1/sandboxes/${id}/files?` + new URLSearchParams(qs).toString();
 
-export const listFiles = (id: string, path: string) =>
-  get<FsListResp>(filesPath(id, { path }));
+/** Every path parameter is base64-of-raw-bytes (#219) — never a JS string. */
+export const listFiles = (id: string, pathB64: string) =>
+  get<FsListResp>(filesPath(id, { path_b64: pathB64 }));
 
-export const readFile = (id: string, path: string) =>
-  get<FsReadResp>(`/v1/sandboxes/${id}/files/read?` + new URLSearchParams({ path }).toString());
+export const readFile = (id: string, pathB64: string) =>
+  get<FsReadResp>(`/v1/sandboxes/${id}/files/read?` + new URLSearchParams({ path_b64: pathB64 }).toString());
 
-export const writeFile = (id: string, path: string, content: string) =>
-  put<{ ok: boolean; path: string; size: number }>(`/v1/sandboxes/${id}/files/content`, { path, content });
+export const writeFile = (id: string, pathB64: string, content: string) =>
+  put<{ ok: boolean; path: string; size: number }>(`/v1/sandboxes/${id}/files/content`, { path_b64: pathB64, content });
 
-export const createFsEntry = (id: string, path: string, type: "file" | "dir") =>
-  post<FsEntry>(`/v1/sandboxes/${id}/files`, { path, type });
+export const createFsEntry = (id: string, pathB64: string, type: "file" | "dir") =>
+  post<FsEntry>(`/v1/sandboxes/${id}/files`, { path_b64: pathB64, type });
 
-export const moveFsEntry = (id: string, from: string, to: string) =>
-  post<{ ok: boolean; path: string }>(`/v1/sandboxes/${id}/files/move`, { from, to });
+export const moveFsEntry = (id: string, fromB64: string, toB64: string) =>
+  post<{ ok: boolean; path: string }>(`/v1/sandboxes/${id}/files/move`, { from_b64: fromB64, to_b64: toB64 });
 
-export const uploadFsFile = (id: string, dir: string, name: string, content: string, encoding: "utf8" | "base64" = "utf8") =>
-  post<FsEntry>(`/v1/sandboxes/${id}/files/upload`, { path: dir, name, content, encoding });
+export const uploadFsFile = (id: string, dirB64: string, name: string, content: string, encoding: "utf8" | "base64" = "utf8") =>
+  post<FsEntry>(`/v1/sandboxes/${id}/files/upload`, { path_b64: dirB64, name, content, encoding });
 
-export const deleteFsEntry = (id: string, path: string) =>
-  del<void>(filesPath(id, { path }));
+export const deleteFsEntry = (id: string, pathB64: string) =>
+  del<void>(filesPath(id, { path_b64: pathB64 }));
 
 export const resetFs = (id: string) =>
   post<{ ok: boolean }>(`/v1/sandboxes/${id}/files/reset`, {});
