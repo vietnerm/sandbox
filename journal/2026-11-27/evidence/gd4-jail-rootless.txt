@@ -1,0 +1,64 @@
+# Evidence — gd4-jail-rootless (#231, D85) — 2026-11-27 Phiên 45
+
+Kernel: 5.10.134-013.15.kangaroo.al8.x86_64 · uid 1001 · KHÔNG /dev/kvm (nửa KVM
+env-gated → CI job kvm, TestJailSpecKVMDevice không SKIP ở đó — job "must not skip")
+
+## fetch-firecracker (pin thật, trước đây là placeholder)
+- v1.18.0 tgz sha256 = 1ac8eec866dd5eea14efecf6323e22b23eea24054545338a5b34bc5bca6623cd
+  (khớp .tgz.sha256.txt chính thức của release); inner binary sha256 =
+  b33f46cd6d88834cf6a4f8d184f08f219809c636236bffd286d233a60602a2ba (khớp SHA256SUMS
+  trong archive). fetch OK → tools/bin/firecracker (3.9 MB, static-pie, gitignored).
+- measured sha256 BEFORE install (fail-closed), đúng pattern D37/D51.
+
+## Đo ngoài jail (host, uid 1001, không KVM) — /tmp/fc-fetch trước khi viết MD73
+- `firecracker --version` → "Firecracker v1.18.0", exit 0
+- `--api-sock /tmp/.../api.sock` → nghe unix socket; host curl --unix-socket
+  `GET /` → 200 `{"id":"anonymous-instance","state":"Not started","vmm_version":"1.18.0"}`
+
+## Go unit (minictd/internal/firecracker)
+- TestJailSpecRunSpec PASS (pin name/image/volumes/cmd/seccomp "")
+- TestJailSpecPrepareStateDir PASS (dir 0755 + stale socket removed)
+- TestJailSpecKVMDevice SKIP (no /dev/kvm ở dev — chạy thật ở CI job kvm)
+
+## MD73 e2e (suite thật, daemon + minict + seccomp + pivot_root)
+- make test-minictd → **PASS 67 + SKIP 9 + FAIL 0** (run4, /tmp/md-run4.log)
+- MD73: fetch → run jail (binds tools/bin:ro → /fc-bin, state → /fc-state) →
+  socket xuất hiện qua bind → `GET /` 200 + "state":"Not started" +
+  "vmm_version":"1.18.0" → execv2 `--version` trong jail = "Firecracker v1.18.0"
+  (dòng đầu; firecracker log thêm exit-line ra STDOUT — đo được) → remove →
+  pgrep /fc-bin/firecracker = 0 (không rò process)
+
+## Mutant (negative control — bắt buộc cho test mới)
+- **A (MD73 e2e)**: phá state bind (`/fc-state-BROKEN`) → MD73 FAIL đúng tại
+  "API socket never appeared in the state bind" (/tmp/md-mutantA.log;
+  suite 66 PASS + 1 FAIL = mutant). CAUGHT.
+- **B (unit)**: `--api-sock` → `--api-sock-BROKEN` trong jail.go RunSpec →
+  TestJailSpecRunSpec FAIL: "cmd must point --api-sock at the state bind".
+  CAUGHT. Restore → package PASS lại (ok 0.009s).
+
+## Suite đầy đủ (make test-escape)
+- 10 suites, failed: none (isolation 38 PASS; cve-check tool 4; alpine 8; …;
+  cg 6 SKIP env-gated) — /tmp/escape-run.log
+
+## make test-web — PASS 9/9 (/tmp/web-run.log)
+
+## Perf (make perf-check) — ngưỡng §0
+- cold_start_ms 2.20 (≤100) · rss_kb 1152 (≤10240) · disk_base_mb 2.05 (≤20) — PASS
+- PR không đụng hot path daemon (jail.go = thư viện spec, chưa wire vào Store)
+
+## Host baseline (so journal/2026-11-26/evidence/host-baseline-p40.txt)
+- /etc/passwd 21d5de2d… · /bin/bash 223fe856… · /usr/bin/sudo a59f393b… —
+  **unchanged** (3/3 khớp; /etc/shadow không đọc được ở uid 1001 — như p40)
+- listeners: cùng bộ 6 (81, 12600, 12700, 19001, 19005, 19006) như p40 — unchanged
+
+## CVE (journal/2026-11-27/cve/gd4-jail-rootless.{md,json})
+- cve-check rc=0: 19 entry watchlist, 0 CVE mới ngoài watchlist
+- cve-kernel --discover-days 2: CRITICAL 0 hits, HIGH 22 → 0 listed (rc=0)
+
+## Sự cố quy trình đã xử lý trong phiên (ghi để SCR/SIA soát)
+- Tab-corruption: lần sửa test file bằng công cụ edit tương tác biến REAL TAB
+  thành spaces ở dòng `stat -c "%F\t%s\t%Y\t%a"` của MD71 (fix #228) → MD71 đỏ
+  ×2 run; restore từ HEAD + insert bằng script Python byte-exact → xanh. Bài học:
+  file có TAB ngữ nghĩa phải sửa bằng script, không qua Read/Edit tương tác.
+- Scaffolding #193: sha256 fetch-firecracker là giá trị placeholder (1a2b3c4d…)
+  + URL asset thiếu .tgz → script chưa từng chạy được thật; fix trong PR này.

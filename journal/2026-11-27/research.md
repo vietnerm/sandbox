@@ -108,3 +108,55 @@ như roadmap chữ — decision sửa cho khớp thực tế, roadmap cập nh�
   giữ SSE+POST vĩnh viễn — mỗi phím 1 POST, IME/paste dài vẫn nhiều HTTP
   round-trip (đo được trong repro); (c) **RFC 6455 minimal stdlib tự viết
   (~350 dòng, chỉ text/binary/close/ping/pong, không extension)** — chọn (c).
+
+---
+
+# Phiên 45 — GĐ4 1b.a: jail Firecracker không cần root (issue #231)
+
+## Vấn đề
+Jailer upstream của Firecracker yêu cầu root: chroot/pivot_root, mknod /dev/kvm +
+/dev/net/tun, setuid/setgid, tạo cgroup — tất cả cần CAP_SYS_ADMIN/CHROOT. minict
+là runtime rootless (userns+mountns+pivot_root+seccomp, uid ≥ 1000) — câu hỏi:
+có thể thay jailer bằng một instance minict làm jail không, và đo được phần nào
+không cần KVM?
+
+## Giải pháp đã có / nguồn
+- **Nguồn 1: firecracker docs/jailer.md (official, github.com/firecracker-microvm/
+  firecracker/blob/main/docs/jailer.md)** — jailer làm đúng 6 việc: chroot +
+  pivot_root, tạo device node /dev/kvm + /dev/net/tun, setuid/gid, cgroup v1/v2,
+  rlimit (fsize, nofile), --new-pid-ns; **phải chạy root**. Firecracker runtime
+  cần: binary + file được stage vào jail, /dev/kvm, /dev/net/tun (khi dùng mạng),
+  API unix socket. Không có mục nào cần mknod thật: bind-mount node có sẵn trong
+  userns thay thế được (minict đã bind null/zero/urandom/random đúng cách này).
+- **Nguồn 2: pandastack "The Firecracker Jailer Explained"** — xác nhận
+  "The VMM does not need root privileges at runtime" — jailer chỉ cần root cho
+  bước setup (cgroup, chroot, mknod, setuid); sau đó VMM chạy unprivileged với
+  đúng bộ file được stage. seccomp-bpf của VMM do firecracker tự cài (seccompiler).
+- **Nguồn phụ 1: ZHAW (zhaw.ch, running untrusted code in Firecracker inside
+  Docker)** — "Firecracker never runs as root; additional privilege required =
+  host kvm group" — thực tế chỉ cần rw /dev/kvm.
+- **Nguồn phụ 2: GHSA-36j2-f825-qvgc (security advisory chính thức)** — lỗi
+  Arbitrary Host File Overwrite via Symlink trong chính jailer upstream → lập luận
+  "dùng jailer = an toàn hơn" không tuyệt đối; một jail tự xây phải có bài test
+  riêng (minict đã có suite isolation/escape riêng).
+
+## Đo trên dev (uid 1001, kernel 5.10, KHÔNG /dev/kvm) — bằng chứng /tmp/fc-fetch
+- firecracker v1.18.0 (tgz sha256 khớp .sha256.txt chính thức
+  1ac8eec8…6623cd; binary b33f46cd…2ba) — static-pie ELF.
+- `firecracker --version` → "Firecracker v1.18.0", exit 0.
+- `firecracker --api-sock /tmp/…/api.sock` → nghe unix socket; host
+  `curl --unix-socket GET /` → **200 OK** + JSON
+  `{"id":"anonymous-instance","state":"Not started","vmm_version":"1.18.0"}`.
+→ Cả 3 phép đo roadmap (binary khởi động, --version, GET /) không cần KVM trên
+host. Việc còn lại: đo lại **bên trong jail minict** (seccomp + pivot_root +
+capdrop của minict phải cho phép bộ syscall của VMM).
+
+## Trade-off
+- (a) Jailer upstream — buộc root, vi phạm bất biến §0; loại.
+- (b) minijail (chromium) — binary ngoài, thêm dep + vẫn cần helper setup;
+  minict đã có đủ cơ chế jail được test escape riêng.
+- (c) **Jail = instance minict** (chọn): userns+mountns+seccomp+pivot_root có sẵn,
+  bind /dev/kvm + thư mục socket API vào qua Volumes, binary stage qua bind ro.
+  Lợi: zero-dep, rootless, một code path với container. Cái giá: seccomp mặc định
+  (blocklist D11) phải đo được với bộ syscall của firecracker — nếu thiếu,
+  bổ sung allowlist riêng (1b.e).

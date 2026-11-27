@@ -68,7 +68,7 @@ TCP 127.0.0.1:7601.
 
 ## Test
 
-`make test-minictd` → `tests/test_minictd.sh`, 36 case (MD0–MD36): parity seccomp
+`make test-minictd` → `tests/test_minictd.sh`, 72 case (PORT0 + MD0–MD73 + XSS; danh sách đầy đủ ở header của test file): parity seccomp
 minict.c ↔ minict-exec.c, auth, lifecycle, exec setns, env không rò, timeout, stdin,
 NDJSON, preview, path traversal, stop/start, bind-symlink, 404/409, remove sạch,
 CLI round-trip (MD20), autostart wake-recreate (MD21), deploy unit verify (MD22),
@@ -107,6 +107,18 @@ A2 (oci test), S3–S6 từ review tích
 hợp (S1 FIXED #41, S2/CG1 FIXED #4/D48, G3 FIXED #97/D49) — chi tiết `docs/GAPS.md`.
 A3 reconcile: proactive ĐÃ CÓ (#91, `--reconcile-interval`); fleet-agent heartbeat
 (P4) vẫn mở.
+
+## GĐ4 — Backend microVM Firecracker (1b.a, #231, D85)
+
+Jail của VMM **không dùng jailer upstream** (bắt buộc root: chroot, mknod,
+setuid, cgroup — vi phạm §0 rootless). Jail = **một instance minict**
+(`internal/firecracker/jail.go`): userns + mountns + seccomp + pivot_root của
+minict; bind duy nhất `tools/bin` ro → `/fc-bin`, state dir riêng → `/fc-state`
+(API unix socket của VMM), `/dev/kvm` rw chỉ khi host có (env-gated; probe thật
+KVM_GET_API_VERSION chạy ở CI job `kvm`). `tools/fetch-firecracker.sh` tải
+binary pin v1.18.0 (sha256 đối chiếu release chính thức, fail-closed).
+E2e: MD73 — `--version` đúng trong jail, `GET /` 200 qua bind, remove không rò.
+Boot microVM thật (boot-source/drives/InstanceStart) = mục 1b.e, cần KVM.
 
 ## Cgroups v2 resource enforcement (CG1/S2, #4, D48)
 

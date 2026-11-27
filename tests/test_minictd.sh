@@ -2609,6 +2609,60 @@ MD72MAIN_EOF
 }
 run_case MD72 "#218/D84 ws-pty: binary frames byte-exact + auth/origin gates + reap + RSS" skip md72
 
+#   MD73  #231/D85 gd4 1b.a: Firecracker jailed trong instance minict (rootless
+#         thay jailer upstream): binary ro bind + state bind, GET / 200 qua unix
+#         socket, --version dung trong jail, remove khong ro process; nua KVM =
+#         TestJailSpecKVMDevice (CI job kvm, khong SKIP)
+
+md73() {
+    if ! bash "$REPO/tools/fetch-firecracker.sh"; then
+        # Same class as MD28 (D51): env without network to the pin host ->
+        # SKIP; a fetch failure WITH network (sha mismatch, bad asset) is a
+        # real FAIL — the pins were placeholder sha256 + wrong asset URL
+        # before D85 (scaffolding never actually exercised).
+        curl -s --max-time 5 -o /dev/null https://github.com || return 125
+        return 1
+    fi
+    "$REPO/tools/bin/firecracker" --version 2>/dev/null | grep -q "^Firecracker v1.18.0$" || { echo "host --version mismatch: $("$REPO/tools/bin/firecracker" --version 2>/dev/null | head -1)"; return 1; }
+
+    local JD="$WORK/fcj/md-fcj"
+    mkdir -p "$JD"
+    # the jail instance (D85): extras = binary ro bind + per-jail state bind
+    api POST /v1/run "{\"name\":\"md-fcj\",\"image\":\"base\",\"volumes\":[\"$REPO/tools/bin:/fc-bin:ro\",\"$JD:/fc-state\"],\"cmd\":[\"/bin/sh\",\"-c\",\"exec /fc-bin/firecracker --api-sock /fc-state/api.sock\"]}" >/dev/null || { echo "run jail failed: $(head -c 240 "$WORK/resp" 2>/dev/null)"; return 1; }
+
+    # the VMM's API unix socket surfaces on the host through the state bind
+    local appeared=""
+    for _ in $(seq 1 50); do
+        [[ -S "$JD/api.sock" ]] && { appeared=1; break; }
+        sleep 0.2
+    done
+    [[ -n "$appeared" ]] || { echo "API socket never appeared in the state bind (seccomp/startup failure — see daemon log)"; return 1; }
+
+    # GET / through the bind -> 200 + VMM JSON (state Not started, version pinned)
+    local code
+    code=$(curl -s -m 5 --unix-socket "$JD/api.sock" -o "$WORK/md73get" -w '%{http_code}' http://localhost/) || return 1
+    [[ "$code" == 200 ]] || { echo "GET / -> $code"; return 1; }
+    grep -q '"state":"Not started"' "$WORK/md73get" || { echo "state:"; cat "$WORK/md73get"; return 1; }
+    grep -q '"vmm_version":"1.18.0"' "$WORK/md73get" || { echo "version:"; cat "$WORK/md73get"; return 1; }
+
+    # --version INSIDE the jail via execv2 (second process, same seccomp)
+    # NOTE: firecracker logs the exit line to STDOUT too — assert the FIRST
+    # line only (measured: "Firecracker v1.18.0\n<ts> Firecracker exiting …").
+    xv2 md-fcj '{"cmd":["/fc-bin/firecracker","--version"],"timeout_s":10}' || { echo "execv2 --version failed: $(head -c 240 "$WORK/resp" 2>/dev/null)"; return 1; }
+    local vout
+    vout=$(jget 'd["stdout"].strip().split("\n")[0].strip()')
+    [[ "$vout" == "Firecracker v1.18.0" ]] || { echo "in-jail --version first line: $vout"; return 1; }
+
+    # remove -> VMM reaped with the payload (MD21 reboot semantics), no leak
+    api POST /v1/sandboxes/md-fcj/remove >/dev/null || return 1
+    sleep 0.5
+    pgrep -f "/fc-bin/firecracker" >/dev/null 2>&1 && { echo "firecracker process leaked after remove"; return 1; }
+    rm -rf "$WORK/fcj"
+    echo "MD73 OK: firecracker v1.18.0 boots in minict jail — --version + GET / 200 + no-leak remove"
+}
+run_case MD73 "#231/D85 gd4-jail-rootless: firecracker in minict jail — version + GET / + no-leak" skip md73
+
+
 
 
 run_case XSS  "D71 gd3-ui: console source no dangerouslySetInnerHTML/innerHTML" pass md55b_xss
