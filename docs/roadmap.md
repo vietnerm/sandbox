@@ -685,6 +685,29 @@
    f. Tests: env-gated SKIP khi no /dev/kvm (pattern overlay D66 / pasta D67); PASS thật
       trên KVM-capable host.
    g. Budget: daemon RSS +~5 MB (management code); per-microVM Firecracker ~10-20 MB.
+1b. **Làm được khi CHƯA có KVM** (owner chốt 2026-11-27 GĐ4 ưu tiên số 1; SDDA làm theo
+   thứ tự, mỗi mục có test chạy không cần `/dev/kvm`, phần cần KVM thì env-gated SKIP):
+   a. **Jail không cần root**: jailer của Firecracker cần root (chroot, đổi uid, cgroup).
+      Nghiên cứu + decision file: chạy `firecracker` **bên trong một instance minict**
+      (userns + mountns + seccomp + pivot_root của minict làm jail; chỉ bind `/dev/kvm` +
+      socket API vào). Đo được phần không cần KVM: binary khởi động trong jail, `--version`,
+      socket API trả lời `GET /`. Không dùng jailer upstream nếu nó buộc root.
+   b. **Rootfs ext4 rootless**: builder từ template/rootfs hiện có bằng `mkfs.ext4 -d`
+      (không mount, không root); kiểm image bằng `e2fsck -n` + `debugfs -R ls`; giới hạn
+      kích thước; test MD không cần KVM.
+   c. **Mạng microVM rootless**: TAP tạo trong netns do userns của daemon sở hữu (có
+      CAP_NET_ADMIN trong netns đó), pasta gắn vào netns ấy như instance minict (áp mặc định
+      fail-closed của #220). Test tạo/xoá TAP trong userns netns, không cần KVM.
+   d. **Guest agent cho exec/terminal/files**: microVM không `setns` được như container.
+      Thiết kế agent tối giản trong guest (init PID 1 tĩnh, nói qua **vsock**: exec, PTY,
+      đọc/ghi file theo bytes) để API/console hiện có dùng chung cho cả hai backend. Tài
+      liệu thiết kế + agent build tĩnh + test giao thức bằng socket giả (không cần KVM).
+   e. **API client + backend**: hoàn thiện `internal/firecracker` (boot-source, drives,
+      machine-config, network-interfaces, vsock, InstanceStart, shutdown) với test bằng unix
+      socket giả lập; `--backend firecracker` fail-closed rõ ràng khi thiếu KVM (MD63 giữ).
+   f. **Host có KVM cho CI**: chờ owner chọn (VPS có `/dev/kvm`, self-hosted runner, hoặc
+      GitHub larger runner). Workflow chạm `.github` → owner duyệt.
+   g. Console: chọn backend khi tạo + badge "microVM"; API không đổi.
 2. **Benchmark** microVM vs container:
    - cold_start_ms: minict ~2 ms vs Firecracker ~125 ms (Firecracker measured upstream).
    - RSS: minict ~1.2 MB wrapper vs Firecracker ~10-20 MB VMM + guest memory.
@@ -700,9 +723,11 @@
 
 ## GĐ3 — gia cố sau DoD (owner dùng thật, 2026-11-26/27)
 
-> Lỗi và nhu cầu owner gặp khi dùng console thật. Thứ tự làm theo PROMPT.MD Bước 3:
-> `type:security` trước, rồi issue p1, rồi mới tới Track M. Các mục **chờ owner duyệt**
-> chỉ làm phần tài liệu thiết kế.
+> Lỗi và nhu cầu owner gặp khi dùng console thật. **Owner chốt 2026-11-27: GĐ4 microVM
+> làm trước.** Trong mục này chỉ **#220 (security)** còn được làm ngay; #218, #219, #221
+> **hoãn tới sau GĐ4** (đã hạ `priority:p3`). Lý do: GUI, firewall, terminal WS đều cần
+> chạy được workload không tin cậy một cách an toàn, mà manifest §3 chỉ cho phép điều đó
+> sau GĐ4.
 
 - Xong: #206 PTY fail-closed (PR #210, D77) · #208 Files qua execv2 (PR #212, D79) ·
   #209 uptime + heal stale state (PR #213, D80) · bản sửa của owner, gồm TAB thật trong
@@ -720,6 +745,8 @@
    duyệt**. Nếu được duyệt thì cần sửa manifest §4/§6 trước khi code.
 
 ## Track M — Mở rộng ngoài core (manifest §9, D74, từ 2026-11-26)
+
+> **Tạm dừng tới sau GĐ4** (owner chốt 2026-11-27). M1–M3 đã xong; M3e, M4, M5 chờ.
 
 > Không phải giai đoạn mới. SDDA lấy mục thấp nhất chưa xong ở đây **chỉ khi** mọi
 > mục còn lại của giai đoạn hiện tại bị chặn (môi trường hoặc chờ owner); hiện GĐ4
@@ -803,6 +830,11 @@
    `stack.yaml`. Không viết nền tảng deploy riêng.
 
 ## Hướng xa (chưa thuộc giai đoạn nào, chưa duyệt)
+
+- **Desktop GUI trong sandbox + noVNC trên console** (owner hỏi 2026-11-27): template
+  "desktop" (Xvnc + WM nhẹ, không GPU), tunnel cổng VNC qua WebSocket của #218 (không mở
+  port host), tab Desktop dùng noVNC đóng gói tĩnh. Làm **sau GĐ4** (cần microVM để chạy
+  trình duyệt/nội dung lạ an toàn) và sau #218.
 
 - **arm64**: port `minict` (seccomp filter theo arch, syscall số khác) — cần runner arm64.
 - **Runtime cho K3s/K8s (CRI shim)**: ngược non-goal manifest §4 "không Kubernetes API";
