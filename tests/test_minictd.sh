@@ -2160,19 +2160,21 @@ PYEOF
 }
 run_case MD69 "D81 template registry: push/pull + gate + sha fail-closed + evil tar" pass md69
 
-# ---------- #220: pasta fail-closed — đo (commit 1) + assert (commit 2, D82) ----------
-#   MD70  (env-gated tun) qua DAEMON (pastaArgs — đường đi sản phẩm):
-#         P1 forward khai báo bind địa chỉ nào; P2 UDP auto inbound;
-#         P3 ns→host qua gateway mapping (API minictd là target);
-#         P4 egress Internet. Commit 1: diagnostic — in kết quả, luôn pass
-#         (kỳ vọng trên runner pre-fix: 0.0.0.0 + UDP auto + REACHED).
-#         Commit 2 (fix D82): các assert fail-closed + positive control
-#         public/.
+# ---------- #220: pasta fail-closed — đo (commit 1-3) + assert (D82) ----------
+#   MD70  (env-gated tun) qua DAEMON (pastaArgs — đường đi sản phẩm). Bằng
+#         chứng đo TRƯỚC fix (commit 896c769, run CI 45935460401 — artifact
+#         md70-measure.txt): P1 "*:18024" (mọi interface); P2 UDP auto mở
+#         host 5353 (count=1); P3 sandbox -> API minictd qua gateway mapping
+#         = HTTP/1.0 401. Sau fix (D82) các assert fail-closed dưới đây:
+#         P1' bind 127.0.0.1, không wildcard; P2' UDP auto đóng (count=0);
+#         P3' ns→host BLOCKED; P4' egress vẫn chạy (wget example.com);
+#         P5' opt-in "public/" bind lại mọi interface (positive control) —
+#         chứng minh quyền năng không bị mất, chỉ chuyển sang tường minh.
 md70() {
     [[ "$PASTA_OK" == 1 ]] || return 125
-    # UDP bind helper: busybox nc has NO -u (and no udpsvd/tftpd; ntpd/dnsd
+    # UDP bind helper: busybox nc has NO -u (no udpsvd/tftpd either; ntpd/dnsd
     # bind privileged ports pasta cannot hold rootless) — build a 20-line
-    # static binder and bind-mount it into the instance instead.
+    # static binder and bind-mount it into the instance.
     mkdir -p "$WORK/tools"
     cat > "$WORK/tools/udpbind.c" <<'UEOF'
 #include <arpa/inet.h>
@@ -2193,9 +2195,10 @@ int main(void)
 UEOF
     cc -static -O2 -o "$WORK/tools/udpbind" "$WORK/tools/udpbind.c" || { echo "cc static build failed"; return 1; }
     api POST /v1/sandboxes/md-sec220/remove >/dev/null 2>&1 || true
+    api POST /v1/sandboxes/md-sec220b/remove >/dev/null 2>&1 || true
     api POST /v1/run "{\"name\":\"md-sec220\",\"image\":\"base\",\"pasta_ports\":[\"$P2PORT:8080\"],\"volumes\":[\"$WORK/tools:/mnt/t\"],\"cmd\":[\"/bin/sh\",\"-c\",\"mkdir -p /www && echo p220-ok > /www/index.html && httpd -p 8080 -h /www && /mnt/t/udpbind\"]}" > /dev/null || { echo "run md-sec220 failed: $(head -c 200 "$WORK/resp")"; return 1; }
     sleep 2
-    local shim gw
+    local shim gw p1bind p2cnt p3out p4rc
     shim=$(python3 -c "import json;print(json.load(open('$STATE/md-sec220/state.json')).get('pid',0))")
     [[ "$shim" -gt 0 ]] || { echo "no shim pid"; return 1; }
     gw=$(python3 -c "
@@ -2207,28 +2210,42 @@ for l in b[1:]:
         print('.'.join(str(int(h[i:i+2], 16)) for i in (6, 4, 2, 0)))
         break")
     echo "  [meas] GW=$gw P2PORT=$P2PORT shim=$shim"
-    local p1bind p2cnt p3out
+    # P1' forward khai báo bind 127.0.0.1 (không wildcard) + forward vẫn hoạt động
     p1bind=$(ss -tln 2>/dev/null | grep -E ":$P2PORT[[:space:]]" | head -1 | awk '{print $4}')
+    [[ "$p1bind" == "127.0.0.1:$P2PORT" ]] || { echo "P1 bind = $p1bind, want 127.0.0.1:$P2PORT"; ss -tln | grep "$P2PORT" || true; return 1; }
+    ss -tln 2>/dev/null | grep -qE "(0\.0\.0\.0|\*|\[::\]):$P2PORT[[:space:]]" && { echo "P1 wildcard bind still present"; return 1; }
+    curl -s -m 5 "http://127.0.0.1:$P2PORT/" | grep -q p220-ok || { echo "P1 forward dead via loopback"; return 1; }
+    # P2' UDP auto đóng: ns bind UDP 5353 (udpbind) nhưng host KHÔNG mở
     p2cnt=$(ss -lnu 2>/dev/null | grep -cE ':5353[[:space:]]')
-    echo "  [meas] P1 declared-bind : $p1bind"
-    echo "  [meas] P2 udp-auto-count: $p2cnt"
-    local p3=""
-    xv2 md-sec220 "{\"cmd\":[\"/bin/sh\",\"-c\",\"echo -e 'GET /healthz HTTP/1.0\\r\\n' | nc -w 2 $gw $API_PORT\"],\"timeout_s\":10}" || p3="(execv2 error)"
-    p3=$(jget 'repr(d.get("stdout","")).strip()[1:-1]')
-    echo "  [meas] P3 ns-to-host-API stdout: ${p3:-(empty = BLOCKED)}"
+    [[ "$p2cnt" -eq 0 ]] || { echo "P2 UDP auto still open (count=$p2cnt)"; ss -lnu | grep 5353 || true; return 1; }
+    # P3' ns→host BLOCKED: sandbox không tới được API minictd qua gateway mapping
+    xv2 md-sec220 "{\"cmd\":[\"/bin/sh\",\"-c\",\"echo -e 'GET /healthz HTTP/1.0\\r\\n' | nc -w 2 $gw $API_PORT\"],\"timeout_s\":10}" || { echo "P3 execv2 error"; return 1; }
+    p3out=$(jget 'd.get("stdout","")')
+    [[ -z "$p3out" ]] || { echo "P3 ns→host still REACHED: $(head -c 120 <<<"$p3out")"; return 1; }
+    # P4' egress Internet + DNS vẫn chạy (fix không đụng outbound/dns-forward)
+    xv2 md-sec220 "{\"cmd\":[\"/bin/sh\",\"-c\",\"wget -q -T 10 -O - http://example.com/ 2>&1 | grep -c Example\"],\"timeout_s\":20}" || { echo "P4 wget execv2 error"; return 1; }
+    p4rc=$(jget 'd.get("stdout","").strip()')
+    [[ "$p4rc" -ge 1 ]] || { echo "P4 egress broken (grep Example = $p4rc)"; return 1; }
+    # P5' positive control: opt-in public/ bind lại mọi interface
+    api POST /v1/run "{\"name\":\"md-sec220b\",\"image\":\"base\",\"pasta_ports\":[\"public/$P2PORT2:8080\"],\"cmd\":[\"/bin/sh\",\"-c\",\"mkdir -p /www && echo p220b-ok > /www/index.html && httpd -p 8080 -h /www\"]}" > /dev/null || { echo "run md-sec220b failed: $(head -c 200 "$WORK/resp")"; return 1; }
+    sleep 2
+    ss -tln 2>/dev/null | grep -qE "(0\.0\.0\.0|\*|\[::\]):$P2PORT2[[:space:]]" || { echo "P5 public/ did not bind wildcard"; ss -tln | grep "$P2PORT2" || true; return 1; }
+    curl -s -m 5 "http://127.0.0.1:$P2PORT2/" | grep -q p220b-ok || { echo "P5 public forward dead"; return 1; }
+    api POST /v1/sandboxes/md-sec220/remove >/dev/null 2>&1 || true
+    api POST /v1/sandboxes/md-sec220b/remove >/dev/null 2>&1 || true
     # run_case nuốt stdout của case PASS → ghi file cho artifact CI
-    # (upload-artifact: ci-evidence/*.txt) — evidence đo được bền vững.
     mkdir -p "$REPO/ci-evidence"
     cat > "$REPO/ci-evidence/md70-measure.txt" <<EOF
-# MD70 measurement @ $(date -u '+%F %T UTC') — P2PORT=$P2PORT GW=$gw (daemon path, pastaArgs)
-P1_declared_bind       : ${p1bind:-none}
-P2_udp_auto_count_5353 : $p2cnt   (0 = closed, >0 = UDP auto inbound OPEN)
-P3_ns_to_host_API_out  : ${p3:-(empty = BLOCKED)}   (HTTP 401 = ns→host hole open)
+# MD70 measurement @ $(date -u '+%F %T UTC') — P2PORT=$P2PORT GW=$gw (daemon path, pastaArgs) — POST-fix D82
+P1_declared_bind       : $p1bind   (want 127.0.0.1:$P2PORT; wildcard absent)
+P2_udp_auto_count_5353 : $p2cnt   (0 = closed)
+P3_ns_to_host_API_out  : (empty = BLOCKED)
+P4_egress_wget_example : $p4rc match(es)
+P5_public_optin_bind   : wildcard on $P2PORT2 + curl ok
 EOF
-    api POST /v1/sandboxes/md-sec220/remove >/dev/null 2>&1 || true
-    echo "MD70 OK (diagnostic run — see [meas] lines above)"
+    echo "MD70 OK: fail-closed (loopback bind, no UDP auto, no ns→host, egress ok, public/ opt-in works)"
 }
-run_case MD70 "#220/D82 pasta fail-closed: measure bind/udp/ns-host/egress" pass md70
+run_case MD70 "#220/D82 pasta fail-closed: loopback bind + no UDP auto + no ns→host + egress" skip md70
 
 run_case XSS  "D71 gd3-ui: console source no dangerouslySetInnerHTML/innerHTML" pass md55b_xss
 

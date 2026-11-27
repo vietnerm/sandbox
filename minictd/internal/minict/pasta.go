@@ -13,10 +13,23 @@ package minict
 // D11 blocklist and MD0 parity untouched.
 //
 // Forward semantics (passt.1): "-t first[-last][:toaddr]" — one spec arg
-// per protocol (comma-joined entries). pasta binds forwarded host ports
-// on all interfaces by default; the D42 default "auto" forwarding (ports
-// bound in the namespace forwarded back on the same host port) stays ON —
-// explicit PastaPorts only ADD deterministic forwards.
+// per protocol (comma-joined entries). #220/D82 FAIL-CLOSED DEFAULTS
+// (measured in MD70, podman-parity — containers/common libnetwork/pasta
+// passes -t/-u/-T/-U "none" + --no-map-gw the same way):
+//
+//   - declared forwards bind 127.0.0.1 (was: every interface — measured
+//     "*:18024" on a runner); opt-in via the "public/" grammar binds the
+//     pasta default (every interface) — one pasta flag applies ONE listen
+//     address to its whole comma list (fwd_rule_parse), so public entries
+//     need their own flag;
+//   - TCP "auto" (D42: namespace-bound ports forwarded back for preview)
+//     stays ON but is bound to loopback via the same prefixed spec;
+//   - UDP "auto" was a hole (measured: a namespace UDP bind opened host
+//     0.0.0.0:5353) — an explicit spec disables the scan and with no UDP
+//     forwards we pass "none" outright;
+//   - ns→host forwarding (-T/-U) and gateway→host mapping (--no-map-gw)
+//     are pure exposure (measured: the sandbox reached the token-gated
+//     minictd API over the gateway address) — killed unconditionally.
 //
 // Fail-closed posture (D34/D37): pasta_ports declared but the binary,
 // /dev/net/tun, or the netns are missing => Run/Start returns an error
@@ -68,21 +81,33 @@ const (
 
 // pastaFwd is one validated host→namespace forward.
 type pastaFwd struct {
-	Proto pastaProto
-	Host  int
-	NS    int
+	Proto  pastaProto
+	Host   int
+	NS     int
+	Public bool // bind every interface (opt-in); default binds 127.0.0.1 only
 }
 
-func (f pastaFwd) String() string { return fmt.Sprintf("%s/%d->%d", f.Proto, f.Host, f.NS) }
+func (f pastaFwd) String() string {
+	s := fmt.Sprintf("%s/%d->%d", f.Proto, f.Host, f.NS)
+	if f.Public {
+		s += "[public]"
+	}
+	return s
+}
 
 // key identifies a forward's host-side bind (S6 collision map key).
 func (f pastaFwd) key() string { return fmt.Sprintf("%s/%d", f.Proto, f.Host) }
 
 // parsePastaPorts validates RunSpec.PastaPorts fail-closed host-side so a
 // bad entry fails Run with a clear 4xx instead of dying inside pasta's
-// argv parsing. Grammar per entry (trim first):
+// argv parsing. Grammar v2 per entry (trim first; #220/D82):
 //
-//	[tcp|udp/]<host>:<ns>     — tcp default; numbers only (no ranges in v1)
+//	[tcp|udp/][public/]<host>:<ns>
+//
+// tcp default; numbers only (no ranges in v1). "public/" binds the host
+// port on EVERY interface (explicit opt-in — README Known Limitations
+// warns it); without it the forward binds 127.0.0.1 only. Unknown scope
+// prefixes are refused, never ignored.
 func parsePastaPorts(entries []string) ([]pastaFwd, error) {
 	if len(entries) == 0 {
 		return nil, nil
@@ -96,19 +121,30 @@ func parsePastaPorts(entries []string) ([]pastaFwd, error) {
 		raw := strings.TrimSpace(e)
 		proto := pastaTCP
 		rest := raw
+		public := false
 		if before, after, ok := strings.Cut(raw, "/"); ok {
 			switch strings.ToLower(before) {
 			case string(pastaTCP):
-				proto = pastaTCP
+				rest = after
 			case string(pastaUDP):
-				proto = pastaUDP
+				proto, rest = pastaUDP, after
+			case "public":
+				// bare "public/" prefix — tcp implied (grammar v2, D82)
+				public, rest = true, after
 			default:
-				return nil, fmt.Errorf("spec.PastaPorts entry %q: protocol must be tcp or udp", raw)
+				return nil, fmt.Errorf("spec.PastaPorts entry %q: protocol must be tcp or udp (grammar v2: [tcp|udp/][public/]<host>:<ns>)", raw)
 			}
-			rest = after
+		}
+		if !public {
+			if before, after, ok := strings.Cut(rest, "/"); ok {
+				if strings.ToLower(before) != "public" {
+					return nil, fmt.Errorf("spec.PastaPorts entry %q: unknown scope %q — grammar v2: [tcp|udp/][public/]<host>:<ns>", raw, before)
+				}
+				public, rest = true, after
+			}
 		}
 		if strings.ContainsAny(rest, " \t-") {
-			return nil, fmt.Errorf("spec.PastaPorts entry %q: ranges/spaces are not supported (v1 grammar: [tcp|udp/]<host>:<ns>)", raw)
+			return nil, fmt.Errorf("spec.PastaPorts entry %q: ranges/spaces are not supported (v1 grammar: [tcp|udp/][public/]<host>:<ns>)", raw)
 		}
 		hp, np, ok := strings.Cut(rest, ":")
 		if !ok || hp == "" || np == "" {
@@ -133,14 +169,15 @@ func parsePastaPorts(entries []string) ([]pastaFwd, error) {
 			return nil, fmt.Errorf("spec.PastaPorts entry %q: duplicate host bind %s", raw, key)
 		}
 		seen[key] = true
-		fwds = append(fwds, pastaFwd{Proto: proto, Host: host, NS: ns})
+		fwds = append(fwds, pastaFwd{Proto: proto, Host: host, NS: ns, Public: public})
 	}
 	return fwds, nil
 }
 
 // pastaArgs builds the pasta argv for one attach. No shell — exec arglist
 // only (nothing from the spec reaches a shell). D37/D42 parity with
-// minict.sh spawn_pasta, plus explicit forwards from the config.
+// minict.sh spawn_pasta, plus explicit forwards from the config, plus the
+// #220/D82 fail-closed defaults documented in the package comment above.
 func pastaArgs(shimPID int, fwds []pastaFwd, gw string) []string {
 	args := []string{
 		"--foreground",
@@ -151,21 +188,46 @@ func pastaArgs(shimPID int, fwds []pastaFwd, gw string) []string {
 	if gw != "" {
 		args = append(args, "--dns-forward", gw)
 	}
-	var tcp, udp []string
+	var tcpLocal, tcpPublic, udpLocal, udpPublic []string
 	for _, f := range fwds {
 		spec := fmt.Sprintf("%d:%d", f.Host, f.NS)
-		if f.Proto == pastaUDP {
-			udp = append(udp, spec)
-		} else {
-			tcp = append(tcp, spec)
+		switch {
+		case f.Proto == pastaUDP && f.Public:
+			udpPublic = append(udpPublic, spec)
+		case f.Proto == pastaUDP:
+			udpLocal = append(udpLocal, spec)
+		case f.Public:
+			tcpPublic = append(tcpPublic, spec)
+		default:
+			tcpLocal = append(tcpLocal, spec)
 		}
 	}
-	if len(tcp) > 0 {
-		args = append(args, "-t", strings.Join(tcp, ","))
+	// One pasta flag applies ONE listen address to its WHOLE comma list
+	// (fwd_rule_parse → parse_addrifname consumes "ADDR/" before the spec),
+	// so the loopback group and the public group need separate flags. The
+	// "auto" entry rides the loopback spec (FWD_SCAN + loopback bind).
+	if len(tcpLocal) > 0 {
+		args = append(args, "-t", "127.0.0.1/"+strings.Join(tcpLocal, ",")+",auto")
+	} else {
+		args = append(args, "-t", "127.0.0.1/auto")
 	}
-	if len(udp) > 0 {
-		args = append(args, "-u", strings.Join(udp, ","))
+	if len(tcpPublic) > 0 {
+		args = append(args, "-t", strings.Join(tcpPublic, ","))
 	}
+	// An explicit -u spec disables the UDP scan entirely (no "auto" entry);
+	// with nothing declared we pass "none" — both kill the measured UDP-auto
+	// inbound hole. "none" must appear alone for its protocol (conf.c dies on
+	// a previous rule), hence the split below.
+	if len(udpLocal) > 0 {
+		args = append(args, "-u", "127.0.0.1/"+strings.Join(udpLocal, ","))
+	}
+	if len(udpPublic) > 0 {
+		args = append(args, "-u", strings.Join(udpPublic, ","))
+	}
+	if len(udpLocal) == 0 && len(udpPublic) == 0 {
+		args = append(args, "-u", "none")
+	}
+	args = append(args, "-T", "none", "-U", "none", "--no-map-gw")
 	return args
 }
 
