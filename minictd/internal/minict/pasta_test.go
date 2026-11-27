@@ -67,6 +67,9 @@ func TestParsePastaPortsInvalid(t *testing.T) {
 		"same host two protos":  {"18080:80", "udp/18080:53"}, // valid! different proto
 		"range not supported":   {"18080-18090:80"},
 		"bad protocol":          {"sctp/18080:80"},
+		"unknown scope":         {"lan/18080:80"},
+		"unknown scope w/proto": {"tcp/inet/18080:80"},
+		"empty scope":           {"/18080:80"},
 		"spaces in spec":        {"18080 : 8080"},
 		"too many entries 17th": make17(),
 	}
