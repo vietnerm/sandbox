@@ -1,0 +1,64 @@
+# evidence — feat/215-template-registry (M3, D81) — 2026-11-27 02:36 UTC
+kernel: 5.10.134-013.15.kangaroo.al8.x86_64
+
+== make test (10 suites) ==
+### suite: test_isolation.sh
+=== summary: PASS=38 FAIL=0 ===
+### suite: test_isolation.sh — OK
+### suite: test_seccomp.sh
+=== summary: PASS=25 FAIL=0 ===
+### suite: test_seccomp.sh — OK
+### suite: test_netns.sh
+=== summary: PASS=7 FAIL=0 ===
+### suite: test_netns.sh — OK
+### suite: test_alpine.sh
+=== summary: PASS=9 FAIL=0 ===
+### suite: test_alpine.sh — OK
+### suite: test_debian.sh
+=== summary: PASS=0 FAIL=0 SKIP=1 ===
+### suite: test_debian.sh — OK
+### suite: test_escape_alpine.sh
+=== summary: PASS=38 FAIL=0 ===
+### suite: test_escape_alpine.sh — OK
+### suite: test_cve_check.sh
+=== summary: PASS=4 FAIL=0 ===
+### suite: test_cve_check.sh — OK
+### suite: test_pasta.sh
+=== summary: PASS=5 SKIP=6 FAIL=0 ===
+### suite: test_pasta.sh — OK
+### suite: test_stack.sh
+=== summary: PASS=8 FAIL=0 SKIP=0 ===
+### suite: test_stack.sh — OK
+### suite: test_cg.sh
+### suite: test_cg.sh — OK
+=== run-suites summary: 10 suites, failed: none ===
+
+== make test-web ==
+WEB6  down closes port and leaves no processes                 PASS
+=== summary: PASS=9 FAIL=0 ===
+
+== make test-minictd (MD69 mới) ==
+PORT0 D78 port ranges disjoint (md55/57 flake root cause)          PASS
+MD62  D73 gd3-pty: terminal start + echo round-trip + resize + cleanup PASS
+MD68  D80 stale-state: kill -9 → heal note + finished_at + reconcile log PASS
+MD69  D81 template registry: push/pull + gate + sha fail-closed + evil tar PASS
+=== summary: PASS=64 SKIP=8 FAIL=0 ===
+
+== unit go test ./cmd/sandbox/ ==
+ok  	github.com/vietnerm/sandbox/minictd/cmd/sandbox	(cached)
+
+== make perf-check ==
+cold_start_ms  :     1.80  (threshold 100)
+rss_kb         :     1096  (threshold 10240)
+disk_base_mb   :     2.05  (threshold 20)
+perf-check: PASS
+
+== host baseline ==
+21d5de2dc39f2ceb19e33f8cc124b311b57a48aea6d7703a9a98b93079d412bd  /etc/passwd
+223fe8564b60636bc738b6178d3ba9a50ef7d791266b0efae6363bb716e4c47f  /bin/bash
+a59f393bad5037644b89de64fe558ae6d5d1473c25c63022241e7c7019ad2f0c  /usr/bin/sudo
+(shadow: permission denied — như mọi phiên); ss -tlnp giống hệt evidence Phiên 40 (12600/19001/12700/19005/19006/81 = infra môi trường dev)
+
+== CVE ==
+
+Note: 68 kernel CVE(s) changed in this window are listed by text; those NVD has not analysed yet (no CPE/CVSS) are evaluated on the day NVD adds their CPE.

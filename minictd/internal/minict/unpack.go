@@ -280,6 +280,14 @@ func extractEntry(root int, hdr *tar.Header, tr *tar.Reader, buf []byte) error {
 	}
 }
 
+// SecureUnpack is the exported entry point to secureUnpack, so the client
+// layer (cmd/sandbox — Track M M3 template registry, issue #215/D81) can run
+// the SAME fail-closed extractor as tar:/oci: images without copying it.
+// Copied security code drifts (D25 lesson: the two seccomp copies needed a
+// dedicated drift test); importing the single implementation keeps one
+// source of truth. Guarantees: see secureUnpack above.
+func SecureUnpack(r io.Reader, dst string) error { return secureUnpack(r, dst) }
+
 // fdWriter adapts a raw fd to io.Writer without os.File (keeps the openat
 // guarantees visible end-to-end).
 type fdWriter int

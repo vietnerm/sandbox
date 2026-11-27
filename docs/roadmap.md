@@ -748,6 +748,15 @@
       tar độc (`../`, symlink) bị chặn.
    d. Ghi chú: kéo image OCI chuẩn đã có ở lớp client qua `crane` (D51), giữ nguyên
       hướng đó, không đưa logic OCI vào runtime.
+   → **Xong 2026-11-27 Phiên 42 (#215, PR #216, D81)**: client-only `template
+     push|pull` (daemon không đổi, zero-dep). Blob `.tar.gz` (deviation ghi rõ —
+     stdlib không có zstd, tiền lệ snapshot.go D57). sha256+size kiểm trước khi
+     giải nén (tamper → không để lại file); giải nén tái dùng `secureUnpack`
+     qua export `minict.SecureUnpack` (không copy — bài học drift D25); HTTPS
+     bắt buộc, HTTP chỉ `--insecure` + loopback; refuse overwrite `--out`;
+     push từ chối symlink tuyệt đối (D70). 14 unit test (httptest) + **MD69**
+     e2e (static server, tamper fail-closed, evil tar `../` bị chặn dù index
+     xác nhận sha).
 4. **M4 — Lớp cluster nhiều VPS** (mục tiêu owner 2026-11-17).
    a. **Chỉ tài liệu thiết kế, chờ owner duyệt trước khi code**: công cụ riêng (tên
       đề xuất), danh sách node + token, kết nối node qua SSH tunnel/WireGuard (`minictd`
