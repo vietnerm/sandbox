@@ -173,6 +173,8 @@ S4_PORT2=$(( 17500 + RANDOM % 200 ))
 UI_PORT=$(( 17800 + RANDOM % 200 ))  # 17800-17999
 OVL_PORT=$(( 18300 + RANDOM % 100 ))  # 18300-18399
 TPL_PORT=$(( 18500 + RANDOM % 200 ))  # 18500-18699 — MD69 template registry static server (#215, D81)
+P2PORT=$(( 18000 + RANDOM % 50 ))     # 18000-18049 — MD70 #220/D82: declared pasta forward (loopback-bound)
+P2PORT2=$(( 18050 + RANDOM % 50 ))    # 18050-18099 — MD70 #220/D82: public/ opt-in positive control
 PFPORT=$(( 18800 + RANDOM % 100 ))    # 18800-18899 — MD47-49 pasta forward (FPORT != 8080: auto-forward pasta không giải thích được) — D78: trước đây 17900-17989 trùng UI_PORT → UI daemon EADDRINUSE exit, MD55/57 curl nhầm mux 404 (run 45788203542 attempt 1); PORT0 cần biến này sớm
 UI_STATE="$WORK/ui-state"
 UI_DIR="$WORK/ui"
@@ -330,9 +332,9 @@ port0() {
     # interval: name min max (inclusive) — so với DÃỐ CỐ ĐỊNH (BASE..BASE+width-1),
     # KHÔNG phải giá trị random đã rút (UI_PORT=17919 không có nghĩa dải là
     # 17919-18118 — lần chạy trước tôi mắc đúng lỗi đó và PORT0 bắt được).
-    local -a NAMES=(REG S4 API UI S6 OVL TPL PFPORT WPORT2 WEB)
-    local -a MINS=( 15100 17300 17600 17800 18100 18300 18500 18800 18900 19000 )
-    local -a MAXS=( 15399 17499 17799 17999 18299 18399 18699 18899 18999 19899 )
+    local -a NAMES=(REG S4 API UI S6 P2P P2Q OVL TPL PFPORT WPORT2 WEB)
+    local -a MINS=( 15100 17300 17600 17800 18100 18000 18050 18300 18500 18800 18900 19000 )
+    local -a MAXS=( 15399 17499 17799 17999 18299 18049 18099 18399 18699 18899 18999 19899 )
     local i j bad=""
     for i in "${!NAMES[@]}"; do
         for j in "${!NAMES[@]}"; do
@@ -2157,6 +2159,42 @@ PYEOF
     echo "MD69 OK: push/pull roundtrip + gate + sha256 fail-closed + evil tar blocked"
 }
 run_case MD69 "D81 template registry: push/pull + gate + sha fail-closed + evil tar" pass md69
+
+# ---------- #220: pasta fail-closed — đo (commit 1) + assert (commit 2, D82) ----------
+#   MD70  (env-gated tun) qua DAEMON (pastaArgs — đường đi sản phẩm):
+#         P1 forward khai báo bind địa chỉ nào; P2 UDP auto inbound;
+#         P3 ns→host qua gateway mapping (API minictd là target);
+#         P4 egress Internet. Commit 1: diagnostic — in kết quả, luôn pass
+#         (kỳ vọng trên runner pre-fix: 0.0.0.0 + UDP auto + REACHED).
+#         Commit 2 (fix D82): các assert fail-closed + positive control
+#         public/.
+md70() {
+    [[ "$PASTA_OK" == 1 ]] || return 125
+    api POST /v1/sandboxes/md-sec220/remove >/dev/null 2>&1 || true
+    api POST /v1/run "{\"name\":\"md-sec220\",\"image\":\"base\",\"pasta_ports\":[\"$P2PORT:8080\"],\"cmd\":[\"/bin/sh\",\"-c\",\"mkdir -p /www && echo p220-ok > /www/index.html && httpd -p 8080 -h /www && nc -l -u -p 5353\"]}" > /dev/null || { echo "run md-sec220 failed: $(head -c 200 "$WORK/resp")"; return 1; }
+    sleep 2
+    local shim gw
+    shim=$(python3 -c "import json;print(json.load(open('$STATE/md-sec220/state.json')).get('pid',0))")
+    [[ "$shim" -gt 0 ]] || { echo "no shim pid"; return 1; }
+    gw=$(python3 -c "
+b = open('/proc/$shim/net/route').read().split('\n')
+for l in b[1:]:
+    f = l.split()
+    if len(f) > 2 and f[1] == '00000000':
+        h = f[2]
+        print('.'.join(str(int(h[i:i+2], 16)) for i in (6, 4, 2, 0)))
+        break")
+    echo "  [meas] GW=$GW P2PORT=$P2PORT shim=$shim"
+    echo "  [meas] P1 declared-bind : $(ss -tln 2>/dev/null | grep -E ":$P2PORT[[:space:]]" | head -1 | awk '{print $4}')"
+    echo "  [meas] P2 udp-auto-count: $(ss -lnu 2>/dev/null | grep -cE ':5353[[:space:]]')"
+    local p3=""
+    xv2 md-sec220 "{\"cmd\":[\"/bin/sh\",\"-c\",\"echo -e 'GET /healthz HTTP/1.0\\r\\n' | nc -w 2 $gw $API_PORT\"],\"timeout_s\":10}" || p3="(execv2 error)"
+    p3=$(jget 'repr(d.get("stdout","")).strip()[1:-1]')
+    echo "  [meas] P3 ns-to-host-API stdout: ${p3:-(empty = BLOCKED)}"
+    api POST /v1/sandboxes/md-sec220/remove >/dev/null 2>&1 || true
+    echo "MD70 OK (diagnostic run — see [meas] lines above)"
+}
+run_case MD70 "#220/D82 pasta fail-closed: measure bind/udp/ns-host/egress" pass md70
 
 run_case XSS  "D71 gd3-ui: console source no dangerouslySetInnerHTML/innerHTML" pass md55b_xss
 
