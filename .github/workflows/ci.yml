@@ -88,3 +88,35 @@ jobs:
           node-version: 22
       - name: make console (npm ci + tsc --noEmit + next build -> console/out)
         run: make console
+
+  # GĐ4 (owner 2026-11-27): standard GitHub runners expose /dev/kvm (probe
+  # PR #225: ubuntu-24.04 + 22.04, uid 1001 KVM_CREATE_VM OK). This job is
+  # the ONLY place KVM-gated tests must run for real — here they may not
+  # SKIP. Rootless: the udev rule only opens /dev/kvm to the runner user
+  # (manifest §5 one-time machine prerequisite); firecracker itself runs as
+  # the normal user.
+  kvm:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: enable /dev/kvm for the runner user (manifest §5 prerequisite)
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+      - name: KVM usable as normal user (fail if not — this job must not skip)
+        run: |
+          python3 - <<'PY'
+          import fcntl, os
+          fd = os.open("/dev/kvm", os.O_RDWR)
+          assert fcntl.ioctl(fd, 0xAE00) == 12, "KVM_GET_API_VERSION != 12"
+          fcntl.ioctl(fd, 0xAE01, 0)
+          print("KVM OK as uid", os.getuid())
+          PY
+      - name: firecracker package tests with KVM present
+        run: cd minictd && go test -count=1 -v ./internal/firecracker/...

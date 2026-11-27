@@ -332,8 +332,9 @@ Nếu tất cả xanh → ghi "DAY PASS" vào cuối daily-log. Nếu có đỏ 
 chốt ưu tiên 2026-11-27; manifest §8). Thứ tự chọn việc:
 1. `type:security` p0/p1 (hiện: #220 pasta).
 2. `docs/roadmap.md` "Giai đoạn 4" mục **1b** (làm được khi chưa có KVM), theo thứ tự a→g;
-   phần cần `/dev/kvm` thì env-gated SKIP, không giả lập kết quả.
-3. Có host KVM → mục 1 + 2 (code thật + benchmark).
+   phần cần `/dev/kvm` env-gated: SKIP ở job thường, chạy thật ở job `kvm`; không giả lập kết quả.
+3. Mục 1 + 2 (code thật + benchmark): CI đã có KVM (job `kvm` trong `ci.yml`, probe #225),
+   nên test cần `/dev/kvm` phải chạy thật ở job đó, không SKIP.
 Mọi việc khác (#218, #219, #221, Track M3e/M4/M5, desktop GUI) **hoãn tới sau GĐ4**: không
 nhận dù issue còn mở. Mục nào ghi "chờ owner duyệt" thì chỉ làm tài liệu thiết kế. Mỗi PR
 thêm tính năng ghi câu trả lời hai phép thử manifest §3.
