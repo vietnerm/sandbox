@@ -1,0 +1,41 @@
+# TEMPORARY probe (owner approved 2026-11-27): does the standard GitHub runner
+# expose /dev/kvm? PR will be closed, never merged.
+name: kvm-probe
+on:
+  pull_request:
+    paths: [".github/workflows/kvm-probe.yml"]
+permissions:
+  contents: read
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-22.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: host info
+        run: |
+          uname -a
+          echo "vmx/svm flags: $(grep -cE 'vmx|svm' /proc/cpuinfo)"
+          lscpu | grep -iE 'model name|virtualization|hypervisor' || true
+          ls -l /dev/kvm || echo "NO /dev/kvm"
+      - name: grant user access (udev rule, as documented for Android emulator)
+        run: |
+          if [ -e /dev/kvm ]; then
+            echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+            sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+            ls -l /dev/kvm
+          fi
+      - name: KVM API check as normal user (ioctl KVM_GET_API_VERSION, KVM_CREATE_VM)
+        run: |
+          python3 - <<'PY'
+          import fcntl, os
+          try:
+              fd = os.open("/dev/kvm", os.O_RDWR)
+          except OSError as e:
+              print("RESULT: cannot open /dev/kvm:", e); raise SystemExit(0)
+          ver = fcntl.ioctl(fd, 0xAE00)          # KVM_GET_API_VERSION
+          vm = fcntl.ioctl(fd, 0xAE01, 0)        # KVM_CREATE_VM
+          print("RESULT: KVM OK as uid", os.getuid(), "api", ver, "vm fd", vm)
+          PY
