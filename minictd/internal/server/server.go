@@ -5,6 +5,7 @@
 package server
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -14,6 +15,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -36,7 +38,16 @@ type Server struct {
 	log   *slog.Logger
 	uiDir string           // GĐ3 static console root (SetUIDir); "" = UI off
 	term  *terminalManager // GĐ3 mục 2 PTY sessions
+	// #218 (D84): extra allowed Origin hosts for the WS PTY endpoint (for
+	// proxied deployments where the listener Host is 127.0.0.1:port but the
+	// browser Origin carries the public domain). Empty → strict same-host.
+	wsOriginAllow []string
 }
+
+// SetWSOriginAllow registers extra Origin host[:port] values accepted by the
+// WS handshake (beyond the strict Origin==Host check). Called by main.go
+// for the --ws-origin flag.
+func (s *Server) SetWSOriginAllow(allow []string) { s.wsOriginAllow = allow }
 
 func New(store *minict.Store, token string, log *slog.Logger) *Server {
 	return &Server{store: store, token: token, log: log, term: newTerminalManager(store.MinictExecBin, log)}
@@ -68,6 +79,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /metrics", s.handleMetrics) // GĐ2 mục 7c (issue #168): same token auth as /v1/*
 	// GĐ3 mục 2 (issue #187): PTY terminal sessions
 	mux.HandleFunc("POST /v1/sandboxes/{name}/terminal", s.handleTerminalStart)
+	mux.HandleFunc("GET /v1/sandboxes/{name}/terminal/ws", s.handleTerminalWS) // #218/D84: must precede the {sid} pattern (literal wins)
 	mux.HandleFunc("GET /v1/sandboxes/{name}/terminal/{sid}/stream", s.handleTerminalStream)
 	mux.HandleFunc("POST /v1/sandboxes/{name}/terminal/{sid}/input", s.handleTerminalInput)
 	mux.HandleFunc("POST /v1/sandboxes/{name}/terminal/{sid}/resize", s.handleTerminalResize)
@@ -84,9 +96,20 @@ func (s *Server) Handler() http.Handler {
 	return s.withUI(api)
 }
 
+// isWSHandshakePath reports whether r targets the WebSocket PTY endpoint
+// (#218/D84). Browsers cannot attach an Authorization header to a WebSocket
+// handshake, so the endpoint authenticates with the daemon token delivered
+// as the FIRST text frame (constant-time compare, 5 s window, close 4401 on
+// failure) — the standard header check would break every browser client and
+// the frame check cannot be skipped by skipping the header check. The
+// Origin CSWSH gate + mask/size frame rules run in ws.go regardless.
+func isWSHandshakePath(p string) bool {
+	return strings.HasSuffix(p, "/terminal/ws")
+}
+
 func (s *Server) auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.token != "" {
+		if s.token != "" && !isWSHandshakePath(r.URL.Path) {
 			// constant-time compare: a byte-wise != leaks the matching
 			// prefix length through timing (R3, 2026-11-18)
 			got := []byte(r.Header.Get("Authorization"))
@@ -126,6 +149,16 @@ func (r *statusRecorder) WriteHeader(code int) {
 // execstream): their `w.(http.Flusher)` check failed and output sat in
 // the 4 KB response buffer until it filled (found by the GĐ3 console's
 // live-log panel, 2026-11-26).
+// Hijack forwards to the wrapped writer — the WS PTY endpoint (#218/D84)
+// upgrades behind this middleware; without the forward, `w.(http.Hijacker)`
+// failed and every handshake died with a 500.
+func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if h, ok := r.ResponseWriter.(http.Hijacker); ok {
+		return h.Hijack()
+	}
+	return nil, nil, errors.New("statusRecorder: underlying writer is not a Hijacker")
+}
+
 func (r *statusRecorder) Flush() {
 	if f, ok := r.ResponseWriter.(http.Flusher); ok {
 		if !r.wrote {
@@ -694,4 +727,13 @@ func (s *Server) handleTerminalResize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleTerminalWS — #218 (D84): bidirectional WebSocket PTY transport.
+// The handler only adapts the daemon (prepare → pid/env-file); the whole
+// lifecycle (auth frame → ready → pumps → close) lives in terminal_ws.go.
+func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
+	name := nameOf(r)
+	prepare := func() (int, string, error) { return s.store.PrepareTerminal(name) }
+	s.term.ServeWS(w, r, s.token, s.wsOriginAllow, prepare)
 }

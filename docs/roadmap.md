@@ -25,11 +25,26 @@
    alpine 9 + debian 9 + escape-alpine 35 + cve-check tool 4 + pasta 11 + stack 8 + cg 6 = 149,
    pipefail thật — issue #14; cg suite từ #4/D48 2026-11-20, env-gated cgroups v2;
    seccomp 25 từ #139/D59 2026-11-23 (SE1-4 allowlist); dev: 136 PASS + 13 SKIP env-blocked)
-   + `make test-web` + `make test-minictd` (74, MD0–MD71 + XSS — MD44–46 overlay D66, MD64/MD70 pasta/stack env-gated, MD71 bytes-wire #219 chạy mọi nơi) + lưu evidence vào
+   + `make test-web` + `make test-minictd` (75, MD0–MD72 + XSS — MD44–46 overlay D66, MD64/MD70 pasta/stack env-gated, MD72 ws-pty #218 env-gated pty) + lưu evidence vào
    `journal/YYYY-MM-DD/evidence/` + integrity check host
 5. Ghi `journal/YYYY-MM-DD/daily-log.md` (quy tắc thư mục: PROMPT.MD §10)
 
 ## Đã xong
+- [x] 2026-11-27 (phiên 45, SDDA): **#218 — WebSocket PTY hai chiều, binary
+  frames (D84)**. RFC 6455 stdlib-only (`server/ws.go` ~300 dòng: handshake
+  sha1+base64, mask bắt buộc §5.3 → 1002, payload ≤ 64 KB → 1009, không
+  extension/fragment) + endpoint `GET …/terminal/ws`: Origin gate 403 trước
+  upgrade (CSWSH; `--ws-origin` cho proxied), auth frame ĐẦU TIÊN trong 5 s
+  constant-time → 4401 trước khi spawn PTY, binary = stdin/stdout thô, text =
+  resize/close/ready/exit (exit code qua terminalSession.done), ping 30 s /
+  silence 60 s, backpressure 64 frames / stall 30 s → drop session, close →
+  SIGHUP + reap + **xoá env-file** (heal leak PTY path cũ). Console: WS-first,
+  fallback SSE+POST nguyên trạng (không cần seq number — POST tuần tự #217
+  giữ thứ tự). statusRecorder.Hijack() forward (middleware chặn hijack — bắt
+  khi test). MD72 e2e (evil-origin/wrong-token/unicode byte-exact/paste 10k/
+  parallel/RSS 0 KB/reap+env-file) + 13 Go unit + mutant 4/4 CAUGHT + 1
+  dead-code removal (M-ws3). Perf: RSS/session steady 0 KB; 0 dep mới; không
+  goroutine nền khi rảnh. (#218)
 - [x] 2026-11-27 (phiên 44, SDDA): **#219 — files bytes-wire: tên file dạng bytes
   (base64) + recovery (D83)**. Bug đo được: Go `json.Marshal` thay byte không phải
   UTF-8 bằng U+FFFD trên stdout JSON của execv2 (`t\xe1\xbaext.txt` → `t\ufffd\ufffdext.txt`)

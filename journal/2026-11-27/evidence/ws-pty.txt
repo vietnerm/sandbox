@@ -1,0 +1,63 @@
+# Evidence — #218/D84 WebSocket PTY (phiên 45, 2026-11-27)
+
+== make test-minictd (MD72 + toàn suite) ==
+MD67  D79 files execv2: injection-safe operand argv + stdin write + list      PASS
+MD68  D80 stale-state: kill -9 → heal note + finished_at + reconcile log      PASS
+MD69  D81 template registry: push/pull + gate + sha fail-closed + evil tar    PASS
+MD70  #220/D82 pasta fail-closed: ...                                          SKIP (env-gated tun)
+MD71  #219/D83 files bytes-wire: b64 operand argv, list 6 cột, recovery mv    PASS
+MD72  #218/D84 ws-pty: binary frames byte-exact + auth/origin gates + reap + RSS  PASS
+=== summary: PASS=66 SKIP=9 FAIL=0 ===
+
+== MD72 chi tiết (daemon thật + rootfs base, client RFC 6455 python stdlib) ==
+P1 evil-origin (http://evil.example.com)          → HTTP 403 TRƯỚC upgrade    OK
+P2 wrong-token frame                              → 101 rồi close 4401        OK
+P3 auth frame đúng (constant-time)                → {"type":"ready"}          OK
+P3b RSS/session — đo ở steady-state (session 2):  delta 0 KB (< 1024 KB)      OK
+   (session ĐẦU gồm warm-up Go runtime — không tính per-session cost)
+P4 unicode echo: printf 'tiếng Việt 😀 é'         → byte-exact, 0 U+FFFD      OK
+P5 paste 10 039 bytes unicode (head -c + wc -c)   → file size khớp            OK
+P6 cat output (ONLCR-aware \n→\r\n)               → byte-exact, 0 U+FFFD      OK
+P7 2 session song song (A/B markers)              → không lẫn output          OK
+P8 {"type":"close"} → SIGHUP → reap               → env-file 2 → 0            OK
+      (close frame hoặc EOF-sau-close đều chấp nhận — TCP teardown race)
+P9 host daemon sống, 0 minict-exec --pty leak                                 OK
+
+== Go unit (terminal_ws_test.go, mini RFC 6455 client tự viết) ==
+13/13 PASS — accept vector RFC §1.3 ("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="), plain GET 400,
+Origin lạ 403 / same-host 101 / --ws-origin allowlist, wrong-token 4401,
+missing-frame 4401, binary-first 4401, unmasked 1002, oversize 1009,
+auth-timeout 4401, echo binary byte-exact, close → reap + env-file removed.
+
+== Negative control (mutant, SCR) ==
+M-ws1 bỏ mask check (RFC §5.3)      → suite đỏ  CAUGHT
+M-ws2 bỏ Origin gate                → suite đỏ  CAUGHT
+M-ws3 bỏ pre-decode cap             → suite XANH → dead code (7-bit ≤ 127 < 64KB)
+                                      → xoá dead check (fix trong PR)
+M-ws3b bỏ post-decode cap           → suite đỏ  CAUGHT
+M-ws4 auth chấp nhận mọi token      → suite đỏ  CAUGHT
+Kết luận: 4/4 gate có tác lực + 1 dead-code removal nhờ mutant.
+
+== make test (10 suites) ==
+=== run-suites summary: 10 suites, failed: none ===  (rc=0)
+
+== make test-web / console ==
+make test-web: PASS 9/9
+make console-test: 15 pass / 0 fail
+npx tsc --noEmit: sạch · next build: prerendered static OK
+(console: WS-first + fallback SSE+POST giữ nguyên; binaryType arraybuffer;
+ onData → TextEncoder binary frames; output → term.write(Uint8Array))
+
+== CVE check (Bước 6) ==
+kernel: 5.10.134-013.15.kangaroo.al8.x86_64
+tools/cve-check.py rc=0 — 0 CVE mới ngoài watchlist
+  files journal/2026-11-27/cve/ws-pty.{md,json}
+(cve-kernel --discover dev timeout NVD như các phiên trước — live dựa cve-daily CI)
+
+== Host baseline (Bước 7) ==
+21d5de2d… /etc/passwd · 223fe856… /bin/bash · a59f393b… /usr/bin/sudo — unchanged
+listeners: 6 (infra sẵn có) — không listener lạ
+
+== Perf ==
+daemon hot path không đổi (WS chỉ active per-session); RSS/session đo được 0 KB
+steady (MD72 P7a) — trong ngân sách < 1 MB của issue; perf-guard CI sẽ đo lại.

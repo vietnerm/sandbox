@@ -29,6 +29,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -101,6 +102,15 @@ type terminalSession struct {
 	controlW  io.WriteCloser // write end of the control pipe (fd 3 in child)
 	startedAt time.Time
 	mu        sync.Mutex // guards stdin + controlW writes
+	// #218 (D84): done delivers the exit code exactly once when the
+	// minict-exec child is reaped (0–255, or -1 for a signal/unknown). The
+	// WS endpoint surfaces it as {"type":"exit"}; the SSE path never reads
+	// it (buffered chan → the send never blocks, GC takes it with the
+	// session). envFile is removed by the reaper — the execv2 cleanup
+	// pattern (os.Remove(envf)) applied to PTY sessions; the SSE path
+	// leaked one small env-file per session before this.
+	done    chan int
+	envFile string
 }
 
 // terminalManager owns all live PTY sessions.
@@ -220,6 +230,7 @@ func (tm *terminalManager) Start(name string, pid int, envFile, cwd string) (str
 		waitErr := cmd.Wait()
 		statusR.Close()
 		stdin.Close()
+		_ = os.Remove(envFile) // #218: never leak the env-file on a failed start
 		tail := stderrBuf.String()
 		if tm.log != nil {
 			tm.log.Error("terminal: pty start failed",
@@ -243,15 +254,31 @@ func (tm *terminalManager) Start(name string, pid int, envFile, cwd string) (str
 		stdout:    stdout,
 		controlW:  controlW,
 		startedAt: time.Now(),
+		done:      make(chan int, 1),
+		envFile:   envFile,
 	}
 
 	tm.mu.Lock()
 	tm.sessions[sid] = sess
 	tm.mu.Unlock()
 
-	// Reap in the background when the process exits.
+	// Reap in the background when the process exits: record the exit code
+	// (#218 — WS {"type":"exit"}) and remove the env-file (execv2 cleanup
+	// pattern; the PTY path leaked it before #218).
 	go func() {
-		_ = cmd.Wait()
+		code := 0
+		if werr := cmd.Wait(); werr != nil {
+			var ee *exec.ExitError
+			if errors.As(werr, &ee) {
+				code = ee.ExitCode()
+			} else {
+				code = -1
+			}
+		}
+		sess.done <- code
+		if sess.envFile != "" {
+			_ = os.Remove(sess.envFile)
+		}
 		tm.mu.Lock()
 		delete(tm.sessions, sid)
 		tm.mu.Unlock()
@@ -311,6 +338,17 @@ func (tm *terminalManager) Input(sid string, data []byte) error {
 	defer sess.mu.Unlock()
 	_, err := sess.stdin.Write(data)
 	return err
+}
+
+// snapshotSessions returns the count of live sessions (test support, #218).
+func (tm *terminalManager) snapshotSessions() []string {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	out := make([]string, 0, len(tm.sessions))
+	for id := range tm.sessions {
+		out = append(out, id)
+	}
+	return out
 }
 
 // Resize sends a TIOCSWINSZ to the PTY via the control pipe.

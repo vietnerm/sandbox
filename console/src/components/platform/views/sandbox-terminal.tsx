@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 import { get, post, sse, type Sandbox as ApiSandbox } from "@/console/api";
+import { getToken } from "@/console/minictd";
 import { navigate as go } from "@/console/ui";
 import { DemoShell } from "@/lib/demo-shell";
 import { ExecShell } from "@/lib/exec-shell";
@@ -174,6 +175,9 @@ export function TerminalView({ id }: { id: string }) {
   // POST input requests must be serialized; concurrent key chunks can arrive
   // out of order, which corrupts UTF-8/IME text in the PTY.
   const ptyInputQueueRef = useRef<Promise<void>>(Promise.resolve());
+  // #218 (D84): minictd WebSocket PTY — binary stdin/stdout frames, one
+  // connection per session; SSE+POST stays as the automatic fallback.
+  const ptyWsRef = useRef<WebSocket | null>(null);
 
   const running = (sandbox?.status ?? "Running") === "Running";
 
@@ -264,7 +268,16 @@ export function TerminalView({ id }: { id: string }) {
 
       term.onData((d) => {
         if (liveWsRef.current && wsRef.current?.readyState === WebSocket.OPEN) wsRef.current.send(d);
-        else if (ptySidRef.current) {
+        else if (ptyWsRef.current?.readyState === WebSocket.OPEN) {
+          // #218: keystrokes/IME/paste go as BINARY frames — raw UTF-8 bytes,
+          // one frame per chunk, zero HTTP round-trips (SSE+POST fallback
+          // below keeps the #217 serial queue).
+          try {
+            ptyWsRef.current.send(new TextEncoder().encode(d));
+          } catch {
+            /* closing — fallback routing happens on close */
+          }
+        } else if (ptySidRef.current) {
           // GĐ3 mục 2: PTY mode — serialize raw input POSTs so IME/UTF-8
           // chunks cannot overtake one another on the network.
           const sid = ptySidRef.current;
@@ -282,6 +295,12 @@ export function TerminalView({ id }: { id: string }) {
         if (liveWsRef.current && ws?.readyState === WebSocket.OPEN) {
           try {
             ws.send(JSON.stringify({ type: "resize", cols, rows }));
+          } catch {
+            /* ignore */
+          }
+        } else if (ptyWsRef.current?.readyState === WebSocket.OPEN) {
+          try {
+            ptyWsRef.current.send(JSON.stringify({ type: "resize", rows, cols }));
           } catch {
             /* ignore */
           }
@@ -344,7 +363,115 @@ export function TerminalView({ id }: { id: string }) {
          frame (session died between start and stream, the owner-reported
          bug), switch to line-mode with a visible notice instead of leaving
          a blank terminal. */
+      /* #218 (D84): attach the minictd WebSocket PTY — binary frames both
+         directions, auth token as the FIRST text frame (browsers cannot set
+         Authorization on a WS handshake). Resolves true only after the
+         server's {"type":"ready"}; any failure before that falls back. */
+      const attachPtyWs = (term: import("@xterm/xterm").Terminal): Promise<boolean> =>
+        new Promise((resolve) => {
+          let settled = false;
+          let ready = false;
+          let opened = false;
+          let ws: WebSocket | null = null;
+          const proto = location.protocol === "https:" ? "wss" : "ws";
+          try {
+            ws = new WebSocket(`${proto}://${location.host}/v1/sandboxes/${id}/terminal/ws`);
+          } catch {
+            resolve(false);
+            return;
+          }
+          ws.binaryType = "arraybuffer";
+          const bail = (notice: string) => {
+            if (settled) return;
+            settled = true;
+            if (notice) termWrite(notice);
+            try {
+              ws?.close();
+            } catch {
+              /* ignore */
+            }
+            ptyWsRef.current = null;
+            resolve(false);
+          };
+          const openTimer = window.setTimeout(() => bail("\x1b— WS unavailable (open timeout 2s) — fallback to SSE —\x1b\r\n"), 2000);
+          ws.onopen = () => {
+            opened = true;
+            window.clearTimeout(openTimer);
+            try {
+              ws?.send(JSON.stringify({ type: "auth", token: getToken() }));
+            } catch {
+              bail("");
+            }
+          };
+          ws.onmessage = (ev) => {
+            if (typeof ev.data === "string") {
+              let msg: { type?: string; code?: number; msg?: string };
+              try {
+                msg = JSON.parse(ev.data);
+              } catch {
+                return;
+              }
+              if (msg.type === "ready") {
+                ready = true;
+                settled = true;
+                ptyWsRef.current = ws;
+                termWrite(`\x1b— PTY attached (WebSocket binary, ${term.cols}×${term.rows}) —\x1b\r\n`);
+                try {
+                  ws?.send(JSON.stringify({ type: "resize", rows: term.rows, cols: term.cols }));
+                } catch {
+                  /* initial resize is cosmetic; onResize covers the rest */
+                }
+                resolve(true);
+                return;
+              }
+              if (msg.type === "exit") {
+                if (ptyWsRef.current === ws) ptyWsRef.current = null;
+                termWrite(`\r\n\x1b— PTY exited (code ${msg.code ?? "?"}) — click Restart session —\x1b\r\n`);
+                setConn("closed");
+                try {
+                  ws?.close();
+                } catch {
+                  /* ignore */
+                }
+                return;
+              }
+              if (msg.type === "error") {
+                if (!ready) bail(`\x1b— WS PTY error: ${msg.msg ?? "?"} — fallback to SSE —\x1b\r\n`);
+                else termWrite(`\r\n\x1b— PTY error: ${msg.msg ?? "?"} —\x1b\r\n`);
+                return;
+              }
+              return;
+            }
+            // binary frame = raw PTY output bytes — written as bytes, never
+            // decoded to string (UTF-8 boundary-safe across chunks)
+            term.write(new Uint8Array(ev.data as ArrayBuffer));
+          };
+          ws.onclose = () => {
+            window.clearTimeout(openTimer);
+            if (!ready) {
+              bail(opened ? "\x1b— WS closed before ready — fallback to SSE —\x1b\r\n" : "");
+              return;
+            }
+            if (ptyWsRef.current === ws) ptyWsRef.current = null;
+            termWrite(`\r\n\x1b— PTY disconnected — click Restart session —\x1b\r\n`);
+            setConn("closed");
+          };
+          ws.onerror = () => {
+            if (!ready) bail("");
+          };
+        });
+
       if (!isDemo()) {
+        // ── #218 (D84): try the WebSocket PTY first ─────────────────────
+        // Open ≤ 2 s + auth frame + ready text; ANY failure before `ready`
+        // (open timeout, 4401, close) falls through to the SSE+POST path
+        // below with a visible notice. After `ready` the WS owns the
+        // session until close/exit.
+        const wsOk = await attachPtyWs(term);
+        if (wsOk) {
+          setConn("live");
+          return;
+        }
         try {
           const { session_id: sid } = await post<{ session_id: string }>(`/v1/sandboxes/${id}/terminal`);
           if (sid) {
@@ -460,6 +587,22 @@ export function TerminalView({ id }: { id: string }) {
       ptyCleanupRef.current?.();
       ptyCleanupRef.current = null;
       ptySidRef.current = null;
+      // #218: close the WS PTY — {"type":"close"} text then TCP close; the
+      // daemon SIGHUPs + reaps the PTY and removes the env-file either way.
+      const pws = ptyWsRef.current;
+      ptyWsRef.current = null;
+      if (pws) {
+        try {
+          if (pws.readyState === WebSocket.OPEN) pws.send(JSON.stringify({ type: "close" }));
+        } catch {
+          /* ignore */
+        }
+        try {
+          pws.close();
+        } catch {
+          /* ignore */
+        }
+      }
       shellRef.current = null;
       termRef.current?.dispose();
       termRef.current = null;

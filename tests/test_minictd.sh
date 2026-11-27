@@ -2310,6 +2310,307 @@ md71() {
 }
 run_case MD71 "#219/D83 files bytes-wire: b64 operand argv, list 6 cột, recovery mv" pass md71
 
+# ---------- #218: WebSocket PTY hai chiều — binary frames (D84) ----------
+#   MD72  (env-gated như MD62 — cần /dev/ptmx trong instance) đúng contract
+#         #218: handshake RFC 6455 + auth frame 5s + Origin gate 403 +
+#         binary stdin/stdout byte-exact (unicode/paste 10k) + 2 session
+#         song song + close → reap + env-file dọn + RSS/session < 1 MB.
+md72() {
+    local f="md-wspty"
+    api POST /v1/sandboxes/$f/remove >/dev/null 2>&1 || true
+    api POST /v1/run '{"name":"md-wspty","image":"base","cmd":["/bin/sh","-c","sleep 300"]}' >/dev/null || return 1
+    sleep 0.5
+    mkdir -p "$WORK/md72"
+    cat > "$WORK/md72/md72_wsclient.py" <<'MD72CL_EOF'
+#!/usr/bin/env python3
+# MD72 client — minimal RFC 6455 WS client, stdlib only (socket + base64).
+# Client frames MUST be masked (server closes 1002 otherwise); server frames
+# are unmasked. Auto-pongs server pings (browser parity).
+import base64, os, socket, struct, sys, time
+
+class WSClient:
+    def __init__(self, host, port, path, token=None, origin=None, timeout=15):
+        self.s = socket.create_connection((host, port), timeout=timeout)
+        self.s.settimeout(timeout)
+        self.buf = b""
+        key = base64.b64encode(os.urandom(16)).decode()
+        req = (f"GET {path} HTTP/1.1\r\nHost: {host}:{port}\r\n"
+               "Upgrade: websocket\r\nConnection: Upgrade\r\n"
+               f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n")
+        if origin is not None:
+            req += f"Origin: {origin}\r\n"
+        req += "\r\n"
+        self.s.sendall(req.encode())
+        # read until \r\n\r\n
+        while b"\r\n\r\n" not in self.buf:
+            chunk = self.s.recv(4096)
+            if not chunk:
+                raise ConnectionError("handshake EOF")
+            self.buf += chunk
+        head, self.buf = self.buf.split(b"\r\n\r\n", 1)
+        self.status = int(head.split(b" ")[1])
+        self.headers = {}
+        for line in head.split(b"\r\n")[1:]:
+            if b":" in line:
+                k, v = line.split(b":", 1)
+                self.headers[k.strip().lower().decode()] = v.strip().decode()
+        self.closed = None
+        if self.status == 101:
+            if token is not None:
+                self.send_text('{"type":"auth","token":%s}' % __import__("json").dumps(token))
+
+    def _read_exact(self, n):
+        while len(self.buf) < n:
+            chunk = self.s.recv(4096)
+            if not chunk:
+                raise ConnectionError("EOF")
+            self.buf += chunk
+        out, self.buf = self.buf[:n], self.buf[n:]
+        return out
+
+    def recv_frame(self):
+        h = self._read_exact(2)
+        op = h[0] & 0x0F
+        n = h[1] & 0x7F
+        if n == 126:
+            n = struct.unpack(">H", self._read_exact(2))[0]
+        elif n == 127:
+            n = struct.unpack(">Q", self._read_exact(8))[0]
+        payload = self._read_exact(n)
+        if op == 0x9:  # ping → pong (browser parity)
+            self.send_frame(0xA, payload)
+            return self.recv_frame()
+        if op == 0x8:
+            self.closed = struct.unpack(">H", payload[:2])[0] if len(payload) >= 2 else 0
+            return 0x8, payload
+        return op, payload
+
+    def send_frame(self, op, payload):
+        mask = os.urandom(4)
+        hdr = bytes([0x80 | op])
+        n = len(payload)
+        if n <= 125:
+            hdr += bytes([0x80 | n])
+        elif n <= 0xFFFF:
+            hdr += bytes([0x80 | 126]) + struct.pack(">H", n)
+        else:
+            hdr += bytes([0x80 | 127]) + struct.pack(">Q", n)
+        hdr += mask
+        masked = bytes(b ^ mask[i & 3] for i, b in enumerate(payload))
+        self.s.sendall(hdr + masked)
+
+    def send_text(self, s):
+        self.send_frame(0x1, s.encode())
+    def send_bin(self, b):
+        self.send_frame(0x2, b)
+
+    def wait_text(self, want_type, timeout=15):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            op, payload = self.recv_frame()
+            if op == 0x1:
+                d = __import__("json").loads(payload.decode())
+                if d.get("type") == want_type:
+                    return d
+        raise TimeoutError(f"no {want_type} frame")
+
+    def drain_until(self, needle, timeout=15, cap=2_000_000):
+        # Collects frames until `needle` appears; on timeout RETURNS what was
+        # collected (callers check membership) — never raises. Post-match
+        # bytes stay in self.buf for the next drain.
+        acc = self.buf
+        deadline = time.time() + timeout
+        self.buf = b""
+        while needle not in acc and time.time() < deadline and len(acc) < cap:
+            try:
+                op, payload = self.recv_frame()
+            except (TimeoutError, ConnectionError, OSError):
+                break
+            if op == 0x2:
+                acc += payload
+            elif op == 0x8:
+                self.closed = True
+                break
+        if needle in acc:
+            i = acc.index(needle) + len(needle)
+            self.buf = acc[i:]
+        return acc
+
+    def close(self, code=1000):
+        try:
+            self.send_frame(0x8, struct.pack(">H", code))
+        except OSError:
+            pass
+        try:
+            self.s.close()
+        except OSError:
+            pass
+
+MD72CL_EOF
+    cat > "$WORK/md72/md72_main.py" <<'MD72MAIN_EOF'
+#!/usr/bin/env python3
+# MD72 main — WS PTY e2e qua daemon thật. Client: scripts MD72 client (stdlib).
+import json, os, sys, time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from md72_wsclient import WSClient
+
+HOST, PORT, TOKEN, STATE, DPID = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5]
+PATH = "/v1/sandboxes/md-wspty/terminal/ws"
+
+def daemon_pid():
+    # DPID của harness có thể stale (MD21 restart daemon giữa suite) — resolve
+    # theo port để RSS đo đúng daemon đang serve API
+    import subprocess
+    out = subprocess.run(["pgrep", "-f", f"minictd --listen 127.0.0.1:{PORT}"],
+                         capture_output=True, text=True)
+    pids = [p for p in out.stdout.split() if p.strip()]
+    return int(pids[0]) if pids else None
+
+def daemon_rss_kb():
+    pid = daemon_pid()
+    if not pid:
+        return -1
+    try:
+        with open(f"/proc/{pid}/status") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1])
+    except FileNotFoundError:
+        return -1
+    return -1
+
+def wait_prompt(cl, timeout=15, marker=b"# "):
+    return cl.drain_until(marker, timeout=timeout)
+
+# (1) evil Origin → HTTP 403 TRƯỚC upgrade
+evil = WSClient(HOST, PORT, PATH, origin="http://evil.example.com")
+assert evil.status == 403, f"evil origin → {evil.status}, want 403"
+print("P1 evil-origin 403 OK")
+
+# (2) wrong token → 101 rồi close 4401
+bad = WSClient(HOST, PORT, PATH, token="WRONG-TOKEN")
+assert bad.status == 101, f"handshake → {bad.status}, want 101"
+op, payload = bad.recv_frame()
+assert op == 0x8 and len(payload) >= 2 and int.from_bytes(payload[:2], "big") == 4401, \
+    f"wrong token close: op={op} payload={payload[:8]!r}"
+print("P2 wrong-token 4401 OK")
+
+# (3) auth đúng → ready; đo RSS trước/sau
+rss_before = min(daemon_rss_kb(), daemon_rss_kb())
+ws = WSClient(HOST, PORT, PATH, token=TOKEN)
+assert ws.status == 101
+ws.wait_text("ready")
+print("P3 auth+ready OK")
+
+# RSS/session đo ở steady-state (P7, session 2) — session ĐẦU gồm warm-up
+# Go runtime (heap/GC/goroutine stacks) không tính per-session cost.
+
+# (4) unicode echo byte-khít
+wait_prompt(ws)
+uni = "tiếng Việt 😀 é"
+ws.send_bin(f"printf '{uni}\\n'\r".encode())
+out = ws.drain_until("é\r\n".encode() if False else uni.encode(), timeout=20)
+assert uni.encode() in out, f"unicode echo lost: {out[-200:]!r}"
+assert b"\xef\xbf\xbd" not in out, "U+FFFD in PTY output — mangling!"
+print("P4 unicode echo byte-exact OK")
+
+# (5) paste 10k unicode → head -c N (đếm byte khớp CẢ HAI chiều)
+sample = "tiếng😀".encode()          # 11 bytes, multibyte
+N = (10000 // len(sample)) * len(sample)   # ~9999 → round to sample multiple
+payload = (sample * (N // len(sample)))
+assert len(payload) == N
+chunks = [payload[i:i+255] + b"\n" for i in range(0, len(payload), 255)]
+total = sum(len(c) for c in chunks)
+# HEAD-DONE sentinel cùng dòng — chỉ xuất hiện SAU khi head đọc đủ N bytes,
+# nên drain chính xác đồng bộ hoá (prompt cũ trong leftover không gây nhiễu)
+ws.send_bin(f"head -c {total} > /tmp/p10k; echo HEAD-DONE\r".encode())
+time.sleep(0.3)
+for c in chunks:
+    ws.send_bin(c)
+# needle đầy dòng — echo của lệnh chứa "echo HEAD-DONE" nhưng không thể
+# chứa "\r\nHEAD-DONE\r\n" (trước nó là "echo ") → chỉ khớp output thật
+out = ws.drain_until(b"\r\nHEAD-DONE\r\n", timeout=25)
+assert b"HEAD-DONE" in out, f"head never finished: {out[-160:]!r}"
+ws.send_bin(b"wc -c < /tmp/p10k\r")
+out = ws.drain_until(str(total).encode() + b"\r\n", timeout=20)
+assert str(total).encode() in out, f"wc -c mismatch: want {total}, got {out[-160:]!r}"
+print(f"P5 paste {total} bytes (10k unicode) → file size khớp OK")
+
+# (6) output path byte-exact: cat file → so nguyên payload
+ws.send_bin(b"cat /tmp/p10k; echo MD72END\r")
+out = ws.drain_until(b"\r\nMD72END\r\n", timeout=20)
+# file = từng chunk (255 byte payload + \n); tty ONLCR ánh xạ \n → \r\n
+# trên output — so với đúng chuỗi file đã translate
+expected = b"".join(chunks).replace(b"\n", b"\r\n")
+idx = out.find(expected)
+assert idx >= 0, f"payload missing from cat output (first 100: {out[:100]!r})"
+assert out[idx:idx+len(expected)] == expected, "output payload bytes differ"
+assert b"\xef\xbf\xbd" not in out, "U+FFFD in cat output"
+print("P6 cat output byte-exact OK")
+
+# (7) 2 session song song không lẫn output
+rss_steady_before = min(daemon_rss_kb(), daemon_rss_kb())
+ws2 = WSClient(HOST, PORT, PATH, token=TOKEN)
+ws2.wait_text("ready")
+time.sleep(2)
+rss_steady_after = max(daemon_rss_kb(), daemon_rss_kb(), daemon_rss_kb())
+delta = rss_steady_after - rss_steady_before
+assert delta < 1024, f"RSS/session (steady, session 2) delta {delta} KB ≥ 1 MB"
+print(f"P7a RSS/session steady delta {delta} KB (< 1024) OK")
+wait_prompt(ws)
+wait_prompt(ws2)
+ws.send_bin(b"echo MD72-A\r")
+ws2.send_bin(b"echo MD72-B\r")
+a = ws.drain_until(b"\r\nMD72-A\r\n", timeout=20)
+b = ws2.drain_until(b"\r\nMD72-B\r\n", timeout=20)
+assert b"MD72-A" in a and b"MD72-B" not in a, f"cross-contamination in A: {a[-120:]!r}"
+assert b"MD72-B" in b and b"MD72-A" not in b, f"cross-contamination in B: {b[-120:]!r}"
+print("P7 two parallel sessions isolated OK")
+
+# (8) close → SIGHUP+reap → env-file removed
+env_dir = os.path.join(STATE, "md-wspty", "exec-env")
+before_env = len([f for f in os.listdir(env_dir) if f.endswith(".env")]) if os.path.isdir(env_dir) else -1
+ws.send_text('{"type":"close"}')
+ws2.send_text('{"type":"close"}')
+# đợi close frame — server có thể đóng TCP ngay sau close frame (RST trước
+# khi client đọc kịp) → chấp nhận CẢ close(1000) lẫn EOF sạch sau close request
+code = None
+deadline = time.time() + 10
+try:
+    while time.time() < deadline:
+        o2, p2 = ws.recv_frame()
+        if o2 == 0x8:
+            code = int.from_bytes(p2[:2], "big") if len(p2) >= 2 else 0
+            break
+except ConnectionError:
+    code = "EOF-after-close"  # TCP teardown raced the close frame — chấp nhận
+assert code in (1000, "EOF-after-close"), f"unexpected close: {code}"
+print(f"P8 close handshake: {code}")
+deadline = time.time() + 10
+while time.time() < deadline:
+    left = [f for f in os.listdir(env_dir) if f.endswith(".env")] if os.path.isdir(env_dir) else ["?"]
+    if not left:
+        break
+    time.sleep(0.3)
+assert not left, f"env-files not cleaned: {left} (before={before_env})"
+print(f"P8 close→reap→env-file removed OK (before={before_env} → 0)")
+
+print("MD72-WS-ALL-OK")
+
+MD72MAIN_EOF
+    python3 "$WORK/md72/md72_main.py" 127.0.0.1 "$API_PORT" "$TOKEN" "$STATE" "$DPID" || return 1
+    # (9) host sống + không còn minict-exec --pty nào của instance
+    api GET /healthz >/dev/null || { echo "host daemon chết?!"; return 1; }
+    local npty; npty=$(pgrep -f "minict-exec --pty" | wc -l)
+    [[ "$npty" -eq 0 ]] || { echo "minict-exec --pty leak: $npty còn sống"; return 1; }
+    api POST /v1/sandboxes/$f/remove >/dev/null 2>&1 || true
+    echo "MD72 OK: ws-pty binary frames byte-exact (unicode/paste 10k/parallel) + auth/origin/mask gates + reap + RSS"
+}
+run_case MD72 "#218/D84 ws-pty: binary frames byte-exact + auth/origin gates + reap + RSS" skip md72
+
+
+
 run_case XSS  "D71 gd3-ui: console source no dangerouslySetInnerHTML/innerHTML" pass md55b_xss
 
 echo "=== summary: PASS=$PASS SKIP=$SKIPPED FAIL=$FAIL ==="
