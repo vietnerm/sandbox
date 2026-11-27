@@ -1295,8 +1295,8 @@ pasta_wait_fwd() { # polls the declared forward until it answers
     if [[ "$_ok" != 1 ]]; then
         echo "curl $PFPORT failed (attach/forward)"; tail -5 "$STATE/md-pasta/pasta.log" 2>/dev/null
         mkdir -p "$REPO/ci-evidence"
-        cp "$STATE/md-pasta/pasta.log" "$REPO/ci-evidence/md47-pasta.log" 2>/dev/null || true
-        cp "$STATE/md-sec220/pasta.log" "$REPO/ci-evidence/md70-pasta.log" 2>/dev/null || true
+        cp "$STATE/md-pasta/pasta.log" "$REPO/ci-evidence/md47-pasta.txt" 2>/dev/null || true
+        cp "$STATE/md-sec220/pasta.log" "$REPO/ci-evidence/md70-pasta.txt" 2>/dev/null || true
         return 1
     fi
 }
