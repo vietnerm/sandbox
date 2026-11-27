@@ -31,7 +31,15 @@ func TestJailSpecRunSpec(t *testing.T) {
 		t.Errorf("SeccompProfile: got %q, want \"\" (D11 blocklist default)", rs.SeccompProfile)
 	}
 
+	// wantVol is host-dependent: on a KVM host NewJailSpec adds the /dev/kvm
+	// bind (kvm CI runner). Pin BOTH postures deterministically: build the
+	// expectation from the same gate the spec uses (first version pinned 2
+	// volumes and failed on the kvm job — CI run of d752138), and assert a
+	// WithKVM-forced spec always carries the bind (runs on every host).
 	wantVol := []string{bin + ":" + FcBinInJail + ":ro", state + ":" + FcStateInJail}
+	if spec.WithKVM {
+		wantVol = append(wantVol, "/dev/kvm:"+KVMInJail)
+	}
 	if len(rs.Volumes) != len(wantVol) {
 		t.Fatalf("Volumes: got %v, want %v", rs.Volumes, wantVol)
 	}
@@ -40,11 +48,20 @@ func TestJailSpecRunSpec(t *testing.T) {
 			t.Errorf("Volumes[%d]: got %q, want %q", i, rs.Volumes[i], w)
 		}
 	}
-
-	if spec.WithKVM {
-		t.Log("host HAS /dev/kvm — KVM bind assertions covered by TestJailSpecKVMDevice")
-	} else if strings.Join(rs.Volumes, " ") != strings.Join(wantVol, " ") {
-		t.Error("no-KVM host must not add any extra bind")
+	for _, v := range rs.Volumes {
+		if !spec.WithKVM && strings.Contains(v, "/dev/kvm") {
+			t.Errorf("no-KVM host must not add the /dev/kvm bind, got %v", rs.Volumes)
+		}
+	}
+	forced := JailSpec{ID: "kforce", StateDir: state, BinDir: bin, WithKVM: true}
+	got := false
+	for _, v := range forced.RunSpec().Volumes {
+		if v == "/dev/kvm:"+KVMInJail {
+			got = true
+		}
+	}
+	if !got {
+		t.Errorf("WithKVM spec must always carry /dev/kvm bind, got %v", forced.RunSpec().Volumes)
 	}
 
 	// The VMM runs the static binary from the ro bind and puts the API
