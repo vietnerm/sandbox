@@ -364,3 +364,11 @@ Trạng thái : DAY PASS — 1 issue GĐ4 trọn vòng research→develop→muta
              kvm job pin volume); 3 nhánh rác dọn sạch (2 DELETE_MERGED +
              1 DROP có archive tag)
 ============================================
+
+## Phiên 46 — SDDA — GĐ4 1b.b + 1b.c + 1b.d (3 PR merged)
+
+### 1b.b — Rootfs ext4 (#235/PR#236 squash acd50da): mkfs.ext4 -d + e2fsck + debugfs, size limit, 4 tests.
+### 1b.c — TAP netns (#237/PR#238 squash 0630f6b): CreateTAP/DeleteTAP/Verify via nsenter+ip, 4 tests SKIP dev.
+### 1b.d — Vsock protocol (#239/PR#240 squash ad04e49): length-prefixed JSON, Request/Response, 5 ops, 6 tests PASS.
+
+GĐ4 1b: a(xong#231) b(xong#235) c(xong#237) d(xong#239) e(kế tiếp) f(xong#225) g(sau e).
