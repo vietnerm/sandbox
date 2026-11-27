@@ -123,6 +123,9 @@
 #   MD60  D71 gd3-ui: --ui-dir dir without index.html -> daemon exit != 0
 #   XSS   D71 gd3-ui: console source no dangerouslySetInnerHTML/innerHTML
 #         (xterm write() safe)
+#   MD69  #215/D81 Track M M3: template registry push/pull e2e qua static
+#         server local — roundtrip, http gate, sha256 mismatch fail-closed,
+#         tar độc "../" bị chặn (index xác nhận sha vẫn vậy)
 #
 # Exit code: 0 if all expected results hold, 1 otherwise.
 set -u
@@ -169,6 +172,7 @@ S4_PORT2=$(( 17500 + RANDOM % 200 ))
 # GĐ3 mục 4 (issue #177, D71): UI security e2e — separate daemon with --ui-dir
 UI_PORT=$(( 17800 + RANDOM % 200 ))  # 17800-17999
 OVL_PORT=$(( 18300 + RANDOM % 100 ))  # 18300-18399
+TPL_PORT=$(( 18500 + RANDOM % 200 ))  # 18500-18699 — MD69 template registry static server (#215, D81)
 PFPORT=$(( 18800 + RANDOM % 100 ))    # 18800-18899 — MD47-49 pasta forward (FPORT != 8080: auto-forward pasta không giải thích được) — D78: trước đây 17900-17989 trùng UI_PORT → UI daemon EADDRINUSE exit, MD55/57 curl nhầm mux 404 (run 45788203542 attempt 1); PORT0 cần biến này sớm
 UI_STATE="$WORK/ui-state"
 UI_DIR="$WORK/ui"
@@ -203,6 +207,10 @@ cleanup() {
     # repo-scoped argv pattern instead (measured leak: 1 ocireg per suite
     # run without this, Phiên 16).
     pkill -TERM -f -- "tools/bin/ocireg $REG_PORT" 2>/dev/null || true
+    # MD69 (#215/D81): static template registry server started inside the
+    # run_case command-substitution subshell — kill by unique argv pattern
+    # (same reason as ocireg above).
+    pkill -TERM -f -- "http.server $TPL_PORT" 2>/dev/null || true
     # D66 overlay fallback state dir lives OUTSIDE $WORK (HOME-fs, see the
     # probe block) — clean it too, plus any daemon left on it.
     pkill -TERM -f -- ".minictd-ovl-test" 2>/dev/null || true
@@ -322,9 +330,9 @@ port0() {
     # interval: name min max (inclusive) — so với DÃỐ CỐ ĐỊNH (BASE..BASE+width-1),
     # KHÔNG phải giá trị random đã rút (UI_PORT=17919 không có nghĩa dải là
     # 17919-18118 — lần chạy trước tôi mắc đúng lỗi đó và PORT0 bắt được).
-    local -a NAMES=(REG S4 API UI S6 OVL PFPORT WPORT2 WEB)
-    local -a MINS=( 15100 17300 17600 17800 18100 18300 18800 18900 19000 )
-    local -a MAXS=( 15399 17499 17799 17999 18299 18399 18899 18999 19899 )
+    local -a NAMES=(REG S4 API UI S6 OVL TPL PFPORT WPORT2 WEB)
+    local -a MINS=( 15100 17300 17600 17800 18100 18300 18500 18800 18900 19000 )
+    local -a MAXS=( 15399 17499 17799 17999 18299 18399 18699 18899 18999 19899 )
     local i j bad=""
     for i in "${!NAMES[@]}"; do
         for j in "${!NAMES[@]}"; do
@@ -2062,6 +2070,93 @@ md68() {
     echo "MD68 OK: heal ghi note + finished_at + state stopped + reconcile log"
 }
 run_case MD68 "D80 stale-state: kill -9 → heal note + finished_at + reconcile log" pass md68
+
+# ---------- #215: Track M M3 — static template registry (D81) ----------
+#   MD69  (chạy mọi nơi) sandbox template push/pull e2e qua web server tĩnh
+#         local (http loopback + --insecure): push → index.json + blob;
+#         pull roundtrip (file + symlink relative); blob tamper (size giữ
+#         nguyên) → sha256 mismatch → fail-closed không để lại file;
+#         tar độc member "../" bị chặn DÙ index xác nhận sha khớp
+#         (extractor secureUnpack là tuyến cuối); http không --insecure
+#         bị từ chối trước khi dial.
+md69() {
+    local reg="$WORK/tplreg" src="$WORK/tplsrc" pid=""
+    rm -rf "$reg" "$src" "$WORK/tplout" "$WORK/tplparent" "$WORK/tplnogate"
+    mkdir -p "$src/etc"
+    echo "hello minict" > "$src/hello.txt"
+    echo "sandbox" > "$src/etc/motd"
+    ln -s hello.txt "$src/link"
+
+    # (1) push từ rootfs local → index.json + blob, entry khớp file thật
+    "$SANDBOX" template push tpl-test --version 1.0 --rootfs "$src" --out "$reg" >/dev/null || { echo "push failed"; return 1; }
+    [[ -f "$reg/index.json" && -f "$reg/tpl-test-1.0.tar.gz" ]] || { echo "registry files missing"; return 1; }
+    TPL_REG="$reg" python3 -I -c "
+import json
+idx = json.load(open('$reg/index.json'))
+assert idx['version'] == 1, idx['version']
+e = [t for t in idx['templates'] if t['name'] == 'tpl-test'][0]
+assert e['version'] == '1.0' and len(e['sha256']) == 64 and e['size_bytes'] > 0, e" || { echo "index.json bad"; return 1; }
+
+    # (2) static server + pull roundtrip (relative symlink giữ nguyên)
+    python3 -m http.server "$TPL_PORT" --bind 127.0.0.1 --directory "$reg" >/dev/null 2>&1 &
+    pid=$!
+    for _ in $(seq 1 50); do
+        curl -sf "http://127.0.0.1:$TPL_PORT/index.json" >/dev/null && break
+        sleep 0.1
+    done
+    curl -sf "http://127.0.0.1:$TPL_PORT/index.json" >/dev/null || { echo "static server not up"; kill "$pid" 2>/dev/null; return 1; }
+    # (2b) http KHÔNG --insecure bị từ chối trước khi dial
+    "$SANDBOX" template pull "http://127.0.0.1:$TPL_PORT/tpl-test:1.0" --out "$WORK/tplnogate" >/dev/null 2>&1 \
+        && { echo "http without --insecure must fail"; kill "$pid" 2>/dev/null; return 1; }
+    [[ ! -e "$WORK/tplnogate" ]] || { echo "gate leak: dir created despite refusal"; kill "$pid" 2>/dev/null; return 1; }
+
+    "$SANDBOX" template pull "http://127.0.0.1:$TPL_PORT/tpl-test:1.0" --out "$WORK/tplout" --insecure >/dev/null || { echo "pull failed"; kill "$pid" 2>/dev/null; return 1; }
+    [[ "$(cat "$WORK/tplout/hello.txt")" == "hello minict" ]] || { echo "hello.txt mismatch"; kill "$pid" 2>/dev/null; return 1; }
+    [[ "$(cat "$WORK/tplout/etc/motd")" == "sandbox" ]] || { echo "etc/motd mismatch"; kill "$pid" 2>/dev/null; return 1; }
+    [[ "$(readlink "$WORK/tplout/link")" == "hello.txt" ]] || { echo "relative symlink lost"; kill "$pid" 2>/dev/null; return 1; }
+
+    # (3) blob tamper (byte flip — SIZE giữ nguyên để thật sự đi qua nhánh
+    #     sha256) → fail-closed: không out, không temp còn sót
+    mkdir -p "$WORK/tplparent"
+    python3 -I -c "
+b = bytearray(open('$reg/tpl-test-1.0.tar.gz','rb').read())
+b[10] ^= 0x5A
+open('$reg/tpl-test-1.0.tar.gz','wb').write(bytes(b))" || { echo "tamper failed"; kill "$pid" 2>/dev/null; return 1; }
+    "$SANDBOX" template pull "http://127.0.0.1:$TPL_PORT/tpl-test:1.0" --out "$WORK/tplparent/out" --insecure >/dev/null 2>&1 \
+        && { echo "tampered blob pulled?!"; kill "$pid" 2>/dev/null; return 1; }
+    [[ ! -e "$WORK/tplparent/out" ]] || { echo "out exists after sha256 fail"; kill "$pid" 2>/dev/null; return 1; }
+    ls -A "$WORK/tplparent" 2>/dev/null | grep -q '^\.sandbox-tpl-' \
+        && { echo "leftover temp after sha256 fail"; kill "$pid" 2>/dev/null; return 1; }
+
+    # (4) tar độc: member "../evil.txt" + index XÁC NHẬN đúng sha — registry
+    #     bị kiểm soát hoàn toàn → extractor vẫn phải từ chối, không file nào
+    #     được viết ngoài đích
+    TPL_REG="$reg" python3 -I - <<'PYEOF' || { echo "evil craft failed"; kill "$pid" 2>/dev/null; return 1; }
+import gzip, hashlib, io, json, os, tarfile
+reg = os.environ['TPL_REG']
+buf = io.BytesIO()
+with tarfile.open(fileobj=buf, mode='w') as tf:
+    data = b'evil\n'
+    ti = tarfile.TarInfo('../evil.txt'); ti.size = len(data)
+    tf.addfile(ti, io.BytesIO(data))
+raw = gzip.compress(buf.getvalue())
+open(os.path.join(reg, 'tpl-evil-1.0.tar.gz'), 'wb').write(raw)
+idx = json.load(open(os.path.join(reg, 'index.json')))
+idx['templates'].append({'name': 'tpl-evil', 'version': '1.0',
+    'sha256': hashlib.sha256(raw).hexdigest(), 'size_bytes': len(raw),
+    'created': '2026-11-27T00:00:00Z'})
+open(os.path.join(reg, 'index.json'), 'w').write(json.dumps(idx))
+PYEOF
+    "$SANDBOX" template pull "http://127.0.0.1:$TPL_PORT/tpl-evil:1.0" --out "$WORK/tplparent/out2" --insecure >/dev/null 2>&1 \
+        && { echo "evil tar extracted?!"; kill "$pid" 2>/dev/null; return 1; }
+    [[ ! -e "$WORK/tplparent/out2" && ! -e "$WORK/evil.txt" && ! -e "$(dirname "$WORK")/evil.txt" ]] \
+        || { echo "evil file escaped"; kill "$pid" 2>/dev/null; return 1; }
+
+    kill "$pid" 2>/dev/null
+    rm -rf "$reg" "$src" "$WORK/tplout" "$WORK/tplparent" "$WORK/tplnogate"
+    echo "MD69 OK: push/pull roundtrip + gate + sha256 fail-closed + evil tar blocked"
+}
+run_case MD69 "D81 template registry: push/pull + gate + sha fail-closed + evil tar" pass md69
 
 run_case XSS  "D71 gd3-ui: console source no dangerouslySetInnerHTML/innerHTML" pass md55b_xss
 

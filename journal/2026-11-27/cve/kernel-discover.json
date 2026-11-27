@@ -1,0 +1,172 @@
+[
+  {
+    "cve": "CVE-2022-0847",
+    "component": "kernel",
+    "cvss": "7.8",
+    "severity": "HIGH",
+    "published": "2022-03-10",
+    "origin": "watchlist",
+    "in_watchlist": true,
+    "kernels": {
+      "5.10.134-013.15.kangaroo.al8.x86_64": "not affected",
+      "6.1": "not affected",
+      "6.6": "not affected",
+      "6.12": "not affected"
+    },
+    "relevant": false,
+    "desc": "A flaw was found in the way the \"flags\" member of the new pipe buffer structure was lacking proper initialization in cop"
+  },
+  {
+    "cve": "CVE-2022-0185",
+    "component": "kernel",
+    "cvss": "8.4",
+    "severity": "HIGH",
+    "published": "2022-02-11",
+    "origin": "watchlist",
+    "in_watchlist": true,
+    "kernels": {
+      "5.10.134-013.15.kangaroo.al8.x86_64": "not affected",
+      "6.1": "not affected",
+      "6.6": "not affected",
+      "6.12": "not affected"
+    },
+    "relevant": false,
+    "desc": "A heap-based buffer overflow flaw was found in the way the legacy_parse_param function in the Filesystem Context functio"
+  },
+  {
+    "cve": "CVE-2023-0386",
+    "component": "kernel",
+    "cvss": "7.8",
+    "severity": "HIGH",
+    "published": "2023-03-22",
+    "origin": "watchlist",
+    "in_watchlist": true,
+    "kernels": {
+      "5.10.134-013.15.kangaroo.al8.x86_64": "not affected",
+      "6.1": "fixed in 6.1.9",
+      "6.6": "not affected",
+      "6.12": "not affected"
+    },
+    "relevant": false,
+    "desc": "A flaw was found in the Linux kernel, where unauthorized access to the execution of the setuid file with capabilities wa"
+  },
+  {
+    "cve": "CVE-2024-1086",
+    "component": "kernel",
+    "cvss": "7.8",
+    "severity": "HIGH",
+    "published": "2024-01-31",
+    "origin": "watchlist",
+    "in_watchlist": true,
+    "kernels": {
+      "5.10.134-013.15.kangaroo.al8.x86_64": "affected (upstream range)",
+      "6.1": "fixed in 6.1.76",
+      "6.6": "fixed in 6.6.15",
+      "6.12": "not affected"
+    },
+    "relevant": true,
+    "desc": "A use-after-free vulnerability in the Linux kernel's netfilter: nf_tables component can be exploited to achieve local pr"
+  },
+  {
+    "cve": "CVE-2021-22555",
+    "component": "kernel",
+    "cvss": "8.3",
+    "severity": "HIGH",
+    "published": "2021-07-07",
+    "origin": "watchlist",
+    "in_watchlist": true,
+    "kernels": {
+      "5.10.134-013.15.kangaroo.al8.x86_64": "not affected",
+      "6.1": "not affected",
+      "6.6": "not affected",
+      "6.12": "not affected"
+    },
+    "relevant": false,
+    "desc": "A heap out-of-bounds write affecting Linux since v2.6.19-rc1 was discovered in net/netfilter/x_tables.c. This allows an "
+  },
+  {
+    "cve": "CVE-2026-98432",
+    "component": "kernel",
+    "cvss": "9.8",
+    "severity": "CRITICAL",
+    "published": "2026-10-15",
+    "origin": "watchlist",
+    "in_watchlist": true,
+    "kernels": {
+      "5.10.134-013.15.kangaroo.al8.x86_64": "affected (upstream range)",
+      "6.1": "fixed in 6.1.190",
+      "6.6": "fixed in 6.6.159",
+      "6.12": "fixed in 6.12.113"
+    },
+    "relevant": true,
+    "desc": "In the Linux kernel, the following vulnerability has been resolved:  ipv4: free inet_opt and ireq_opt after an RCU grace"
+  },
+  {
+    "cve": "CVE-2026-31431",
+    "component": "kernel",
+    "cvss": "7.8",
+    "severity": "HIGH",
+    "published": "2026-04-22",
+    "origin": "watchlist",
+    "in_watchlist": true,
+    "kernels": {
+      "5.10.134-013.15.kangaroo.al8.x86_64": "affected (upstream range)",
+      "6.1": "fixed in 6.1.170",
+      "6.6": "fixed in 6.6.137",
+      "6.12": "fixed in 6.12.85"
+    },
+    "relevant": true,
+    "desc": "In the Linux kernel, the following vulnerability has been resolved:  crypto: algif_aead - Revert to operating out-of-pla"
+  },
+  {
+    "cve": "CVE-2025-39964",
+    "component": "kernel",
+    "cvss": "7.8",
+    "severity": "HIGH",
+    "published": "2025-10-13",
+    "origin": "watchlist",
+    "in_watchlist": true,
+    "kernels": {
+      "5.10.134-013.15.kangaroo.al8.x86_64": "affected (upstream range)",
+      "6.1": "fixed in 6.1.154",
+      "6.6": "fixed in 6.6.108",
+      "6.12": "fixed in 6.12.49"
+    },
+    "relevant": true,
+    "desc": "In the Linux kernel, the following vulnerability has been resolved:  crypto: af_alg - Disallow concurrent writes in af_a"
+  },
+  {
+    "cve": "CVE-2026-53266",
+    "component": "kernel",
+    "cvss": "8.8",
+    "severity": "HIGH",
+    "published": "2026-06-25",
+    "origin": "watchlist",
+    "in_watchlist": true,
+    "kernels": {
+      "5.10.134-013.15.kangaroo.al8.x86_64": "affected (upstream range)",
+      "6.1": "fixed in 6.1.176",
+      "6.6": "fixed in 6.6.143",
+      "6.12": "fixed in 6.12.94"
+    },
+    "relevant": true,
+    "desc": "In the Linux kernel, the following vulnerability has been resolved:  netfilter: bridge: make ebt_snat ARP rewrite writab"
+  },
+  {
+    "cve": "CVE-2025-39682",
+    "component": "kernel",
+    "cvss": "9.8",
+    "severity": "CRITICAL",
+    "published": "2025-09-05",
+    "origin": "watchlist",
+    "in_watchlist": true,
+    "kernels": {
+      "5.10.134-013.15.kangaroo.al8.x86_64": "not affected",
+      "6.1": "fixed in 6.1.149",
+      "6.6": "fixed in 6.6.103",
+      "6.12": "fixed in 6.12.44"
+    },
+    "relevant": false,
+    "desc": "In the Linux kernel, the following vulnerability has been resolved:  tls: fix handling of zero-length records on the rx_"
+  }
+]

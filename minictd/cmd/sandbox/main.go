@@ -23,6 +23,9 @@
 //	wake <name>             probe preview ports over host loopback (G3:
 //	                        per-port TCP-ready map; 409 stopped, 404 gone)
 //	logs <name> [--tail N]  stream instance log (no follow in v1)
+//	template push|pull      static template registry (Track M M3, D81):
+//	                        push <name> --version V --rootfs DIR --out REGDIR
+//	                        pull <root>/<name>[:<ver>] --out DIR [--insecure]
 //	version                 daemon version
 //
 // Token resolution (first hit wins): --token flag, $MINICTD_TOKEN,
@@ -254,6 +257,12 @@ loop:
 			return err
 		}
 		return emitJSON(map[string]string{"version": v})
+
+	case "template":
+		if len(rest) < 1 {
+			return errUsage("template requires push|pull")
+		}
+		return templateCmd(rest[0], rest[1:])
 
 	case "stack":
 		if len(rest) < 1 {
