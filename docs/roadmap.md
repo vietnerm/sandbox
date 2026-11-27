@@ -685,7 +685,10 @@
    f. Tests: env-gated SKIP khi no /dev/kvm (pattern overlay D66 / pasta D67); PASS thật
       trên KVM-capable host.
    g. Budget: daemon RSS +~5 MB (management code); per-microVM Firecracker ~10-20 MB.
-1b. **Làm được khi CHƯA có KVM** (owner chốt 2026-11-27 GĐ4 ưu tiên số 1; SDDA làm theo
+> **2026-11-27:** CI đã có KVM (job `kvm`), nên GĐ4 **không còn research-only**. Mục 1 (code
+> thật) và 2 (benchmark) chạy và đo trên job `kvm`; mục 1b là phần nền nên làm trước.
+
+1b. **Phần nền (trước đây ghi "làm được khi chưa có KVM")** (owner chốt 2026-11-27 GĐ4 ưu tiên số 1; SDDA làm theo
    thứ tự, mỗi mục có test chạy không cần `/dev/kvm`, phần cần KVM thì env-gated SKIP):
    a. **Jail không cần root**: jailer của Firecracker cần root (chroot, đổi uid, cgroup).
       Nghiên cứu + decision file: chạy `firecracker` **bên trong một instance minict**
@@ -705,8 +708,11 @@
    e. **API client + backend**: hoàn thiện `internal/firecracker` (boot-source, drives,
       machine-config, network-interfaces, vsock, InstanceStart, shutdown) với test bằng unix
       socket giả lập; `--backend firecracker` fail-closed rõ ràng khi thiếu KVM (MD63 giữ).
-   f. **Host có KVM cho CI**: chờ owner chọn (VPS có `/dev/kvm`, self-hosted runner, hoặc
-      GitHub larger runner). Workflow chạm `.github` → owner duyệt.
+   f. **Host có KVM cho CI — ĐÃ CÓ (2026-11-27)**: probe PR #225 cho thấy runner chuẩn
+      `ubuntu-24.04`/`22.04` có `/dev/kvm`; user uid 1001 `KVM_CREATE_VM` OK (24.04 cần udev
+      rule 0666). Nhận định "CI không có KVM" ở mục 0 (#191) là **sai**. Job `kvm` trong
+      `ci.yml` (owner duyệt 2026-11-27) bật `/dev/kvm` cho user runner và **bắt buộc** KVM
+      dùng được. Test cần KVM chạy thật ở job đó, không được SKIP.
    g. Console: chọn backend khi tạo + badge "microVM"; API không đổi.
 2. **Benchmark** microVM vs container:
    - cold_start_ms: minict ~2 ms vs Firecracker ~125 ms (Firecracker measured upstream).
@@ -743,6 +749,28 @@
 4. **#221 phần 1**: `network: none|egress` + công tắc "Cho phép Internet" trên console.
    **Phần 2** (tường lửa vào/ra + tab Network giám sát): **chỉ tài liệu thiết kế, chờ owner
    duyệt**. Nếu được duyệt thì cần sửa manifest §4/§6 trước khi code.
+
+## Lớp nền tảng agent (hướng sản phẩm, manifest §10 — sau GĐ4)
+
+> Owner 2026-11-27: người dùng prompt → agent dùng sandbox (terminal/GUI) → console cho
+> người dùng xem trực tiếp → kết quả trả về; web có thể public kèm domain, hoặc deploy lên
+> VPS của người dùng. Code của agent luôn là **không tin cậy** (prompt injection), nên mọi
+> mục dưới đây chỉ mở khi GĐ4 microVM xong. Tất cả là lớp ngoài core (manifest §3).
+
+1. **Chống lạm dụng — BẮT BUỘC trước khi public bất cứ thứ gì**: tường lửa vào/ra + giám
+   sát (#221), quota CPU/RAM/disk **và băng thông**, giới hạn thời gian sống (TTL) của
+   sandbox, giới hạn số sandbox. Khi agent chạy code lạ lại được public web, nền tảng dễ
+   bị dùng làm trang lừa đảo, đào coin hay gửi spam.
+2. **Public web + domain**: reverse proxy có TLS tự động (vd. Caddy) chạy **ngoài core**
+   dưới user thường, trỏ domain vào cổng pasta của sandbox (mặc định 127.0.0.1 theo #220).
+   Rootless không bind được 80/443, trừ khi admin máy bật một lần
+   `sysctl net.ipv4.ip_unprivileged_port_start=80` (điều kiện tiên quyết kiểu manifest §5).
+   Public phải opt-in theo từng sandbox, có hiển thị trên console.
+3. **Nhiều người dùng**: tài khoản, cách ly giữa người dùng, quota theo người. Nằm ở **lớp
+   nền tảng phía trên** (giống lớp cluster M4), không vào `minict`/`minictd`.
+4. **Agent dùng sandbox**: lớp MCP server/SDK bọc API hiện có (execv2, Files, PTY);
+   console có chế độ xem trực tiếp + nhật ký hành động của agent + "giành quyền điều khiển";
+   GUI qua noVNC (Hướng xa). Deploy lên VPS người dùng dùng lại `stack.json` + registry (M5).
 
 ## Track M — Mở rộng ngoài core (manifest §9, D74, từ 2026-11-26)
 

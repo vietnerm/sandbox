@@ -250,6 +250,9 @@ có sẵn sớm), cập nhật manifest + roadmap **trước** khi code. Mỗi i
   GĐ3 (Web UI) vẫn phải dừng và hỏi owner trước khi mở code.
 - 2026-11-26: owner mở **GĐ3** và giao template Next.js cho Web UI; chốt phương án
   xuất tĩnh do `minictd --ui-dir` phục vụ (sửa dòng DoD "không framework nặng").
+- 2026-11-27: owner chốt **GĐ4 ưu tiên số 1**. Probe PR #225: runner GitHub chuẩn có
+  `/dev/kvm` dùng được bởi user thường, nên GĐ4 code và test thật trên CI (job `kvm`), hết
+  research-only.
 - 2026-11-26: GĐ3 DoD đạt (Phiên 37); owner chỉ thị mở **GĐ4**. Precondition check
   (Phiên 38 #191): no /dev/kvm on dev + CI standard runner → GĐ4 research-only cho
   đến khi có KVM-capable host.
@@ -290,3 +293,24 @@ của Track M. Việc bảo mật (§3) vẫn chen trước.
 5. **Triển khai lên VPS không phải nền tảng riêng**: cung cấp API ổn định + ví dụ
    Ansible playbook / GitHub Action trong `examples/`; người dùng chọn công cụ.
 
+## 10. Hướng sản phẩm: nền tảng agent dùng sandbox (owner 2026-11-27)
+
+Đích dài hạn: người dùng ra prompt, **agent** dùng sandbox (terminal, GUI); console cho
+người dùng xem trực tiếp và nhận kết quả; web làm ra có thể **public kèm domain** hoặc
+**deploy lên VPS của người dùng**. Hệ quả cho hướng dự án:
+
+- Code do agent chạy luôn là **không tin cậy** (prompt injection), nên theo §3 nó chỉ được
+  chạy ở lớp microVM. **GĐ4 là điều kiện bắt buộc** trước mọi phần dưới đây.
+- **Chống lạm dụng là bắt buộc, không để sau**: tường lửa vào/ra + giám sát, quota CPU/RAM/
+  băng thông, TTL sandbox phải có **trước** khi cho public web.
+- **Public web + domain**: reverse proxy TLS tự động (vd. Caddy) ở **ngoài core**, chạy
+  dưới user thường. Cổng 80/443 cần admin bật `ip_unprivileged_port_start` một lần (điều
+  kiện tiên quyết kiểu §5), không phải root lúc chạy.
+- **Nhiều người dùng** (tài khoản, cách ly, quota theo người) nằm ở **lớp nền tảng phía
+  trên**, giống lớp cluster §9. Core giữ nguyên "một user vận hành + token" (§4).
+- Control plane vẫn **rootless** (§3): lớp cách ly chính là microVM, daemon bị chiếm cũng
+  chỉ có quyền user thường.
+
+Thứ tự: GĐ4 → chống lạm dụng (network policy + quota + TTL) → lớp agent (MCP/SDK) → xem
+trực tiếp (WebSocket + noVNC) → public domain → deploy. Chi tiết: `docs/roadmap.md` mục
+"Lớp nền tảng agent".
