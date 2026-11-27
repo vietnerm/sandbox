@@ -698,6 +698,27 @@
    kiện tiên quyết (pasta, cgroup delegation, quyền /dev/kvm); control plane chạy dưới user đó.
 2. Health + update tối thiểu; tài liệu từ máy trắng. (Chi tiết khi GĐ4 xong.)
 
+## GĐ3 — gia cố sau DoD (owner dùng thật, 2026-11-26/27)
+
+> Lỗi và nhu cầu owner gặp khi dùng console thật. Thứ tự làm theo PROMPT.MD Bước 3:
+> `type:security` trước, rồi issue p1, rồi mới tới Track M. Các mục **chờ owner duyệt**
+> chỉ làm phần tài liệu thiết kế.
+
+- Xong: #206 PTY fail-closed (PR #210, D77) · #208 Files qua execv2 (PR #212, D79) ·
+  #209 uptime + heal stale state (PR #213, D80) · bản sửa của owner, gồm TAB thật trong
+  `stat -c`, bật trang Files, input UTF-8 gửi tuần tự, locale PTY (PR #217).
+1. **#220 (security)**: pasta mặc định `auto` (UDP inbound, bind 0.0.0.0, sandbox gọi vào
+   127.0.0.1 của host). Đo rồi mới sửa; mặc định fail-closed (`-u none -T none -U none`,
+   forward bind 127.0.0.1, công khai phải opt-in). Tới khi xong, manifest §6 "chỉ mở port
+   khai báo" chưa được coi là đúng.
+2. **#218**: WebSocket PTY binary (stdlib RFC 6455, auth bằng frame đầu, kiểm `Origin`,
+   64 KB/frame); SSE+POST giữ làm fallback.
+3. **#219**: Files dùng tên/path base64 hai chiều (adapter-only) + recovery tên không
+   phải UTF-8.
+4. **#221 phần 1**: `network: none|egress` + công tắc "Cho phép Internet" trên console.
+   **Phần 2** (tường lửa vào/ra + tab Network giám sát): **chỉ tài liệu thiết kế, chờ owner
+   duyệt**. Nếu được duyệt thì cần sửa manifest §4/§6 trước khi code.
+
 ## Track M — Mở rộng ngoài core (manifest §9, D74, từ 2026-11-26)
 
 > Không phải giai đoạn mới. SDDA lấy mục thấp nhất chưa xong ở đây **chỉ khi** mọi
@@ -738,6 +759,8 @@
         → rollback các instance đã chạy). Env-gated như MD47–49 nếu cần pasta.
      i. Cập nhật README dòng `stack.yaml` → `stack.json`, nhãn `thử nghiệm` (M1), thêm
         `examples/` một stack.json mẫu.
+   → **d–i xong 2026-11-26 Phiên 40 (#203, PR #204, D76)**: `pasta_ports`, ready `exec`
+     qua execv2, http timeout + validate port, down error policy, MD e2e, `examples/04-stack`.
 3. **M3 — Registry template tĩnh.**
    a. Định dạng: `index.json` (name, version, sha256, size, created) + `<name>-<ver>.tar.zst`.
    b. `sandbox template push <name> --out DIR`: sinh file tĩnh từ template local.
@@ -757,6 +780,14 @@
      push từ chối symlink tuyệt đối (D70). 14 unit test (httptest) + **MD69**
      e2e (static server, tamper fail-closed, evil tar `../` bị chặn dù index
      xác nhận sha).
+   e. **Còn thiếu (owner review 2026-11-27)**: sha256 trong `index.json` chỉ chứng minh
+      blob khớp index **trên cùng server**. Server bị chiếm thì kẻ tấn công sửa được cả
+      hai. Cần thêm: (1) pin khi pull `name:ver@sha256:<digest>` (digest lấy ngoài băng,
+      vd. ghi trong `stack.json`/Git); (2) tuỳ chọn ký `index.json` bằng ed25519 (Go
+      stdlib, zero-dep): `push --sign-key`, `pull --trust-key`; có `--trust-key` thì thiếu
+      chữ ký hoặc chữ ký sai đều fail-closed; (3) giới hạn tổng dung lượng/số entry khi giải
+      nén (chống tar/gzip bomb làm đầy disk); (4) README nhắc lại manifest §3: template
+      kéo về vẫn chỉ dành cho workload **tin cậy** cho tới khi GĐ4 xong.
 4. **M4 — Lớp cluster nhiều VPS** (mục tiêu owner 2026-11-17).
    a. **Chỉ tài liệu thiết kế, chờ owner duyệt trước khi code**: công cụ riêng (tên
       đề xuất), danh sách node + token, kết nối node qua SSH tunnel/WireGuard (`minictd`
