@@ -2170,8 +2170,30 @@ run_case MD69 "D81 template registry: push/pull + gate + sha fail-closed + evil 
 #         public/.
 md70() {
     [[ "$PASTA_OK" == 1 ]] || return 125
+    # UDP bind helper: busybox nc has NO -u (and no udpsvd/tftpd; ntpd/dnsd
+    # bind privileged ports pasta cannot hold rootless) — build a 20-line
+    # static binder and bind-mount it into the instance instead.
+    mkdir -p "$WORK/tools"
+    cat > "$WORK/tools/udpbind.c" <<'UEOF'
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+int main(void)
+{
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0) return 1;
+    struct sockaddr_in a;
+    a.sin_family = AF_INET;
+    a.sin_addr.s_addr = htonl(INADDR_ANY);
+    a.sin_port = htons(5353);
+    if (bind(fd, (struct sockaddr *)&a, sizeof a) < 0) return 2;
+    for (;;) pause();
+}
+UEOF
+    cc -static -O2 -o "$WORK/tools/udpbind" "$WORK/tools/udpbind.c" || { echo "cc static build failed"; return 1; }
     api POST /v1/sandboxes/md-sec220/remove >/dev/null 2>&1 || true
-    api POST /v1/run "{\"name\":\"md-sec220\",\"image\":\"base\",\"pasta_ports\":[\"$P2PORT:8080\"],\"cmd\":[\"/bin/sh\",\"-c\",\"mkdir -p /www && echo p220-ok > /www/index.html && httpd -p 8080 -h /www && nc -l -u -p 5353\"]}" > /dev/null || { echo "run md-sec220 failed: $(head -c 200 "$WORK/resp")"; return 1; }
+    api POST /v1/run "{\"name\":\"md-sec220\",\"image\":\"base\",\"pasta_ports\":[\"$P2PORT:8080\"],\"volumes\":[\"$WORK/tools:/mnt/t\"],\"cmd\":[\"/bin/sh\",\"-c\",\"mkdir -p /www && echo p220-ok > /www/index.html && httpd -p 8080 -h /www && /mnt/t/udpbind\"]}" > /dev/null || { echo "run md-sec220 failed: $(head -c 200 "$WORK/resp")"; return 1; }
     sleep 2
     local shim gw
     shim=$(python3 -c "import json;print(json.load(open('$STATE/md-sec220/state.json')).get('pid',0))")
