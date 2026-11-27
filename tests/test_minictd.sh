@@ -1292,7 +1292,13 @@ pasta_wait_fwd() { # polls the declared forward until it answers
         curl -s -m 2 "http://127.0.0.1:$PFPORT/" 2>/dev/null | grep -q pasta-ok && { _ok=1; break; }
         sleep 0.5
     done
-    [[ "$_ok" == 1 ]] || { echo "curl $PFPORT failed (attach/forward)"; tail -5 "$STATE/md-pasta/pasta.log" 2>/dev/null; return 1; }
+    if [[ "$_ok" != 1 ]]; then
+        echo "curl $PFPORT failed (attach/forward)"; tail -5 "$STATE/md-pasta/pasta.log" 2>/dev/null
+        mkdir -p "$REPO/ci-evidence"
+        cp "$STATE/md-pasta/pasta.log" "$REPO/ci-evidence/md47-pasta.log" 2>/dev/null || true
+        cp "$STATE/md-sec220/pasta.log" "$REPO/ci-evidence/md70-pasta.log" 2>/dev/null || true
+        return 1
+    fi
 }
 port_no_listener() { # pasta holds LISTENING sockets for its forwards (0.0.0.0
     # default bind, passt.1) — a dead attach means NO listener on the port.
