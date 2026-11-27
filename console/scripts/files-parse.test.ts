@@ -95,7 +95,8 @@ test("decodeFsName: emoji 😀 và combining é vẫn là UTF-8 hợp lệ", () 
 
 test("assertSafePathB64: guard trên BYTES — relative/NUL/quá dài bị chặn, tên lỗi vẫn hợp lệ", () => {
   assert.throws(() => assertSafePathB64(b64("etc/passwd")));
-  assert.throws(() => assertSafePathB64(bytesToB64(new Uint8Array([0x61, 0])))); // "a\0"
+  // "/a\0" — bắt đầu bằng "/" nên chỉ có check NUL chặn được (mutant bỏ NUL phải đỏ)
+  assert.throws(() => assertSafePathB64(bytesToB64(new Uint8Array([0x2f, 0x61, 0]))), /NUL/);
   assert.throws(() => assertSafePathB64(""));
   assert.throws(() => assertSafePathB64(b64("/" + "x".repeat(5000))));
   // path có newline + byte lỗi VẪN hợp lệ (đúng chủ đích #219)
